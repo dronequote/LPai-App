@@ -9,7 +9,6 @@ let client: MongoClient;
 let clientPromise: Promise<MongoClient>;
 
 declare global {
-  // Allow global cache for dev hot reload
   var _mongoClientPromise: Promise<MongoClient> | undefined;
 }
 
@@ -24,4 +23,4 @@ if (process.env.NODE_ENV === 'development') {
   clientPromise = client.connect();
 }
 
-export default clientPromise;
+export default clientPromise as Promise<MongoClient>;
