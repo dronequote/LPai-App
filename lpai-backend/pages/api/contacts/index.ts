@@ -78,7 +78,9 @@ async function handleCreateContact(req: NextApiRequest, res: NextApiResponse, db
     }
 
     const apiKey = locationDoc.apiKey;
-    console.log(`🛠️ Using API key for GHL: ${apiKey?.slice(0, 8)}...${apiKey?.slice(-4)}`); // Masked log
+    // === LOGGING LOCATION AND PARTIAL API KEY HERE ===
+    console.log(`🔎 Attempting GHL sync for locationId: ${locationId}`);
+    console.log(`🔑 Using API key: ${apiKey?.slice(0, 8)}...${apiKey?.slice(-4)}`);
 
     // Updated endpoint and headers for LeadConnector/GHL
     let ghlContactId: string | undefined = undefined;

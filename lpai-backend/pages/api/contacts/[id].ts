@@ -65,6 +65,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(200).json({ success: true });
       }
 
+      // === LOGGING LOCATION AND PARTIAL API KEY HERE ===
+      console.log(`🔎 Attempting GHL sync for locationId: ${updated.locationId}`);
+      console.log(`🔑 Using API key: ${apiKey?.slice(0, 8)}...${apiKey?.slice(-4)}`);
+
       // 3. Push changes to GHL (LeadConnector) API
       try {
         await axios.put(
