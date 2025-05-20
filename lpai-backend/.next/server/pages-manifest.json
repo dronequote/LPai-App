@@ -2,6 +2,8 @@
   "/_app": "pages/_app.js",
   "/_error": "pages/_error.js",
   "/_document": "pages/_document.js",
-  "/api/contacts": "pages/api/contacts.js",
-  "/api/projects": "pages/api/projects.js"
+  "/api/contacts/withProjects": "pages/api/contacts/withProjects.js",
+  "/api/projects/byContact": "pages/api/projects/byContact.js",
+  "/api/projects": "pages/api/projects.js",
+  "/api/contacts": "pages/api/contacts.js"
 }
