@@ -93,7 +93,8 @@ async function handleCreateContact(req: NextApiRequest, res: NextApiResponse, db
           email,
           phone,
           address1: address,
-          notes,
+          locationId, // <<-- THIS IS THE FIX!
+          // notes,   // Uncomment if your GHL supports a mapped custom field for notes
         },
         {
           headers: {

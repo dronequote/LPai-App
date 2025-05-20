@@ -79,7 +79,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             email: updated.email,
             phone: updated.phone,
             address1: updated.address,
-            notes: updated.notes,
+            locationId: updated.locationId,  // <--- THIS IS THE FIX!
+            // notes: updated.notes,         // (uncomment if using a mapped field for notes)
           },
           {
             headers: {
