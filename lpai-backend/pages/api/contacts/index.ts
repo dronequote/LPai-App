@@ -70,7 +70,6 @@ async function handleCreateContact(req: NextApiRequest, res: NextApiResponse, db
 
     if (!locationDoc || !locationDoc.apiKey) {
       console.warn(`⚠️ API key missing for locationId: ${locationId}`);
-
       return res.status(201).json({
         success: true,
         contactId: insertedId,
@@ -79,39 +78,51 @@ async function handleCreateContact(req: NextApiRequest, res: NextApiResponse, db
     }
 
     const apiKey = locationDoc.apiKey;
-    console.log(`🛠️ Using API key for GHL:`, apiKey); // REMOVE or mask in production!
+    console.log(`🛠️ Using API key for GHL: ${apiKey?.slice(0, 8)}...${apiKey?.slice(-4)}`); // Masked log
 
-    // Now sync contact to GHL
-    const ghlRes = await axios.post(
-      'https://rest.gohighlevel.com/v1/contacts/',
-      {
-        firstName,
-        lastName,
-        email,
-        phone,
-        address1: address,
-        notes,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
+    // Updated endpoint and headers for LeadConnector/GHL
+    let ghlContactId: string | undefined = undefined;
+    try {
+      const ghlRes = await axios.post(
+        'https://services.leadconnectorhq.com/contacts/',
+        {
+          firstName,
+          lastName,
+          email,
+          phone,
+          address1: address,
+          notes,
         },
-      }
-    );
-
-    const ghlContactId = ghlRes.data.contact?.id;
-
-    if (ghlContactId) {
-      // Update MongoDB with GHL contact ID
-      await db.collection('contacts').updateOne(
-        { _id: insertedId },
-        { $set: { ghlContactId } }
+        {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+            Version: '2021-07-28', // required for some GHL endpoints
+          },
+        }
       );
 
-      console.log('✅ Contact synced to GHL with ID:', ghlContactId);
-    } else {
-      console.warn('⚠️ GHL did not return contact ID.');
+      ghlContactId = ghlRes.data.contact?.id;
+      if (ghlContactId) {
+        // Update MongoDB with GHL contact ID
+        await db.collection('contacts').updateOne(
+          { _id: insertedId },
+          { $set: { ghlContactId } }
+        );
+        console.log('✅ Contact synced to GHL with ID:', ghlContactId);
+      } else {
+        console.warn('⚠️ GHL did not return contact ID.', ghlRes.data);
+      }
+    } catch (ghlError: any) {
+      // More robust logging for GHL failures
+      console.error('❌ Failed to add contact or sync with GHL:', ghlError.response?.data, ghlError.response?.status, ghlError.response?.headers);
+      // Still return local contact
+      return res.status(201).json({
+        success: false,
+        contactId: insertedId,
+        error: ghlError.response?.data || ghlError.message,
+        message: 'Contact saved locally, but sync to GHL failed.',
+      });
     }
 
     return res.status(201).json({

@@ -17,7 +17,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try {
       const contact = await db.collection('contacts').findOne({ _id: new ObjectId(id) });
       if (!contact) return res.status(404).json({ error: 'Contact not found' });
-
       return res.status(200).json(contact);
     } catch (err) {
       console.error('❌ Failed to fetch contact:', err);
@@ -28,8 +27,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // PATCH: Update contact + sync to GHL if valid
   if (req.method === 'PATCH') {
     try {
-      const { firstName, lastName, email, phone, notes } = req.body;
+      const { firstName, lastName, email, phone, notes, address } = req.body;
 
+      // 1. Update locally in MongoDB
       const result = await db.collection('contacts').updateOne(
         { _id: new ObjectId(id) },
         {
@@ -39,6 +39,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             email,
             phone,
             notes,
+            address,
             updatedAt: new Date(),
           },
         }
@@ -55,6 +56,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(200).json({ success: true });
       }
 
+      // 2. Fetch API key for this location
       const locationDoc = await db.collection('locations').findOne({ locationId: updated.locationId });
       const apiKey = locationDoc?.apiKey;
 
@@ -63,24 +65,37 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(200).json({ success: true });
       }
 
-      // ✅ Push to GHL
-      await axios.put(
-        `https://rest.gohighlevel.com/v1/contacts/${updated.ghlContactId}`,
-        {
-          firstName: updated.firstName,
-          lastName: updated.lastName,
-          email: updated.email,
-          phone: updated.phone,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
+      // 3. Push changes to GHL (LeadConnector) API
+      try {
+        await axios.put(
+          `https://services.leadconnectorhq.com/contacts/${updated.ghlContactId}`,
+          {
+            firstName: updated.firstName,
+            lastName: updated.lastName,
+            email: updated.email,
+            phone: updated.phone,
+            address1: updated.address,
+            notes: updated.notes,
           },
-        }
-      );
+          {
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              'Content-Type': 'application/json',
+              Version: '2021-07-28',
+            },
+          }
+        );
+        console.log('✅ Contact synced to GHL:', updated.ghlContactId);
+      } catch (ghlError: any) {
+        console.error('❌ Failed to sync contact with GHL:', ghlError.response?.data, ghlError.response?.status, ghlError.response?.headers);
+        // Still return 200 because local update succeeded
+        return res.status(200).json({
+          success: false,
+          error: ghlError.response?.data || ghlError.message,
+          message: 'Contact updated locally, but sync to GHL failed.',
+        });
+      }
 
-      console.log('✅ Contact synced to GHL:', updated.ghlContactId);
       return res.status(200).json({ success: true });
     } catch (err) {
       console.error('❌ Failed to update or sync contact:', err);
