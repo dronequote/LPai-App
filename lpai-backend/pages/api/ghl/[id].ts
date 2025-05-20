@@ -1,6 +1,6 @@
 // pages/api/ghl-sync/contact/[id].ts
 import type { NextApiRequest, NextApiResponse } from 'next';
-import clientPromise from '../../../../src/lib/mongodb';
+import clientPromise from '../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
 import axios from 'axios';
 
