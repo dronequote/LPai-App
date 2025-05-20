@@ -56,8 +56,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(200).json({ success: true });
       }
 
-      const location = await db.collection('locations').findOne({ locationId: updated.locationId });
-      const apiKey = location?.apiKey;
+      const locationDoc = await db.collection('locations').findOne({ locationId });
+      const apiKey = locationDoc?.apiKey;
 
       if (!apiKey) {
         console.warn('⚠️ GHL sync skipped: missing API key for location:', updated.locationId);
