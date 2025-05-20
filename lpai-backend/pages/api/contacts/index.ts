@@ -53,10 +53,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       // 🔑 Step 1: Get GHL API key for this location
       const locationDoc = await db.collection('locations').findOne({ locationId });
-      const apiKey = locationDoc?.apiKey;
 
+      if (!locationDoc) {
+        console.warn(`⚠️ Location not found for locationId: ${locationId}`);
+        return res.status(400).json({ error: 'Invalid locationId, location not found' });
+      }
+
+      const apiKey = locationDoc.apiKey;
       if (!apiKey) {
-        console.warn('⚠️ No API key found for location:', locationId);
+        console.warn(`⚠️ API key missing for locationId: ${locationId}`);
+        // Save locally but skip GHL sync
         return res.status(201).json({
           success: true,
           contactId: insertedId,
