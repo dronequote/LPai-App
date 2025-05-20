@@ -1,32 +1,25 @@
-import { MongoClient } from 'mongodb';
-import dotenv from 'dotenv';
-
-// ✅ Load your environment variables from .env.local
-dotenv.config({ path: '.env.local' });
-
-// 🔍 Optional: Log to verify correct URI loading (remove in production)
-console.log('MONGODB_URI value:', process.env.MONGODB_URI);
+// src/lib/mongodb.ts
+import { MongoClient, MongoClientOptions } from 'mongodb';
 
 const uri = process.env.MONGODB_URI;
-const options = {};
+const options: MongoClientOptions = {};
 
 if (!uri) {
-  throw new Error('❌ Missing MONGODB_URI in .env.local');
+  throw new Error('Missing MONGODB_URI in environment variables');
 }
 
-// 🧠 Define global type to avoid reconnecting in dev
 let client: MongoClient;
 let clientPromise: Promise<MongoClient>;
 
-const globalWithMongo = global as typeof globalThis & {
-  _mongoClientPromise?: Promise<MongoClient>;
-};
-
-if (!globalWithMongo._mongoClientPromise) {
+if (process.env.NODE_ENV === 'development') {
+  if (!(global as any)._mongoClientPromise) {
+    client = new MongoClient(uri, options);
+    (global as any)._mongoClientPromise = client.connect();
+  }
+  clientPromise = (global as any)._mongoClientPromise;
+} else {
   client = new MongoClient(uri, options);
-  globalWithMongo._mongoClientPromise = client.connect();
+  clientPromise = client.connect();
 }
-
-clientPromise = globalWithMongo._mongoClientPromise!;
 
 export default clientPromise;
