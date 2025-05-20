@@ -1,0 +1,7 @@
+| Name          | Email                         | Password        | Role  | Location ID            |
+| ------------- | ----------------------------- | --------------- | ----- | ---------------------- |
+| Fake Employee | `info@thisisafakecompany.com` | `LetMeIn123!`   | admin | `gs59LyvPJDe0sNgkZcS0` |
+| Test User     | `testuser@example.com`        | `TestPass456!`  | admin | `gs59LyvPJDe0sNgkZcS0` |
+| Test Tech     | `tech@thisisafakecompany.com` | `LetMeIn123!`   | user  | `gs59LyvPJDe0sNgkZcS0` |
+| Admin Diana   | `diana@othercompany.com`      | `AdminPass456!` | admin | `newLoc456XYZ`         |
+| Field Rep Bob | `bob@othercompany.com`        | `UserPass789!`  | user  | `newLoc456XYZ`         |

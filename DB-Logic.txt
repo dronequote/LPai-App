@@ -1,0 +1,79 @@
+📦 MongoDB Database Structure – LPai App
+MongoDB is the source of truth for the mobile CRM app. All data from GoHighLevel (GHL) is mirrored into MongoDB and accessed via secure Next.js API routes.
+
+🔐 Multi-Tenant Security Model
+Each user is tied to a GHL Location via locationId.
+
+All data is scoped and filtered by locationId in backend routes.
+
+Each GHL Location can have multiple users with role: 'admin' or role: 'user'.
+
+Users authenticate through the backend and receive a JWT token containing:
+
+userId
+
+locationId
+
+role
+
+All client requests are verified server-side against the token to prevent cross-location access.
+
+🗂️ Collections & Relationships
+users
+Mirrors GHL sub-users
+
+Fields: name, email, role, locationId, permissions, hashedPassword
+
+Authenticated users are scoped by locationId and userId
+
+contacts
+Root-level CRM object (mirrors GHL Contacts)
+
+Fields: firstName, lastName, email, phone, address, ghlContactId, locationId, createdAt, notes
+
+Linked: Each project.contactId → contacts._id
+
+projects
+Mirrors GHL Opportunities
+
+Fields: title, status, contactId, userId, locationId, createdAt
+
+One-to-many: A contact can have multiple projects
+
+Status-based flow: Open → Quoted → Scheduled → Job Complete
+
+quotes
+Generated per project
+
+Fields: projectId, userId, locationId, scopeOfWork, total, status, createdAt
+
+Tied to projects._id
+
+appointments
+Mirrors GHL appointments
+
+Fields: contactId, userId, locationId, type, time, ghlAppointmentId, createdAt
+
+Linked to both contacts and users
+
+libraries
+Admin-created part libraries for quote building
+
+Scoped to locationId
+
+Structure: categories[] → items[]
+
+🛡️ Security Practices
+🔑 Authentication: All access is token-based using JWTs (stored in AsyncStorage)
+
+🧾 Authorization:
+
+Backend routes enforce locationId checks before any DB access
+
+User roles (admin/user) can restrict UI features client-side
+
+📁 Data Isolation: No cross-location access is possible
+
+🧼 Sanitization: Input values validated both frontend and backend
+
+🔄 Syncing: GHL remains the system of record for triggers, but MongoDB is the source of truth for the app

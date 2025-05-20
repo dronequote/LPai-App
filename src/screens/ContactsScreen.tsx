@@ -10,6 +10,8 @@ import {
   SafeAreaView,
   TouchableOpacity,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
@@ -19,30 +21,10 @@ import FilterModal from '../components/FilterModal';
 import Modal from 'react-native-modal';
 import AddContactForm from '../components/AddContactForm';
 import ContactDetail from '../components/ContactDetail';
+import { Contact, Project } from '../types/types';
 
-interface Project {
-  _id: string;
-  title: string;
-  status?: string;
-  contactId: string;
-  locationId: string;
-}
 
-interface Contact {
-  _id: string;
-  firstName: string;
-  lastName: string;
-  email: string;
-  phone: string;
-  address?: string;
-  notes?: string;
-  status: string;
-  locationId: string;
-  ghlContactId: string;
-  projects?: Project[];
-}
-
-const topFilters = ['All', 'Open', 'Quoted'];
+const topFilters = ['All', 'Open', 'Quoted', 'Scheduled'];
 
 export default function ContactsScreen() {
   const { user } = useAuth();
@@ -65,20 +47,21 @@ export default function ContactsScreen() {
   const [isDetailVisible, setIsDetailVisible] = useState(false);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
 
-  const fetchContacts = async () => {
-    try {
-      const res = await axios.get('http://192.168.0.62:3000/api/contacts', {
-        params: { locationId: user?.locationId },
-      });
-      setContacts(res.data);
-      setFiltered(res.data);
-    } catch (err) {
-      console.error('Failed to fetch contacts:', err);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  };
+const fetchContacts = async () => {
+  try {
+    const res = await axios.get('http://192.168.0.62:3000/api/contacts/withProjects', {
+      params: { locationId: user?.locationId },
+    });
+
+    setContacts(res.data);
+    setFiltered(res.data);
+  } catch (err) {
+    console.error('Failed to fetch contacts with projects:', err);
+  } finally {
+    setLoading(false);
+    setRefreshing(false);
+  }
+};
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -93,11 +76,23 @@ export default function ContactsScreen() {
     let result = [...contacts];
 
     if (topFilter !== 'All') {
-      result = result.filter((c) => c.status === topFilter);
+      result = result.filter((c) => {
+        const sorted = [...(c.projects || [])].sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+        const latest = sorted[0];
+        return latest?.status === topFilter;
+      });
     }
 
     if (statusFilter) {
-      result = result.filter((c) => c.status === statusFilter);
+      result = result.filter((c) => {
+        const sorted = [...(c.projects || [])].sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+        const latest = sorted[0];
+        return latest?.status === statusFilter;
+      });
     }
 
     if (search.trim()) {
@@ -131,6 +126,16 @@ export default function ContactsScreen() {
     applyFilters();
   }, [search, topFilter, statusFilter, projectFilter, phoneFilter, contacts]);
 
+  const validContacts = filtered.filter(
+    (c) =>
+      c &&
+      typeof c._id === 'string' &&
+      typeof c.firstName === 'string' &&
+      typeof c.lastName === 'string' &&
+      typeof c.email === 'string' &&
+      typeof c.phone === 'string'
+  );
+
   if (loading) return <ActivityIndicator size="large" style={{ marginTop: 32 }} />;
 
   return (
@@ -163,40 +168,65 @@ export default function ContactsScreen() {
               <TouchableOpacity
                 key={item}
                 onPress={() => setTopFilter(item)}
-                style={[
-                  styles.pill,
-                  topFilter === item && styles.pillActive,
-                ]}
+                style={[styles.pill, topFilter === item && styles.pillActive]}
               >
-                <Text
-                  style={[
-                    styles.pillText,
-                    topFilter === item && styles.pillTextActive,
-                  ]}
-                >
+                <Text style={[styles.pillText, topFilter === item && styles.pillTextActive]}>
                   {item}
                 </Text>
               </TouchableOpacity>
             ))}
           </View>
 
-          <Text style={styles.countText}>Total Contacts: {filtered.length}</Text>
+          <Text style={styles.countText}>Total Contacts: {validContacts.length}</Text>
 
-          {filtered.map((contact) => (
+          {(statusFilter || projectFilter || phoneFilter) && (
+            <View style={styles.activeFilters}>
+              <Text style={styles.filterText}>Filters applied</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setStatusFilter(null);
+                  setProjectFilter('');
+                  setPhoneFilter('');
+                }}
+              >
+                <Text style={styles.clearText}>Clear</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {validContacts.map((contact) => (
             <ContactCard
               key={contact._id}
               name={`${contact.firstName} ${contact.lastName}`}
               email={contact.email}
-              status={contact.status}
-              project={contact.projects?.[0]?.title ?? '—'}
-              onPress={() => {
-                setSelectedContact(contact);
-                setIsDetailVisible(true);
+              phone={contact.phone}
+              projects={contact.projects || []}
+              onPress={async () => {
+                try {
+                  const res = await axios.get('http://192.168.0.62:3000/api/projects/byContact', {
+                    params: {
+                      contactId: contact._id,
+                      locationId: user?.locationId,
+                    },
+                  });
+
+                  setSelectedContact({
+                    ...contact,
+                    projects: res.data.map((project: Project) => ({
+                      ...project,
+                      contactName: `${contact.firstName} ${contact.lastName}`,
+                    })),
+                  });
+
+                  setIsDetailVisible(true);
+                } catch (err) {
+                  console.error('❌ Failed to load contact projects:', err);
+                }
               }}
             />
           ))}
 
-          {filtered.length === 0 && (
+          {validContacts.length === 0 && (
             <Text style={styles.empty}>No contacts match your filters.</Text>
           )}
         </ScrollView>
@@ -231,40 +261,50 @@ export default function ContactsScreen() {
           swipeDirection="down"
           style={{ justifyContent: 'flex-end', margin: 0 }}
         >
-          <View
-            style={{
-              backgroundColor: 'white',
-              borderTopLeftRadius: 16,
-              borderTopRightRadius: 16,
-              padding: 20,
-              height: '65%',
-            }}
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={{ flex: 1, justifyContent: 'flex-end' }}
           >
-            <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 12 }}>
-              Add Contact
-            </Text>
-
-            <AddContactForm
-              onSubmit={async (data) => {
-                try {
-                  setSubmitting(true);
-                  await axios.post('http://192.168.0.62:3000/api/contacts', {
-                    ...data,
-                    status: 'Open',
-                    locationId: user?.locationId,
-                  });
-                  setIsAddModalVisible(false);
-                  fetchContacts(); // reload
-                } catch (error) {
-                  console.error(error);
-                  Alert.alert('Error', 'Failed to add contact.');
-                } finally {
-                  setSubmitting(false);
-                }
+            <View
+              style={{
+                backgroundColor: 'white',
+                borderTopLeftRadius: 16,
+                borderTopRightRadius: 16,
+                maxHeight: '90%',
               }}
-              submitting={submitting}
-            />
-          </View>
+            >
+              <ScrollView
+                contentContainerStyle={{ padding: 20, paddingBottom: 40 }}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 12 }}>
+                  Add Contact
+                </Text>
+
+                <AddContactForm
+                  onSubmit={async (data) => {
+                    try {
+                      setSubmitting(true);
+                      await axios.post('http://192.168.0.62:3000/api/contacts/withProjects', {
+                        ...data,
+                        status: 'Open',
+                        locationId: user?.locationId,
+                      });
+                      setIsAddModalVisible(false);
+                      fetchContacts();
+                    } catch (error) {
+                      console.error(error);
+                      Alert.alert('Error', 'Failed to add contact.');
+                    } finally {
+                      setSubmitting(false);
+                    }
+                  }}
+                  submitting={submitting}
+                />
+              </ScrollView>
+            </View>
+          </KeyboardAvoidingView>
         </Modal>
 
         <ContactDetail
@@ -331,5 +371,25 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: 'bold',
     lineHeight: 30,
+  },
+  activeFilters: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F1F2F6',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginBottom: 10,
+    alignSelf: 'flex-start',
+  },
+  filterText: {
+    color: '#1A1F36',
+    fontSize: 13,
+    marginRight: 12,
+  },
+  clearText: {
+    color: '#00B3E6',
+    fontWeight: '600',
+    fontSize: 13,
   },
 });

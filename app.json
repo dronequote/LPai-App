@@ -1,0 +1,45 @@
+{
+  "expo": {
+    "name": "lpai-app",
+    "slug": "lpai-app",
+    "version": "1.0.0",
+    "scheme": "lpai-app",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+        "updates": {
+      "enabled": false
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+        "package": "com.lpai.lpaiapp",
+  "native": {
+    "abiFilters": ["armeabi-v7a", "arm64-v8a"]
+  },
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-web-browser"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "8d34ef8c-c6a3-45c0-838b-c07f936d5667"
+      }
+    },
+    "owner": "lpai"
+  }
+}
+}
