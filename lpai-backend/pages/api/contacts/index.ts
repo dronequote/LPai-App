@@ -68,7 +68,7 @@ async function handleCreateContact(req: NextApiRequest, res: NextApiResponse, db
     // Fetch API key from locations collection
     const locationDoc = await db.collection('locations').findOne({ locationId });
 
-    if (!locationDoc || !locationDoc.ghlApiKey) {
+    if (!locationDoc || !locationDoc.apiKey) {
       console.warn(`⚠️ API key missing for locationId: ${locationId}`);
 
       return res.status(201).json({
@@ -78,7 +78,7 @@ async function handleCreateContact(req: NextApiRequest, res: NextApiResponse, db
       });
     }
 
-    const apiKey = locationDoc.ghlApiKey;
+    const apiKey = locationDoc.apiKey;
 
     // Now sync contact to GHL
     const ghlRes = await axios.post(
