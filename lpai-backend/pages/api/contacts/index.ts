@@ -79,6 +79,7 @@ async function handleCreateContact(req: NextApiRequest, res: NextApiResponse, db
     }
 
     const apiKey = locationDoc.apiKey;
+    console.log(`🛠️ Using API key for GHL:`, apiKey); // REMOVE or mask in production!
 
     // Now sync contact to GHL
     const ghlRes = await axios.post(
