@@ -37,7 +37,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const payload = {
-      userId: user.ghlUserId, // ✅ frontend expects this
+      userId: user.ghlUserId, // ✅ frontend expects thisd
       locationId: user.locationId,
       name: user.name,
       permissions: user.permissions || [], // ✅ required by AuthContext
