@@ -85,28 +85,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Set meetingLocationId to 'default' unless you have custom location configurations
     let meetingLocationId = 'default';
 
-    // Save in MongoDB first (mirrors what the frontend sends)
-    const appointmentDoc: any = {
-      contactId, userId, locationId,
-      start: new Date(start),
-      end: new Date(end),
-      title: title || type,
-      calendarId,
-      notes,
-      type,
-      createdAt: new Date(),
-      meetingLocationType,
-      address,
-    };
-    const result = await db.collection('appointments').insertOne(appointmentDoc);
-    const mongoId = result.insertedId;
-    console.log('[API] Appointment written to Mongo with _id:', mongoId);
+    // --- REMOVE MongoDB INSERT HERE! ---
 
     // Find location for API key
     const location = await db.collection('locations').findOne({ locationId });
     if (!location?.apiKey) {
       console.log('[API] No GHL API key for location', locationId);
-      return res.status(201).json({ ...appointmentDoc, _id: mongoId, ghlSyncError: 'No GHL API key' });
+      return res.status(400).json({ error: 'No GHL API key found for locationId' });
     }
 
     // Build GHL payload using GHL IDs, not Mongo IDs!
@@ -155,24 +140,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // Log the response
       console.log('[API] GHL appointment creation response:', JSON.stringify(ghlRes.data, null, 2));
       const ghlId = ghlRes.data.event?.id || ghlRes.data.id;
-      await db.collection('appointments').updateOne(
-        { _id: mongoId },
-        { $set: { ghlAppointmentId: ghlId } }
-      );
-      return res.status(201).json({ ...appointmentDoc, _id: mongoId, ghlAppointmentId: ghlId });
+      // No Mongo update here!
+      return res.status(201).json({ ghlPayload, ghlResponse: ghlRes.data, ghlAppointmentId: ghlId });
 
     } catch (e: any) {
       // Log the error and payload
       console.error('[API] Failed to sync appointment to GHL', e?.response?.data || e.message);
-      await db.collection('appointments').updateOne(
-        { _id: mongoId },
-        { $set: { ghlSyncError: e.response?.data || e.message || 'Failed to sync to GHL' } }
-      );
-      return res.status(201).json({ ...appointmentDoc, _id: mongoId, ghlSyncError: e.response?.data || e.message });
+      return res.status(500).json({ error: e.response?.data || e.message, ghlPayload });
     }
   }
 
-  // (GET handler unchanged)
+  // (GET handler unchanged, still uses Mongo for reading appointments)
   if (req.method === 'GET') {
     const { locationId, userId, start, end } = req.query;
     if (!locationId) return res.status(400).json({ error: 'Missing locationId' });
