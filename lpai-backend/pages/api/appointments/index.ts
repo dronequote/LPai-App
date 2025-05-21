@@ -10,65 +10,38 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const db = client.db('lpai');
 
   if (req.method === 'POST') {
-    console.log('[API] /api/appointments POST called with raw data:', req.body);
+    // Only log the incoming payload and highlight what's required for debugging
+    console.log('[API] /api/appointments POST raw data:', req.body);
 
     const {
       contactId, userId, locationId, start, end,
-      title = '', calendarId = '', notes = '', type = 'Consultation',
+      title = '', calendarId = '', notes = '',
       locationType = '', customLocation = ''
     } = req.body;
 
-    // Log input types (diagnostic)
-    console.log('[API] Types - contactId:', typeof contactId, 'userId:', typeof userId, 'locationId:', typeof locationId, 'start:', typeof start, 'end:', typeof end, 'calendarId:', typeof calendarId);
-
-    // Validate required fields
+    // Validate required fields (show userId, contactId, etc.)
     if (!contactId || !userId || !locationId || !start || !end || !calendarId) {
-      console.log('[API] Missing required fields', req.body);
       return res.status(400).json({
         error: 'Missing required fields',
         fields: { contactId, userId, locationId, start, end, calendarId }
       });
     }
 
-    // Log what we received for IDs
-    console.log('[API] Will lookup contactId (as ObjectId):', contactId);
-    console.log('[API] Will lookup userId (as ObjectId):', userId);
-
+    // Look up Mongo records
     let contact, user;
     try {
       contact = await db.collection('contacts').findOne({ _id: new ObjectId(contactId) });
       user = await db.collection('users').findOne({ _id: new ObjectId(userId) });
-
-      // Log what we got from Mongo
-      console.log('[API] Contact lookup result:', contact);
-      console.log('[API] User lookup result:', user);
-
-      // Log extracted GHL IDs
-      console.log('[API] Extracted ghlContactId:', contact?.ghlContactId);
-      console.log('[API] Extracted ghlUserId:', user?.ghlUserId);
     } catch (e) {
-      console.error('[API] Failed to convert or lookup IDs:', e);
-      return res.status(400).json({ error: 'Invalid contactId or userId' });
+      return res.status(400).json({ error: 'Invalid contactId or userId format' });
     }
 
-    if (!contact) {
-      console.error('[API] Contact lookup failed:', contactId);
-      return res.status(400).json({ error: 'Contact not found for given contactId' });
-    }
-    if (!user) {
-      console.error('[API] User lookup failed:', userId);
-      return res.status(400).json({ error: 'User not found for given userId' });
-    }
-    if (!contact.ghlContactId) {
-      console.error('[API] Contact found but missing ghlContactId:', contact);
-      return res.status(400).json({ error: 'Contact found but missing ghlContactId' });
-    }
-    if (!user.ghlUserId) {
-      console.error('[API] User found but missing ghlUserId:', user);
-      return res.status(400).json({ error: 'User found but missing ghlUserId' });
-    }
+    if (!contact) return res.status(400).json({ error: 'Contact not found' });
+    if (!user) return res.status(400).json({ error: 'User not found' });
+    if (!contact.ghlContactId) return res.status(400).json({ error: 'Contact found but missing ghlContactId' });
+    if (!user.ghlUserId) return res.status(400).json({ error: 'User found but missing ghlUserId' });
 
-    // Location (address) mapping
+    // Address logic
     let meetingLocationType = locationType || 'address';
     let address = '';
     if (meetingLocationType === 'address') {
@@ -83,42 +56,41 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     let meetingLocationId = 'default';
 
-    // Find location for API key
+    // Get the API key for this location
     const location = await db.collection('locations').findOne({ locationId });
     if (!location?.apiKey) {
-      console.log('[API] No GHL API key for location', locationId);
       return res.status(400).json({ error: 'No GHL API key found for locationId' });
     }
 
-    // ---- LOG what will be sent to GHL as payload ----
+    // Build payload for GHL API
     const ghlPayload: any = {
       title,
       meetingLocationType,
       meetingLocationId,
       overrideLocationConfig: true,
       appointmentStatus: 'confirmed',
-      assignedUserId: user.ghlUserId, // GHL user id
+      assignedUserId: user.ghlUserId,           // GHL user id
       address,
       ignoreDateRange: false,
       toNotify: false,
       ignoreFreeSlotValidation: true,
       calendarId,
       locationId,
-      contactId: contact.ghlContactId, // GHL contact id (NOT Mongo _id!)
+      contactId: contact.ghlContactId,          // GHL contact id (NOT Mongo _id!)
       startTime: start,
       endTime: end,
       notes
     };
 
-    // Remove undefined/null/empty-string fields
+    // Remove empty/undefined/null
     Object.keys(ghlPayload).forEach(
-      (k) => (ghlPayload[k] === undefined || ghlPayload[k] === null || ghlPayload[k] === '') && delete ghlPayload[k]
+      k => (ghlPayload[k] === undefined || ghlPayload[k] === null || ghlPayload[k] === '') && delete ghlPayload[k]
     );
 
-    // --- LOG the FINAL GHL PAYLOAD ---
+    // Helpful: log the actual payload being sent to GHL (for copy-paste if needed)
     console.log('[API] FINAL GHL payload:', JSON.stringify(ghlPayload, null, 2));
 
-    // POST to GHL
+    // Call GoHighLevel API
     try {
       const ghlRes = await axios.post(
         `${GHL_BASE_URL}/calendars/events/appointments`,
@@ -132,17 +104,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           }
         }
       );
-      console.log('[API] GHL appointment creation response:', JSON.stringify(ghlRes.data, null, 2));
-      const ghlId = ghlRes.data.event?.id || ghlRes.data.id;
-      return res.status(201).json({ ghlPayload, ghlResponse: ghlRes.data, ghlAppointmentId: ghlId });
-
+      // Only log success, not full response unless needed
+      console.log('[API] GHL appointment created:', ghlRes.data?.id || ghlRes.data?.event?.id || '(unknown id)');
+      return res.status(201).json({ ghlPayload, ghlResponse: ghlRes.data, ghlAppointmentId: ghlRes.data.event?.id || ghlRes.data.id });
     } catch (e: any) {
-      console.error('[API] Failed to sync appointment to GHL', e?.response?.data || e.message, { ghlPayload });
+      // Only log the error response if available
+      console.error('[API] Failed to sync appointment to GHL', e?.response?.data || e.message);
       return res.status(500).json({ error: e.response?.data || e.message, ghlPayload });
     }
   }
 
-  // (GET handler unchanged)
+  // --- GET handler unchanged ---
   if (req.method === 'GET') {
     const { locationId, userId, start, end } = req.query;
     if (!locationId) return res.status(400).json({ error: 'Missing locationId' });
