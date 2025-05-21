@@ -84,7 +84,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const ghlContactId = mongoContact?.ghlContactId;
         const locationDoc = await db.collection('locations').findOne({ locationId });
         const apiKey = locationDoc?.apiKey;
-        const pipelineId = locationDoc?.pipelineId; // must be set in your locations collection
+        // The frontend sends the selected pipelineId for this project:
+        const pipelineId = rest.pipelineId;
 
         if (apiKey && ghlContactId && pipelineId) {
           const ghlPayload = {
@@ -92,7 +93,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             pipelineId,
             status: status || 'open',
             name: title,
-            notes: rest.notes || '', // pass notes if available
+            notes: rest.notes || '',
             // ...add custom fields mapping here if needed
           };
 
