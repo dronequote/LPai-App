@@ -1,3 +1,4 @@
+// pages/api/locations/byLocation.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
 
@@ -11,11 +12,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const user = await db.collection('users').findOne({ locationId });
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    res.status(200).json({ apiKey: user.apiKey });
+    // 💡 Now fetching from locations, NOT users!
+    const location = await db.collection('locations').findOne({ locationId });
+    if (!location) return res.status(404).json({ error: 'Location not found' });
+    if (!location.apiKey) return res.status(404).json({ error: 'API key not set for this location' });
+
+    res.status(200).json({ apiKey: location.apiKey });
   } catch (err) {
-    console.error('❌ Failed to fetch user by location:', err);
+    console.error('❌ Failed to fetch location by locationId:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
