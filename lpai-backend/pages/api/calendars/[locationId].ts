@@ -1,12 +1,16 @@
+// pages/api/ghl/calendars/[locationId].ts
 import type { NextApiRequest, NextApiResponse } from 'next';
-import clientPromise from '@/lib/mongodb';
+import clientPromise from '../../../../src/lib/mongodb';
 import axios from 'axios';
 
 const GHL_BASE_URL = 'https://services.leadconnectorhq.com';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const { locationId } = req.query;
+  console.log('[Calendars][Sync] Starting for locationId:', locationId);
+
   if (!locationId || typeof locationId !== 'string') {
+    console.warn('[Calendars][Sync] No locationId provided!');
     return res.status(400).json({ error: 'Missing locationId' });
   }
 
@@ -15,11 +19,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const db = client.db('lpai');
     const location = await db.collection('locations').findOne({ locationId });
 
-    if (!location || !location.apiKey) {
-      return res.status(404).json({ error: 'No API key or location found for this locationId' });
+    if (!location) {
+      console.error('[Calendars][Sync] No location found for locationId:', locationId);
+      return res.status(404).json({ error: 'Location not found' });
+    }
+    if (!location.apiKey) {
+      console.error('[Calendars][Sync] No apiKey for location:', locationId);
+      return res.status(404).json({ error: 'No API key for this location' });
     }
 
-    // Call GHL API to get calendars for this location
+    // Fetch calendars from GHL
+    console.log('[Calendars][Sync] Fetching from GHL...');
     const ghlRes = await axios.get(`${GHL_BASE_URL}/calendars`, {
       params: { locationId },
       headers: {
@@ -29,28 +39,39 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       },
     });
 
+    // Log GHL API result count (but not full payload)
+    const fetched = Array.isArray(ghlRes.data.calendars) ? ghlRes.data.calendars.length : 0;
+    console.log(`[Calendars][Sync] GHL returned ${fetched} calendars.`);
+
     const calendars = Array.isArray(ghlRes.data.calendars)
       ? ghlRes.data.calendars.map((c: any) => ({
-          calendarId: c.id,
+          id: c.id,
           name: c.name,
           isActive: c.isActive,
           ...c,
         }))
       : [];
 
-    // Compare to current calendars, only update if changed
+    // Compare and update only if changed
     const current = location.calendars || [];
     const changed = JSON.stringify(current) !== JSON.stringify(calendars);
 
     if (changed) {
       await db.collection('locations').updateOne(
         { locationId },
-        { $set: { calendars } }
+        {
+          $set: {
+            calendars,
+            calendarsUpdatedAt: new Date(),
+          },
+        }
       );
-      console.log(`[Calendars] Updated for location ${locationId} (${calendars.length} total)`);
+      console.log(`[Calendars][Sync] Calendars UPDATED in DB for location ${locationId} (${calendars.length} total).`);
+    } else {
+      console.log(`[Calendars][Sync] Calendars unchanged for location ${locationId}.`);
     }
 
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       updated: changed,
       count: calendars.length,
@@ -58,6 +79,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
   } catch (error: any) {
     console.error('[GHL Calendars Sync Error]', error?.response?.data || error.message);
-    return res.status(500).json({ error: error?.response?.data || error.message });
+    res.status(500).json({ error: error?.response?.data || error.message });
   }
 }
