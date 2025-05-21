@@ -34,15 +34,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Actually fetch from GHL
     let ghlRes;
     try {
-      ghlRes = await axios.get(`${GHL_BASE_URL}/calendars`, {
-        params: { locationId },
-        headers: {
-          'Authorization': `Bearer ${location.apiKey}`,
-          'Version': '2021-04-15',
-          'Accept': 'application/json',
-        },
-        validateStatus: () => true, // Accept all status codes, we'll handle errors below
-      });
+          // Fetch calendars from GHL
+    console.log('[Calendars][Sync] Fetching from GHL...');
+    const ghlRes = await axios.get(`${GHL_BASE_URL}/calendars`, {
+      params: { locationId },
+      headers: {
+        'Authorization': `Bearer ${location.apiKey}`,
+        'Accept': 'application/json',
+        'Content-Type': 'application/json', // <-- add this!
+        'Version': '2021-04-15',            // <-- confirm with GHL docs
+      },
+      validateStatus: () => true, // Let us see any response code
+    });
+    console.log('[Calendars][Sync] GHL Raw Response:', ghlRes.status, ghlRes.data);
+
       console.log(`[Calendars][Sync] GHL API responded with status: ${ghlRes.status}`);
     } catch (err: any) {
       console.error('[Calendars][Sync] Axios error:', err?.response?.data || err.message);
