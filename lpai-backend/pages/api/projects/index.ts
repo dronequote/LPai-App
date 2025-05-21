@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
+import axios from 'axios';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const client = await clientPromise;
@@ -58,23 +59,76 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
-  // POST: Create a new project (flexible, allows any fields)
+  // POST: Create a new project (sync to GHL if possible)
   else if (req.method === 'POST') {
     try {
-      const { contactId, userId, locationId, title } = req.body;
+      const { contactId, userId, locationId, title, status, ...rest } = req.body;
       if (!contactId || !userId || !locationId || !title) {
         return res.status(400).json({ error: 'Missing required fields' });
       }
 
-      // Allow any extra fields (for custom/dynamic project fields)
+      // Allow any extra fields (scopeOfWork, products, etc.)
       const projectData = {
-        ...req.body,
+        contactId, userId, locationId, title, status, ...rest,
         createdAt: new Date(),
       };
 
+      // 1️⃣ Save project in MongoDB
       const result = await db.collection('projects').insertOne(projectData);
 
-      return res.status(201).json({ success: true, projectId: result.insertedId });
+      // 2️⃣ Try to push to GHL as "opportunity" if we have what we need
+      let ghlOpportunityId;
+      try {
+        // Find GHL contact ID
+        const mongoContact = await db.collection('contacts').findOne({ _id: new ObjectId(contactId) });
+        const ghlContactId = mongoContact?.ghlContactId;
+        const locationDoc = await db.collection('locations').findOne({ locationId });
+        const apiKey = locationDoc?.apiKey;
+        const pipelineId = locationDoc?.pipelineId; // must be set in your locations collection
+
+        if (apiKey && ghlContactId && pipelineId) {
+          const ghlPayload = {
+            contactId: ghlContactId,
+            pipelineId,
+            status: status || 'open',
+            name: title,
+            notes: rest.notes || '', // pass notes if available
+            // ...add custom fields mapping here if needed
+          };
+
+          console.log('🚀 GHL Opportunity payload:', ghlPayload);
+
+          const ghlRes = await axios.post(
+            'https://services.leadconnectorhq.com/opportunities/',
+            ghlPayload,
+            {
+              headers: {
+                Authorization: `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+                Version: '2021-07-28',
+              },
+            }
+          );
+
+          ghlOpportunityId = ghlRes.data.opportunity?.id;
+          console.log('✅ GHL Opportunity created:', ghlOpportunityId);
+
+          // Optionally update project with GHL opportunity ID
+          if (ghlOpportunityId) {
+            await db.collection('projects').updateOne(
+              { _id: result.insertedId },
+              { $set: { ghlOpportunityId } }
+            );
+          }
+        } else {
+          console.warn('⚠️ Missing GHL info (apiKey, ghlContactId, pipelineId), skipping GHL sync.');
+          console.log({ apiKey, ghlContactId, pipelineId });
+        }
+      } catch (err: any) {
+        console.error('❌ Failed to sync opportunity with GHL:', err.response?.data || err.message);
+      }
+
+      return res.status(201).json({ success: true, projectId: result.insertedId, ghlOpportunityId });
     } catch (err) {
       console.error('❌ Failed to create project:', err);
       res.status(500).json({ error: 'Failed to create project' });
