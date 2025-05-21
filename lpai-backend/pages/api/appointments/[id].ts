@@ -27,9 +27,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const client = await clientPromise;
   const db = client.db('lpai');
   const { id } = req.query;
+
+  // === LOG: Confirm we're using [id].ts ===
+  console.log(`[API] [id].ts called for /api/appointments/${id} with method: ${req.method}`);
+
+  // POST should never be called on this route
   if (req.method === 'POST') {
-  return res.status(405).json({ error: 'POST not allowed here. Use /api/appointments.' });
-}
+    console.warn(`[API] Attempted POST to [id].ts for appointment ${id} - this is NOT allowed.`);
+    return res.status(405).json({ error: 'POST not allowed here. Use /api/appointments.' });
+  }
   if (!id || typeof id !== 'string') return res.status(400).json({ error: 'Missing appointment id' });
 
   // GET (fetch by id or by GHL event id)
@@ -62,6 +68,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(200).json(appt);
       }
     } catch (err) {
+      console.error('[API] [id].ts GET error:', err);
       return res.status(500).json({ error: 'Failed to fetch appointment', details: err instanceof Error ? err.message : err });
     }
   }
@@ -80,6 +87,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // Update Mongo
       await db.collection('appointments').updateOne({ _id: new ObjectId(id) }, { $set: { ...updateFields } });
 
+      // Log before sending PATCH to GHL
+      console.log(`[API] PATCH/PUT appointment ${id} with fields:`, updateFields);
+
       // Update GHL
       const payload = {
         title: updateFields.title ?? appt.title,
@@ -95,6 +105,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         endTime: updateFields.end ?? appt.end,
         notes: updateFields.notes ?? appt.notes,
       };
+
+      console.log(`[API] Sending PATCH to GHL for appointment ${id}:`, payload);
+
       const ghlRes = await axios.put(
         `${GHL_BASE_URL}/calendars/events/appointments/${appt.ghlAppointmentId}`,
         payload,
@@ -109,6 +122,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       );
       return res.status(200).json({ success: true, updated: updateFields, ghl: ghlRes.data });
     } catch (err: any) {
+      console.error(`[API] [id].ts PATCH/PUT error for appointment ${id}:`, err?.response?.data || err.message || err);
       return res.status(500).json({ error: 'Failed to update appointment', details: err?.response?.data || err.message || err });
     }
   }
@@ -140,6 +154,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               }
             );
             ghlDelete = { status: 'deleted', ghlResponse: ghlRes.data };
+            console.log(`[API] Successfully deleted GHL appointment: ${appt.ghlAppointmentId}`);
           } catch (ghlErr: any) {
             ghlDelete = { status: 'error', ghlError: ghlErr?.response?.data || ghlErr.message };
             // --- Send notification if GHL delete failed ---
@@ -158,12 +173,14 @@ Error:
 ${JSON.stringify(ghlDelete.ghlError, null, 2)}
               `,
             });
+            console.error(`[API] GHL appointment delete failed for: ${appt.ghlAppointmentId}`, ghlDelete.ghlError);
           }
         }
       }
 
       return res.status(200).json({ success: true, mongoDeleted: true, ghlDelete });
     } catch (err: any) {
+      console.error(`[API] [id].ts DELETE error for appointment ${id}:`, err?.response?.data || err.message || err);
       return res.status(500).json({ error: 'Failed to delete appointment', details: err?.response?.data || err.message || err });
     }
   }

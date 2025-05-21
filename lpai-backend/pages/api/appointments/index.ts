@@ -14,8 +14,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     console.log('[API] /api/appointments POST called with raw data:', req.body);
 
     const {
-      contactId,            // Mongo _id of contact (from frontend)
-      userId,               // Mongo _id of user (from frontend)
+      contactId,            // Mongo _id of contact (from frontend, as string)
+      userId,               // Mongo _id of user (from frontend, as string)
       locationId,           // GHL locationId (should be correct)
       start,                // ISO string
       end,                  // ISO string
@@ -90,7 +90,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(201).json({ ...appointmentDoc, _id: mongoId, ghlSyncError: 'No GHL API key' });
     }
 
-    // Build GHL payload
+    // Build GHL payload (now sends GHL contactId and userId)
     const ghlPayload: any = {
       title,
       meetingLocationType,
@@ -153,7 +153,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
-  // (GET handler etc unchanged)
+  // (GET handler unchanged)
   if (req.method === 'GET') {
     const { locationId, userId, start, end } = req.query;
     if (!locationId) return res.status(400).json({ error: 'Missing locationId' });
