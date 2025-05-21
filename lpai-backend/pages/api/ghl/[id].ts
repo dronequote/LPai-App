@@ -11,31 +11,39 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: 'Missing or invalid contact ID' });
   }
 
-  const client = await clientPromise;
-  const db = client.db('lpai');
-
-  const mongoContact = await db.collection('contacts').findOne({ _id: new ObjectId(id) });
-
-  if (!mongoContact) {
-    return res.status(404).json({ error: 'Contact not found in MongoDB' });
-  }
-
-  const location = await db.collection('locations').findOne({ locationId: mongoContact.locationId });
-  const apiKey = location?.apiKey;
-
-  if (!apiKey) {
-    return res.status(400).json({ error: 'Missing GHL API key for this location' });
-  }
-
-  if (!mongoContact.ghlContactId) {
-    return res.status(400).json({ error: 'Contact is not linked to a GHL record' });
-  }
-
   try {
-    // 🔄 Fetch latest from GHL
-    const ghlRes = await axios.get(`https://rest.gohighlevel.com/v1/contacts/${mongoContact.ghlContactId}`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
+    const client = await clientPromise;
+    const db = client.db('lpai');
+
+    const mongoContact = await db.collection('contacts').findOne({ _id: new ObjectId(id) });
+
+    if (!mongoContact) {
+      return res.status(404).json({ error: 'Contact not found in MongoDB' });
+    }
+
+    // === FIX: get API key from locations collection
+    const location = await db.collection('locations').findOne({ locationId: mongoContact.locationId });
+    const apiKey = location?.apiKey;
+
+    if (!apiKey) {
+      return res.status(400).json({ error: 'Missing GHL API key for this location' });
+    }
+
+    if (!mongoContact.ghlContactId) {
+      return res.status(400).json({ error: 'Contact is not linked to a GHL record' });
+    }
+
+    // === Use the correct LeadConnector endpoint and headers
+    const ghlRes = await axios.get(
+      `https://services.leadconnectorhq.com/contacts/${mongoContact.ghlContactId}`,
+      {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          Version: '2021-07-28',
+        },
+      }
+    );
 
     const ghlContact = ghlRes.data?.contact;
     if (!ghlContact) {
@@ -70,8 +78,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     return res.status(200).json({ contact: mongoContact, synced: false });
-  } catch (error) {
-    console.error('❌ GHL Sync Failed:', error);
-    return res.status(500).json({ error: 'Failed to sync with GHL' });
+  } catch (error: any) {
+    console.error('❌ GHL Sync Failed:', error.response?.data || error.message);
+    return res.status(500).json({ error: 'Failed to sync with GHL', detail: error.response?.data || error.message });
   }
 }
