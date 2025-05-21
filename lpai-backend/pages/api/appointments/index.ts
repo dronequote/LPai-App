@@ -18,6 +18,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       locationType = '', customLocation = ''
     } = req.body;
 
+    // Log input types (diagnostic)
+    console.log('[API] Types - contactId:', typeof contactId, 'userId:', typeof userId, 'locationId:', typeof locationId, 'start:', typeof start, 'end:', typeof end, 'calendarId:', typeof calendarId);
+
     // Validate required fields
     if (!contactId || !userId || !locationId || !start || !end || !calendarId) {
       console.log('[API] Missing required fields', req.body);
