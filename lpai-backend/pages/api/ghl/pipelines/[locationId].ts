@@ -20,6 +20,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const location = await db.collection('locations').findOne({ locationId });
     const apiKey = location?.apiKey;
     console.log(`[PIPELINES][API] Location doc:`, location);
+    
     if (!apiKey) {
       console.warn(`[PIPELINES][API] No API key for location ${locationId}`);
       return res.status(400).json({ error: 'API key not found for this location' });
