@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import clientPromise from '../../../src/lib/mongodb';
+import clientPromise from '../../../../src/lib/mongodb';
 import axios from 'axios';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
