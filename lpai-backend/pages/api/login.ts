@@ -37,9 +37,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const payload = {
-      userId: user.ghlUserId,
+      userId: user.ghlUserId, // ✅ frontend expects this
       locationId: user.locationId,
-      role: user.role || 'user',
+      name: user.name,
+      permissions: user.permissions || [], // ✅ required by AuthContext
+      role: user.role || 'user',          // ✅ <-- ADD THIS!
+      _id: user._id,                      // (optional: easier for joins)
+      email: user.email,                  // (optional: for profile screens)
     };
 
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
