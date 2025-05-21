@@ -9,22 +9,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const db = client.db('lpai');
 
   if (req.method === 'POST') {
-    // Get ALL fields you might need
+    // All possible fields from frontend
     const {
-      contactId,            // Mongo _id of contact (from frontend)
-      userId,               // Mongo _id of user (from frontend)
-      locationId,           // GHL LocationId (should be correct)
-      start,                // ISO string (start time)
-      end,                  // ISO string (end time)
+      contactId,            // Mongo _id of contact
+      userId,               // Mongo _id of user
+      locationId,           // GHL locationId (should be correct)
+      start,                // ISO string
+      end,                  // ISO string
       title = '',           // Appointment title
       calendarId = '',      // GHL calendarId
       notes = '',           // Notes
       type = 'Consultation',
-      locationType = '',    // From your frontend: 'address', 'phone', 'googlemeet', 'zoom', 'custom'
+      locationType = '',    // From frontend: 'address', 'phone', 'googlemeet', 'zoom', 'custom'
       customLocation = '',  // From frontend if 'custom'
     } = req.body;
 
-    // Validate required fields for MongoDB AND GHL
+    // Validate required fields for MongoDB and GHL
     if (!contactId || !userId || !locationId || !start || !end || !calendarId) {
       console.log('[API] Missing required fields', req.body);
       return res.status(400).json({
@@ -33,10 +33,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
-    // Fetch contact to get ghlContactId and address
+    // Fetch contact for GHL contactId
     const contact = await db.collection('contacts').findOne({ _id: contactId });
-    // Fetch user to get ghlUserId
+    // Fetch user for GHL userId
     const user = await db.collection('users').findOne({ _id: userId });
+
     if (!contact?.ghlContactId || !user?.ghlUserId) {
       console.log('[API] Missing GHL IDs: contact or user', { contact, user });
       return res.status(400).json({ error: 'Missing GHL contactId or userId' });
@@ -46,9 +47,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     let meetingLocationType = locationType || 'address';
     let address = '';
     if (meetingLocationType === 'address') {
-      address = contact.address || 'TBD';
+      address = contact.address || 'No Address Provided';
     } else if (meetingLocationType === 'custom') {
-      address = customLocation || 'TBD';
+      address = customLocation || 'Custom Location Not Provided';
     } else if (['phone', 'googlemeet', 'zoom'].includes(meetingLocationType)) {
       address = meetingLocationType.charAt(0).toUpperCase() + meetingLocationType.slice(1); // e.g. "Zoom"
     } else {
@@ -144,7 +145,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
-  // (GET handler etc unchanged, just for completeness)
+  // (GET handler etc unchanged)
   if (req.method === 'GET') {
     const { locationId, userId, start, end } = req.query;
     if (!locationId) return res.status(400).json({ error: 'Missing locationId' });
