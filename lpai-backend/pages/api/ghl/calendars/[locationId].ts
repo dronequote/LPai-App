@@ -1,4 +1,3 @@
-// pages/api/ghl/calendars/[locationId].ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../../src/lib/mongodb';
 import axios from 'axios';
@@ -7,7 +6,7 @@ const GHL_BASE_URL = 'https://services.leadconnectorhq.com';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const { locationId } = req.query;
-  console.log('[Calendars][Sync] API CALLED. Params:', req.query);
+  console.log('[Calendars][Sync] Starting for locationId:', locationId);
 
   if (!locationId || typeof locationId !== 'string') {
     console.warn('[Calendars][Sync] No locationId provided!');
@@ -28,41 +27,35 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(404).json({ error: 'No API key for this location' });
     }
 
-    // Log the intent to fetch
-    console.log(`[Calendars][Sync] Fetching calendars from GHL for locationId: ${locationId}`);
-
-    // Actually fetch from GHL
+    // --- Axios request block ---
     let ghlRes;
     try {
-          // Fetch calendars from GHL
-    console.log('[Calendars][Sync] Fetching from GHL...');
-    const ghlRes = await axios.get(`${GHL_BASE_URL}/calendars`, {
-      params: { locationId },
-      headers: {
-        'Authorization': `Bearer ${location.apiKey}`,
-        'Accept': 'application/json',
-        'Content-Type': 'application/json', // <-- add this!
-        'Version': '2021-04-15',            // <-- confirm with GHL docs
-      },
-      validateStatus: () => true, // Let us see any response code
-    });
-    console.log('[Calendars][Sync] GHL Raw Response:', ghlRes.status, ghlRes.data);
-
-      console.log(`[Calendars][Sync] GHL API responded with status: ${ghlRes.status}`);
+      console.log('[Calendars][Sync] Fetching from GHL...');
+      ghlRes = await axios.get(`${GHL_BASE_URL}/calendars`, {
+        params: { locationId },
+        headers: {
+          'Authorization': `Bearer ${location.apiKey}`,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'Version': '2021-04-15', // or latest from docs
+        },
+        validateStatus: () => true, // Let us see non-200s for logging
+      });
+      console.log('[Calendars][Sync] GHL Raw Response:', ghlRes.status, ghlRes.data);
     } catch (err: any) {
-      console.error('[Calendars][Sync] Axios error:', err?.response?.data || err.message);
-      return res.status(502).json({ error: 'Failed to contact GHL API', detail: err?.response?.data || err.message });
+      console.error('[Calendars][Sync] AXIOS error:', err?.response?.data || err.message);
+      return res.status(500).json({ error: 'Failed to reach GHL', detail: err?.response?.data || err.message });
     }
 
-    if (ghlRes.status >= 400) {
-      console.error('[Calendars][Sync] GHL returned error', ghlRes.status, ghlRes.data);
-      return res.status(ghlRes.status).json({
-        error: `GHL API error: ${ghlRes.status}`,
-        detail: ghlRes.data,
+    if (!ghlRes || ghlRes.status >= 400) {
+      console.error('[Calendars][Sync] GHL returned error', ghlRes?.status, ghlRes?.data);
+      return res.status(ghlRes?.status || 500).json({
+        error: `GHL API error: ${ghlRes?.status}`,
+        detail: ghlRes?.data || 'No response data',
       });
     }
 
-    // Log how many calendars
+    // --- Process calendars as before ---
     const fetched = Array.isArray(ghlRes.data.calendars) ? ghlRes.data.calendars.length : 0;
     console.log(`[Calendars][Sync] GHL returned ${fetched} calendars.`);
 
@@ -75,7 +68,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }))
       : [];
 
-    // Compare to current, only update if changed
+    // Compare and update only if changed
     const current = location.calendars || [];
     const changed = JSON.stringify(current) !== JSON.stringify(calendars);
 
@@ -101,7 +94,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       calendars,
     });
   } catch (error: any) {
-    console.error('[GHL Calendars Sync Error]', error?.response?.data || error.message || error);
-    res.status(500).json({ error: error?.response?.data || error.message || error });
+    console.error('[GHL Calendars Sync Error]', error?.response?.data || error.message);
+    res.status(500).json({ error: error?.response?.data || error.message });
   }
 }
