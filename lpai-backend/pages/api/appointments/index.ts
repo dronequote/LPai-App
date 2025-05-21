@@ -8,38 +8,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const client = await clientPromise;
   const db = client.db('lpai');
 
-  // ----- GET: List Appointments -----
-  if (req.method === 'GET') {
-    const { locationId, userId, start, end } = req.query;
-    if (!locationId) return res.status(400).json({ error: 'Missing locationId' });
-
-    const filter: any = { locationId };
-    if (userId) filter.userId = userId;
-    if (start && end) filter.start = { $gte: new Date(start as string), $lte: new Date(end as string) };
-
-    try {
-      const appointments = await db.collection('appointments')
-        .find(filter)
-        .sort({ start: 1 })
-        .toArray();
-      return res.status(200).json(appointments);
-    } catch (err) {
-      return res.status(500).json({ error: 'Failed to fetch appointments', details: err });
-    }
-  }
-
-  // ----- POST: Create Appointment -----
   if (req.method === 'POST') {
     const {
       contactId, userId, locationId, start, end, title = '', calendarId = '', notes = '', type = 'Consultation'
     } = req.body;
 
-    // Validate required fields
+    // Validate required fields for both Mongo and GHL
     if (!contactId || !userId || !locationId || !start || !end || !calendarId) {
-      return res.status(400).json({ error: 'Missing required fields' });
+      console.log('[API] Missing required fields', req.body);
+      return res.status(400).json({ error: 'Missing required fields', fields: { contactId, userId, locationId, start, end, calendarId } });
     }
 
-    // 1. Save in MongoDB first
+    // Save in MongoDB first
     const appointmentDoc: any = {
       contactId, userId, locationId,
       start: new Date(start),
@@ -53,31 +33,39 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const result = await db.collection('appointments').insertOne(appointmentDoc);
     const mongoId = result.insertedId;
 
-    // 2. Find GHL API Key
+    // Find GHL API Key and related calendar info
     const location = await db.collection('locations').findOne({ locationId });
     if (!location?.apiKey) {
+      console.log('[API] No GHL API key for location', locationId);
       return res.status(201).json({ ...appointmentDoc, _id: mongoId, ghlSyncError: 'No GHL API key' });
     }
 
-    // 3. Build GHL payload (only allowed fields!)
+    // Find the calendar in DB for required extra fields (groupId, teamMembers, etc)
+    const calendar = await db.collection('ghl_calendars')?.findOne?.({ calendarId }); // If you mirror GHL calendars
+    // Or add these as needed based on your structure
+
+    // Build minimal GHL payload (required fields only, no nulls)
     const ghlPayload: any = {
       calendarId,
-      contactId,
+      contactId, // Must be GHL contact ID, not Mongo
       locationId,
-      userId,                    // GHL user ID, not Mongo
+      userId, // Must be GHL sub-user ID
       startTime: start,
       endTime: end,
       title: title || type,
       notes,
-      status: "confirmed"        // Or omit if GHL doesn't want it
+      status: "confirmed"
     };
 
-    // Remove undefined/null fields
+    // Remove undefined/null/empty-string fields
     Object.keys(ghlPayload).forEach(
-      (k) => ghlPayload[k] === undefined && delete ghlPayload[k]
+      (k) => !ghlPayload[k] && delete ghlPayload[k]
     );
 
-    // 4. Sync to GHL (errors won’t break Mongo)
+    // LOG the payload you are sending
+    console.log('[API] Sending appointment to GHL:', JSON.stringify(ghlPayload, null, 2));
+
+    // POST to GHL
     try {
       const ghlRes = await axios.post(
         `${GHL_BASE_URL}/calendars/events/appointments`,
@@ -92,7 +80,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
       );
 
-      // GHL returns event ID under different props depending on API version
+      // Log the response
+      console.log('[API] GHL appointment creation response:', JSON.stringify(ghlRes.data, null, 2));
       const ghlId = ghlRes.data.event?.id || ghlRes.data.id;
       await db.collection('appointments').updateOne(
         { _id: mongoId },
@@ -101,6 +90,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(201).json({ ...appointmentDoc, _id: mongoId, ghlAppointmentId: ghlId });
 
     } catch (e: any) {
+      // Log the error and payload
+      console.error('[API] Failed to sync appointment to GHL', e?.response?.data || e.message);
       await db.collection('appointments').updateOne(
         { _id: mongoId },
         { $set: { ghlSyncError: e.response?.data || e.message || 'Failed to sync to GHL' } }
