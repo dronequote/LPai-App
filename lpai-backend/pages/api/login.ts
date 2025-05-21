@@ -30,31 +30,40 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    
     const isMatch = await bcrypt.compare(password, user.hashedPassword);
     if (!isMatch) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    // Payload for JWT (can add/remove fields as needed)
     const payload = {
-      userId: user.ghlUserId, // ✅ frontend expects thisd
+      userId: user.ghlUserId,
       locationId: user.locationId,
       name: user.name,
-      permissions: user.permissions || [], // ✅ required by AuthContext
-      role: user.role || 'user',          // ✅ <-- ADD THIS!
-      _id: user._id,                      // (optional: easier for joins)
-      email: user.email,                  // (optional: for profile screens)
+      permissions: user.permissions || [],
+      role: user.role || 'user',
+      _id: user._id,
+      email: user.email,
     };
 
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
 
-    return res.status(200).json({
+    // --- FULL USER OBJECT returned to frontend (including role) ---
+    const loginResponse = {
       token,
-      userId: user.ghlUserId, // ✅ frontend expects this
+      userId: user.ghlUserId,
       locationId: user.locationId,
       name: user.name,
-      permissions: user.permissions || [], // ✅ required by AuthContext
-    });
+      permissions: user.permissions || [],
+      role: user.role || 'user',  // <-- CRITICAL LINE!
+      _id: user._id,
+      email: user.email,
+    };
+
+    // Debug log (remove in production if you like)
+    console.log('[LOGIN RESPONSE]', loginResponse);
+
+    return res.status(200).json(loginResponse);
 
   } catch (error) {
     console.error('[LOGIN ERROR]', error);
