@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
 import axios from 'axios';
+import { ObjectId } from 'mongodb';
 
 const GHL_BASE_URL = 'https://services.leadconnectorhq.com';
 
@@ -9,10 +10,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const db = client.db('lpai');
 
   if (req.method === 'POST') {
-    // All possible fields from frontend
+    // Log right away to confirm this route is hit!
+    console.log('[API] /api/appointments POST called with raw data:', req.body);
+
     const {
-      contactId,            // Mongo _id of contact
-      userId,               // Mongo _id of user
+      contactId,            // Mongo _id of contact (from frontend)
+      userId,               // Mongo _id of user (from frontend)
       locationId,           // GHL locationId (should be correct)
       start,                // ISO string
       end,                  // ISO string
@@ -33,10 +36,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
-    // Fetch contact for GHL contactId
-    const contact = await db.collection('contacts').findOne({ _id: contactId });
-    // Fetch user for GHL userId
-    const user = await db.collection('users').findOne({ _id: userId });
+    // Always convert to ObjectId for Mongo lookups!
+    let contact, user;
+    try {
+      contact = await db.collection('contacts').findOne({ _id: new ObjectId(contactId) });
+      user = await db.collection('users').findOne({ _id: new ObjectId(userId) });
+    } catch (e) {
+      console.error('[API] Failed to convert IDs to ObjectId:', e);
+      return res.status(400).json({ error: 'Invalid contactId or userId' });
+    }
 
     if (!contact?.ghlContactId || !user?.ghlUserId) {
       console.log('[API] Missing GHL IDs: contact or user', { contact, user });
