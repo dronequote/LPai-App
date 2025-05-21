@@ -14,8 +14,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     console.log('[API] /api/appointments POST called with raw data:', req.body);
 
     const {
-      contactId,            // Mongo _id of contact (from frontend, as string)
-      userId,               // Mongo _id of user (from frontend, as string)
+      contactId,            // Mongo _id of contact (as string)
+      userId,               // Mongo _id of user (as string)
       locationId,           // GHL locationId (should be correct)
       start,                // ISO string
       end,                  // ISO string
@@ -23,8 +23,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       calendarId = '',      // GHL calendarId
       notes = '',           // Notes
       type = 'Consultation',
-      locationType = '',    // From frontend: 'address', 'phone', 'googlemeet', 'zoom', 'custom'
-      customLocation = '',  // From frontend if 'custom'
+      locationType = '',    // 'address', 'phone', 'googlemeet', 'zoom', 'custom'
+      customLocation = '',  // If 'custom'
     } = req.body;
 
     // Validate required fields
@@ -36,11 +36,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
-    // Convert to ObjectId for Mongo lookups
+    // Print the type and value of contactId and userId before lookup
+    console.log('[API] Received contactId:', contactId, typeof contactId);
+    console.log('[API] Received userId:', userId, typeof userId);
+
     let contact, user;
     try {
-      // Log lookup attempt
-      console.log('[API] Converting IDs to ObjectId:', { contactId, userId });
+      // Always convert to ObjectId!
+      console.log('[API] Converting contactId and userId to ObjectId for Mongo lookup...');
       contact = await db.collection('contacts').findOne({ _id: new ObjectId(contactId) });
       user = await db.collection('users').findOne({ _id: new ObjectId(userId) });
       console.log('[API] Lookup results:', { contact, user });
@@ -50,11 +53,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     if (!contact) {
-      console.error('[API] Contact lookup failed:', contactId);
+      console.error('[API] Contact lookup failed for _id:', contactId);
       return res.status(400).json({ error: 'Contact not found for given contactId' });
     }
     if (!user) {
-      console.error('[API] User lookup failed:', userId);
+      console.error('[API] User lookup failed for _id:', userId);
       return res.status(400).json({ error: 'User not found for given userId' });
     }
     if (!contact.ghlContactId) {
@@ -106,21 +109,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(201).json({ ...appointmentDoc, _id: mongoId, ghlSyncError: 'No GHL API key' });
     }
 
-    // Build GHL payload (now sends GHL contactId and userId)
+    // Build GHL payload using GHL IDs, not Mongo IDs!
     const ghlPayload: any = {
       title,
       meetingLocationType,
       meetingLocationId,
       overrideLocationConfig: true,
       appointmentStatus: 'confirmed', // Default to confirmed
-      assignedUserId: user.ghlUserId,           // GHL sub-user id
+      assignedUserId: user.ghlUserId,         // GHL sub-user id
       address,
       ignoreDateRange: false,
       toNotify: false,
       ignoreFreeSlotValidation: true,
       calendarId,
       locationId,
-      contactId: contact.ghlContactId,          // GHL contactId!
+      contactId: contact.ghlContactId,        // GHL contactId!
       startTime: start,
       endTime: end,
       notes
@@ -131,8 +134,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       (k) => (ghlPayload[k] === undefined || ghlPayload[k] === null || ghlPayload[k] === '') && delete ghlPayload[k]
     );
 
-    // LOG what you’re sending to GHL
-    console.log('[API] Sending appointment to GHL:', JSON.stringify(ghlPayload, null, 2));
+    // LOG the final payload to GHL
+    console.log('[API] FINAL GHL payload:', JSON.stringify(ghlPayload, null, 2));
 
     // POST to GHL
     try {
