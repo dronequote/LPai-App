@@ -6,6 +6,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const client = await clientPromise;
   const db = client.db('lpai');
 
+  // GET: Return all projects for a location, enriched with contact info
   if (req.method === 'GET') {
     try {
       const locationId = req.query.locationId as string;
@@ -57,23 +58,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
+  // POST: Create a new project (flexible, allows any fields)
   else if (req.method === 'POST') {
     try {
-      const { contactId, userId, locationId, title, status, notes } = req.body;
-
+      const { contactId, userId, locationId, title } = req.body;
       if (!contactId || !userId || !locationId || !title) {
         return res.status(400).json({ error: 'Missing required fields' });
       }
 
-      const result = await db.collection('projects').insertOne({
-        contactId,
-        userId,
-        locationId,
-        title,
-        status,
-        notes,
+      // Allow any extra fields (for custom/dynamic project fields)
+      const projectData = {
+        ...req.body,
         createdAt: new Date(),
-      });
+      };
+
+      const result = await db.collection('projects').insertOne(projectData);
 
       return res.status(201).json({ success: true, projectId: result.insertedId });
     } catch (err) {
@@ -82,7 +81,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
+  // Method not allowed
   else {
+    res.setHeader('Allow', ['GET', 'POST']);
     return res.status(405).json({ error: 'Method not allowed' });
   }
 }
