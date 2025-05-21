@@ -1,6 +1,6 @@
 // pages/api/ghl/calendars/[locationId].ts
 import type { NextApiRequest, NextApiResponse } from 'next';
-import clientPromise from '../../../../src/lib/mongodb';
+import clientPromise from '../../../src/lib/mongodb';
 import axios from 'axios';
 
 const GHL_BASE_URL = 'https://services.leadconnectorhq.com';
