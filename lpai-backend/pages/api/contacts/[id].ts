@@ -65,30 +65,34 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(200).json({ success: true });
       }
 
-      // === LOGGING LOCATION AND PARTIAL API KEY HERE ===
-      console.log(`🔎 Attempting GHL sync for locationId: ${updated.locationId}`);
-      console.log(`🔑 Using API key: ${apiKey?.slice(0, 8)}...${apiKey?.slice(-4)}`);
+      // === LOGGING LOCATION, KEY, PAYLOAD, AND HEADERS ===
+      const ghlPayload = {
+        firstName: updated.firstName,
+        lastName: updated.lastName,
+        email: updated.email,
+        phone: updated.phone,
+        address1: updated.address,
+        locationId: updated.locationId,  // required by GHL
+        // notes: updated.notes,         // uncomment if your GHL account supports it
+      };
+      const ghlHeaders = {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        Version: '2021-07-28',
+        // 'Accept': 'application/json', // Uncomment if you decide to use it
+      };
+
+      console.log('🚀 SENDING TO GHL:');
+      console.log('URL:', `https://services.leadconnectorhq.com/contacts/${updated.ghlContactId}`);
+      console.log('BODY:', JSON.stringify(ghlPayload, null, 2));
+      console.log('HEADERS:', { ...ghlHeaders, Authorization: `${apiKey?.slice(0, 8)}...${apiKey?.slice(-4)}` });
 
       // 3. Push changes to GHL (LeadConnector) API
       try {
         await axios.put(
           `https://services.leadconnectorhq.com/contacts/${updated.ghlContactId}`,
-          {
-            firstName: updated.firstName,
-            lastName: updated.lastName,
-            email: updated.email,
-            phone: updated.phone,
-            address1: updated.address,
-            locationId: updated.locationId,  // <--- THIS IS THE FIX!
-            // notes: updated.notes,         // (uncomment if using a mapped field for notes)
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${apiKey}`,
-              'Content-Type': 'application/json',
-              Version: '2021-07-28',
-            },
-          }
+          ghlPayload,
+          { headers: ghlHeaders }
         );
         console.log('✅ Contact synced to GHL:', updated.ghlContactId);
       } catch (ghlError: any) {
