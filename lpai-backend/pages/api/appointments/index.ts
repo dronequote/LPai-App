@@ -10,7 +10,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const db = client.db('lpai');
 
   if (req.method === 'POST') {
-    // Log right away to confirm this route is hit!
+    // Log immediately
     console.log('[API] /api/appointments POST called with raw data:', req.body);
 
     const {
@@ -27,7 +27,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       customLocation = '',  // From frontend if 'custom'
     } = req.body;
 
-    // Validate required fields for MongoDB and GHL
+    // Validate required fields
     if (!contactId || !userId || !locationId || !start || !end || !calendarId) {
       console.log('[API] Missing required fields', req.body);
       return res.status(400).json({
@@ -36,19 +36,34 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
-    // Always convert to ObjectId for Mongo lookups!
+    // Convert to ObjectId for Mongo lookups
     let contact, user;
     try {
+      // Log lookup attempt
+      console.log('[API] Converting IDs to ObjectId:', { contactId, userId });
       contact = await db.collection('contacts').findOne({ _id: new ObjectId(contactId) });
       user = await db.collection('users').findOne({ _id: new ObjectId(userId) });
+      console.log('[API] Lookup results:', { contact, user });
     } catch (e) {
       console.error('[API] Failed to convert IDs to ObjectId:', e);
       return res.status(400).json({ error: 'Invalid contactId or userId' });
     }
 
-    if (!contact?.ghlContactId || !user?.ghlUserId) {
-      console.log('[API] Missing GHL IDs: contact or user', { contact, user });
-      return res.status(400).json({ error: 'Missing GHL contactId or userId' });
+    if (!contact) {
+      console.error('[API] Contact lookup failed:', contactId);
+      return res.status(400).json({ error: 'Contact not found for given contactId' });
+    }
+    if (!user) {
+      console.error('[API] User lookup failed:', userId);
+      return res.status(400).json({ error: 'User not found for given userId' });
+    }
+    if (!contact.ghlContactId) {
+      console.error('[API] Contact found but missing ghlContactId:', contact);
+      return res.status(400).json({ error: 'Contact found but missing ghlContactId' });
+    }
+    if (!user.ghlUserId) {
+      console.error('[API] User found but missing ghlUserId:', user);
+      return res.status(400).json({ error: 'User found but missing ghlUserId' });
     }
 
     // Map address/location for GHL
@@ -82,6 +97,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     };
     const result = await db.collection('appointments').insertOne(appointmentDoc);
     const mongoId = result.insertedId;
+    console.log('[API] Appointment written to Mongo with _id:', mongoId);
 
     // Find location for API key
     const location = await db.collection('locations').findOne({ locationId });
@@ -97,14 +113,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       meetingLocationId,
       overrideLocationConfig: true,
       appointmentStatus: 'confirmed', // Default to confirmed
-      assignedUserId: user.ghlUserId,       // GHL sub-user id
+      assignedUserId: user.ghlUserId,           // GHL sub-user id
       address,
       ignoreDateRange: false,
       toNotify: false,
       ignoreFreeSlotValidation: true,
       calendarId,
       locationId,
-      contactId: contact.ghlContactId,      // GHL contactId
+      contactId: contact.ghlContactId,          // GHL contactId!
       startTime: start,
       endTime: end,
       notes
