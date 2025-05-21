@@ -1,3 +1,45 @@
+import type { NextApiRequest, NextApiResponse } from 'next';
+import clientPromise from '../../../src/lib/mongodb';
+import axios from 'axios';
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  const client = await clientPromise;
+  const db = client.db('lpai');
+
+  switch (req.method) {
+    case 'GET':
+      return handleGetContacts(req, res, db);
+
+    case 'POST':
+      return handleCreateContact(req, res, db);
+
+    default:
+      return res.status(405).json({ error: 'Method not allowed' });
+  }
+}
+
+async function handleGetContacts(req: NextApiRequest, res: NextApiResponse, db: any) {
+  const locationId = req.query.locationId as string;
+
+  if (!locationId) {
+    return res.status(400).json({ error: 'Missing locationId' });
+  }
+
+  try {
+    const contacts = await db
+      .collection('contacts')
+      .find({ locationId })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    console.log('📦 contacts found:', contacts.length);
+    return res.status(200).json(contacts);
+  } catch (error) {
+    console.error('❌ Failed to fetch contacts:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
 async function handleCreateContact(req: NextApiRequest, res: NextApiResponse, db: any) {
   const { firstName, lastName, email, phone, notes, locationId, address } = req.body;
 
@@ -39,7 +81,7 @@ async function handleCreateContact(req: NextApiRequest, res: NextApiResponse, db
     console.log(`🔎 Attempting GHL sync for locationId: ${locationId}`);
     console.log(`🔑 Using API key: ${apiKey?.slice(0, 8)}...${apiKey?.slice(-4)}`);
 
-    // Prepare payload and headers for logging
+    // === DEBUG LOGGING FULL OUTGOING REQUEST ===
     const ghlPayload = {
       firstName,
       lastName,
@@ -47,22 +89,19 @@ async function handleCreateContact(req: NextApiRequest, res: NextApiResponse, db
       phone,
       address1: address,
       locationId,
-      // notes, // Uncomment if you use mapped custom field
+      // notes, // Uncomment if using mapped custom field for notes
     };
     const ghlHeaders = {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
       Version: '2021-07-28',
-      // 'Accept': 'application/json', // Uncomment if needed for debug
+      // 'Accept': 'application/json', // Uncomment if you want
     };
-
-    // === LOGGING FULL OUTGOING REQUEST ===
     console.log('🚀 SENDING TO GHL:');
     console.log('URL:', 'https://services.leadconnectorhq.com/contacts/');
     console.log('BODY:', JSON.stringify(ghlPayload, null, 2));
     console.log('HEADERS:', { ...ghlHeaders, Authorization: `${apiKey?.slice(0, 8)}...${apiKey?.slice(-4)}` });
 
-    // Send to GHL
     let ghlContactId: string | undefined = undefined;
     try {
       const ghlRes = await axios.post(
