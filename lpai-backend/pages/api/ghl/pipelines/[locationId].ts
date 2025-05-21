@@ -29,7 +29,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Fetch pipelines from GHL
     let ghlRes;
     try {
-      ghlRes = await axios.get('https://services.leadconnectorhq.com/pipelines/', {
+      ghlRes = await axios.get('https://services.leadconnectorhq.com/opportunities/pipelines/', {
         headers: {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
