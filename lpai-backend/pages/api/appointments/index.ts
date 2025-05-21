@@ -104,7 +104,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       ignoreFreeSlotValidation: true,
       calendarId,
       locationId,
-      contactId: contact.ghlContactId, // GHL contact id
+      contactId: contact.ghlContactId, // GHL contact id (NOT Mongo _id!)
       startTime: start,
       endTime: end,
       notes
