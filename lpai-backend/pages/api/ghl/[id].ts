@@ -1,4 +1,3 @@
-// pages/api/ghl-sync/contact/[id].ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
@@ -16,14 +15,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const db = client.db('lpai');
 
     const mongoContact = await db.collection('contacts').findOne({ _id: new ObjectId(id) });
-
     if (!mongoContact) {
+      console.log('[GHL SYNC] Contact not found in MongoDB for _id:', id);
       return res.status(404).json({ error: 'Contact not found in MongoDB' });
     }
 
     // === FIX: get API key from locations collection
     const location = await db.collection('locations').findOne({ locationId: mongoContact.locationId });
     const apiKey = location?.apiKey;
+
+    console.log('[GHL SYNC] Mongo Contact:', mongoContact);
+    console.log('[GHL SYNC] Location:', location);
+    console.log('[GHL SYNC] Using API key:', apiKey ? apiKey.slice(0, 8) + '...' + apiKey.slice(-4) : 'MISSING');
+    console.log('[GHL SYNC] GHL Contact ID:', mongoContact.ghlContactId);
 
     if (!apiKey) {
       return res.status(400).json({ error: 'Missing GHL API key for this location' });
@@ -47,6 +51,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const ghlContact = ghlRes.data?.contact;
     if (!ghlContact) {
+      console.log('[GHL SYNC] GHL contact not found for ID:', mongoContact.ghlContactId);
       return res.status(404).json({ error: 'GHL contact not found' });
     }
 
@@ -74,9 +79,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         { $set: updated }
       );
 
+      console.log('[GHL SYNC] MongoDB contact updated from GHL.');
       return res.status(200).json({ contact: { ...mongoContact, ...updated }, synced: true });
     }
 
+    console.log('[GHL SYNC] No update needed, already in sync.');
     return res.status(200).json({ contact: mongoContact, synced: false });
   } catch (error: any) {
     console.error('❌ GHL Sync Failed:', error.response?.data || error.message);
