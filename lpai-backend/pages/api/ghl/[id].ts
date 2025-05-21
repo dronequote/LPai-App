@@ -69,9 +69,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(404).json({ error: 'GHL contact not found' });
     }
 
-    // 5️⃣ Compare fields
+    // 5️⃣ Compare fields and log all diffs!
     const ghlUpdated = new Date(ghlContact.updatedAt || 0).getTime();
     const mongoUpdated = new Date(mongoContact.updatedAt || 0).getTime();
+
+    // Log all field diffs
+    console.log('=== GHL Sync Debug ===');
+    console.log('GHL Contact:', ghlContact);
+    console.log('Mongo Contact:', mongoContact);
+    console.log('GHL updatedAt:', ghlContact.updatedAt, 'Mongo updatedAt:', mongoContact.updatedAt);
+    console.log('Type GHL:', typeof ghlContact.updatedAt, 'Type Mongo:', typeof mongoContact.updatedAt);
 
     const fieldsChanged =
       ghlContact.firstName !== mongoContact.firstName ||
@@ -79,8 +86,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       ghlContact.email !== mongoContact.email ||
       ghlContact.phone !== mongoContact.phone;
 
-    console.log(`[GHL SYNC] ➡️ GHL updatedAt: ${ghlContact.updatedAt}, Mongo updatedAt: ${mongoContact.updatedAt}`);
-    console.log(`[GHL SYNC] ➡️ Fields changed:`, fieldsChanged);
+    console.log('firstName changed?', ghlContact.firstName !== mongoContact.firstName, ghlContact.firstName, mongoContact.firstName);
+    console.log('lastName changed?', ghlContact.lastName !== mongoContact.lastName, ghlContact.lastName, mongoContact.lastName);
+    console.log('email changed?', ghlContact.email !== mongoContact.email, ghlContact.email, mongoContact.email);
+    console.log('phone changed?', ghlContact.phone !== mongoContact.phone, ghlContact.phone, mongoContact.phone);
+
+    console.log('Fields changed?', fieldsChanged);
+    console.log('ghlUpdated > mongoUpdated?', ghlUpdated > mongoUpdated, ghlUpdated, mongoUpdated);
 
     if (ghlUpdated > mongoUpdated && fieldsChanged) {
       const updated = {
