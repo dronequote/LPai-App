@@ -91,6 +91,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           const ghlPayload = {
             contactId: ghlContactId,
             pipelineId,
+            locationId, // <-- ADD THIS LINE!
             status: status || 'open',
             name: title,
             notes: rest.notes || '',
