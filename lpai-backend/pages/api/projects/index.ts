@@ -91,10 +91,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           const ghlPayload = {
             contactId: ghlContactId,
             pipelineId,
-            locationId, // <-- ADD THIS LINE!
-            status: status || 'open',
+            locationId,
+            status: 'open', // Always start as open
             name: title,
-            notes: rest.notes || '',
             // ...add custom fields mapping here if needed
           };
 
