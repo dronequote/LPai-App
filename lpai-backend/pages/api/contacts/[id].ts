@@ -65,21 +65,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(200).json({ success: true });
       }
 
-      // === LOGGING LOCATION, KEY, PAYLOAD, AND HEADERS ===
-      const ghlPayload = {
+      // Only send fields GHL expects on UPDATE (no locationId here!)
+      const ghlPayload: Record<string, any> = {
         firstName: updated.firstName,
         lastName: updated.lastName,
         email: updated.email,
         phone: updated.phone,
         address1: updated.address,
-        locationId: updated.locationId,  // required by GHL
-        // notes: updated.notes,         // uncomment if your GHL account supports it
+        // notes: updated.notes, // add if your GHL supports it
       };
       const ghlHeaders = {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
         Version: '2021-07-28',
-        // 'Accept': 'application/json', // Uncomment if you decide to use it
       };
 
       console.log('🚀 SENDING TO GHL:');
