@@ -110,7 +110,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     } catch (e: any) {
       // Log the error response if available
       console.error('[API] Failed to sync appointment to GHL', e?.response?.data || e.message);
-      return res.status(500).json({ error: e.response?.data || e.message, ghlPayload });
+      return res.status(500).json({ error: e?.response?.data || e?.message, ghlPayload });
     }
 
     // --- Step 2: Save appointment locally in MongoDB ---
@@ -139,14 +139,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       savedAppointment = { ...appointmentDoc, _id: insertedId };
       console.log('[API] Local appointment saved with _id:', insertedId);
     } catch (e) {
-      console.error('[API] Failed to save appointment in MongoDB:', e);
+      // TS: e is unknown
+      let errMsg = 'Unknown error';
+      if (e && typeof e === 'object' && 'message' in e) {
+        errMsg = (e as any).message;
+      } else if (typeof e === 'string') {
+        errMsg = e;
+      }
+      console.error('[API] Failed to save appointment in MongoDB:', errMsg);
       // Return GHL success, but warn about local save
       return res.status(201).json({
         ghlPayload,
         ghlResponse,
         ghlAppointmentId: ghlResponse.event?.id || ghlResponse.id,
         warning: 'Appointment created in GHL but failed to save in local DB',
-        error: e.message,
+        error: errMsg,
       });
     }
 
