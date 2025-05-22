@@ -1,7 +1,7 @@
 // pages/api/ghl/calendars/[locationId].ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../../src/lib/mongodb';
-import type { Calendar } from '../../../../../types/types'; // Adjust if needed
+import type { Calendar } from '@types/types'; // Adjust if needed
 import axios from 'axios';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
