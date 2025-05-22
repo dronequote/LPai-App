@@ -1,6 +1,7 @@
 // pages/api/ghl/calendars/[locationId].ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../../src/lib/mongodb';
+import type { Calendar } from '../../../../src/types'; // Adjust if needed
 import axios from 'axios';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -48,11 +49,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // Grab calendars as array
-    const calendars = Array.isArray(ghlRes.data.calendars) ? ghlRes.data.calendars : [];
+    const calendars: Calendar[] = Array.isArray(ghlRes.data.calendars) ? ghlRes.data.calendars : [];
     console.log('[CALENDARS][API] Calendars from GHL:', calendars);
 
     // Fetch current calendars from MongoDB
-    const current = location.calendars || [];
+    const current: Calendar[] = location.calendars || [];
     console.log('[CALENDARS][API] Calendars from MongoDB:', current);
 
     // Compare (simple deep equality)
@@ -60,16 +61,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     console.log('[CALENDARS][API] Calendars changed?', changed);
 
     if (changed) {
+      // Merge: preserve icon, add a *distinct* default for new ones (e.g., 'star-outline')
+      const mergedCalendars: Calendar[] = calendars.map((newCal: Calendar) => {
+        const existing = current.find((oldCal: Calendar) =>
+          oldCal.id === newCal.id ||
+          oldCal.calendarId === newCal.id ||
+          oldCal.id === newCal.calendarId
+        );
+        return {
+          ...newCal,
+          icon: existing?.icon || 'star-outline', // <-- DISTINCT DEFAULT for testing
+        };
+      });
+
       await db.collection('locations').updateOne(
         { locationId },
-        { $set: { calendars, calendarsUpdatedAt: new Date() } }
+        { $set: { calendars: mergedCalendars, calendarsUpdatedAt: new Date() } }
       );
       console.log(`[CALENDARS][API] MongoDB calendars updated for location ${locationId}`);
-      return res.status(200).json({ success: true, updated: true, calendars });
+      return res.status(200).json({ success: true, updated: true, calendars: mergedCalendars });
     }
 
     console.log('[CALENDARS][API] No changes, returning current calendars');
-    return res.status(200).json({ success: true, updated: false, calendars });
+    return res.status(200).json({ success: true, updated: false, calendars: current });
 
   } catch (error: any) {
     console.error('[CALENDARS][API] General error:', error.response?.data || error.message);
