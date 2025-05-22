@@ -28,10 +28,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const db = client.db('lpai');
   const { id } = req.query;
 
-  // === LOG: Confirm we're using [id].ts ===
   console.log(`[API] [id].ts called for /api/appointments/${id} with method: ${req.method}`);
 
-  // POST should never be called on this route
   if (req.method === 'POST') {
     console.warn(`[API] Attempted POST to [id].ts for appointment ${id} - this is NOT allowed.`);
     return res.status(405).json({ error: 'POST not allowed here. Use /api/appointments.' });
@@ -73,7 +71,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
-  // PATCH/PUT (update)
+  // PATCH/PUT (edit or cancel)
   if (req.method === 'PATCH' || req.method === 'PUT') {
     const updateFields = req.body || {};
     try {
@@ -84,18 +82,59 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(400).json({ error: 'Missing GHL data for this appointment' });
       }
 
-      // Update Mongo
+      // If cancellation
+      if (updateFields.status === 'cancelled') {
+        // 1. Update status in Mongo
+        await db.collection('appointments').updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status: 'cancelled' } }
+        );
+
+        // 2. Send PATCH to GHL to cancel appointment
+        try {
+          const ghlCancelRes = await axios.put(
+            `${GHL_BASE_URL}/calendars/events/appointments/${appt.ghlAppointmentId}`,
+            { appointmentStatus: 'cancelled' },
+            {
+              headers: {
+                'Authorization': `Bearer ${location.apiKey}`,
+                'Version': '2021-04-15',
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+              }
+            }
+          );
+          return res.status(200).json({ success: true, cancelled: true, ghl: ghlCancelRes.data });
+        } catch (ghlErr: any) {
+          await sendNotificationEmail({
+            subject: '[LPai] GHL Appointment Cancel FAILED',
+            text: `
+GHL appointment failed to cancel!
+
+Mongo _id: ${id}
+GHL Appointment ID: ${appt.ghlAppointmentId}
+Location ID: ${appt.locationId}
+Contact ID: ${appt.contactId}
+Time: ${appt.start} - ${appt.end}
+
+Error:
+${JSON.stringify(ghlErr?.response?.data || ghlErr.message, null, 2)}
+            `,
+          });
+          console.error(`[API] GHL appointment cancel failed for: ${appt.ghlAppointmentId}`, ghlErr?.response?.data || ghlErr.message);
+          return res.status(500).json({ error: 'Failed to cancel in GHL', details: ghlErr?.response?.data || ghlErr.message });
+        }
+      }
+
+      // Else: normal edit/update flow
       await db.collection('appointments').updateOne({ _id: new ObjectId(id) }, { $set: { ...updateFields } });
 
-      // Log before sending PATCH to GHL
-      console.log(`[API] PATCH/PUT appointment ${id} with fields:`, updateFields);
-
-      // Update GHL
+      // Compose payload for GHL edit
       const payload = {
         title: updateFields.title ?? appt.title,
         meetingLocationType: updateFields.meetingLocationType ?? appt.meetingLocationType ?? 'custom',
         meetingLocationId: updateFields.meetingLocationId ?? appt.meetingLocationId ?? 'default',
-        appointmentStatus: updateFields.appointmentStatus ?? 'new',
+        appointmentStatus: updateFields.appointmentStatus ?? appt.appointmentStatus ?? 'new',
         assignedUserId: updateFields.userId ?? appt.userId,
         address: updateFields.address ?? appt.address ?? '',
         calendarId: updateFields.calendarId ?? appt.calendarId,
@@ -105,8 +144,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         endTime: updateFields.end ?? appt.end,
         notes: updateFields.notes ?? appt.notes,
       };
-
-      console.log(`[API] Sending PATCH to GHL for appointment ${id}:`, payload);
 
       const ghlRes = await axios.put(
         `${GHL_BASE_URL}/calendars/events/appointments/${appt.ghlAppointmentId}`,
@@ -127,64 +164,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
-  // DELETE (delete appointment in Mongo & GHL)
-  if (req.method === 'DELETE') {
-    try {
-      // 1. Find original appointment (need locationId & ghlAppointmentId)
-      const appt = await db.collection('appointments').findOne({ _id: new ObjectId(id) });
-      if (!appt) return res.status(404).json({ error: 'Appointment not found' });
-
-      // 2. Delete from Mongo first
-      await db.collection('appointments').deleteOne({ _id: new ObjectId(id) });
-
-      // 3. Attempt to delete from GHL if possible
-      let ghlDelete = null;
-      if (appt.ghlAppointmentId && appt.locationId) {
-        const location = await db.collection('locations').findOne({ locationId: appt.locationId });
-        if (location?.apiKey) {
-          try {
-            const ghlRes = await axios.delete(
-              `${GHL_BASE_URL}/calendars/events/appointments/${appt.ghlAppointmentId}`,
-              {
-                headers: {
-                  'Authorization': `Bearer ${location.apiKey}`,
-                  'Version': '2021-04-15',
-                  'Accept': 'application/json',
-                }
-              }
-            );
-            ghlDelete = { status: 'deleted', ghlResponse: ghlRes.data };
-            console.log(`[API] Successfully deleted GHL appointment: ${appt.ghlAppointmentId}`);
-          } catch (ghlErr: any) {
-            ghlDelete = { status: 'error', ghlError: ghlErr?.response?.data || ghlErr.message };
-            // --- Send notification if GHL delete failed ---
-            await sendNotificationEmail({
-              subject: '[LPai] GHL Appointment Delete FAILED',
-              text: `
-GHL appointment failed to delete!
-
-Mongo _id: ${id}
-GHL Appointment ID: ${appt.ghlAppointmentId}
-Location ID: ${appt.locationId}
-Contact ID: ${appt.contactId}
-Time: ${appt.start} - ${appt.end}
-
-Error:
-${JSON.stringify(ghlDelete.ghlError, null, 2)}
-              `,
-            });
-            console.error(`[API] GHL appointment delete failed for: ${appt.ghlAppointmentId}`, ghlDelete.ghlError);
-          }
-        }
-      }
-
-      return res.status(200).json({ success: true, mongoDeleted: true, ghlDelete });
-    } catch (err: any) {
-      console.error(`[API] [id].ts DELETE error for appointment ${id}:`, err?.response?.data || err.message || err);
-      return res.status(500).json({ error: 'Failed to delete appointment', details: err?.response?.data || err.message || err });
-    }
-  }
-
-  res.setHeader('Allow', ['GET', 'PATCH', 'PUT', 'DELETE']);
+  res.setHeader('Allow', ['GET', 'PATCH', 'PUT']);
   return res.status(405).json({ error: `Method ${req.method} not allowed` });
 }
