@@ -12,6 +12,7 @@
     "seed:contacts": "ts-node scripts/seedContacts.ts"
   },
   "dependencies": {
+    "@lpai/types": "workspace:*",
     "@faker-js/faker": "^9.8.0",
     "@react-native-async-storage/async-storage": "^2.1.2",
     "@react-navigation/native": "^7.1.9",
