@@ -8,7 +8,6 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "postinstall": "yarn workspace @lpai/types build",
     "seed": "ts-node --project tsconfig.scripts.json scripts/seedUser.ts",
     "seed:contacts": "ts-node scripts/seedContacts.ts"
   },
