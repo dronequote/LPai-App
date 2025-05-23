@@ -1,6 +1,11 @@
 {
   "installCommand": "npm i -g corepack && corepack enable && corepack prepare yarn@4.9.1 --activate && yarn install",
   "buildCommand": "yarn workspace lpai-backend build",
-  "framework": "nextjs",
-  "outputDirectory": "lpai-backend"
+  "outputDirectory": "lpai-backend/.next",
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "/api/:path*"
+    }
+  ]
 }
