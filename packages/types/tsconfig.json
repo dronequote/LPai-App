@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "declaration": true,             // Generate .d.ts files (type declarations)
+    "emitDeclarationOnly": true,     // Don't output .js, just .d.ts (for pure types)
+    "outDir": "dist",                // Output dir for compiled types
+    "composite": true,               // Enables project references (best practice for monorepos)
+    "strict": true,                  // You can remove if you want, but recommended
+    "skipLibCheck": true             // Ignore type-checking of dependencies
+  },
+  "include": [
+    "index.ts",
+    "**/*.ts"
+  ]
+}

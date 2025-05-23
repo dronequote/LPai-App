@@ -11,11 +11,11 @@ import {
   Platform,
   TouchableOpacity,
 } from 'react-native';
-import axios from 'axios';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useForm, Controller } from 'react-hook-form';
 import { yupResolver } from '@hookform/resolvers/yup';
 import * as yup from 'yup';
+import api from '../lib/api'; // ✅ Centralized axios instance
 
 const schema = yup.object().shape({
   firstName: yup.string().required('Required'),
@@ -52,7 +52,7 @@ export default function EditContactScreen() {
   useEffect(() => {
     const fetchContact = async () => {
       try {
-        const res = await axios.get(`http://192.168.0.62:3000/api/contacts/${contactId}`);
+        const res = await api.get(`/api/contacts/${contactId}`);
         reset(res.data);
       } catch (err) {
         console.error(err);
@@ -69,7 +69,7 @@ export default function EditContactScreen() {
   const onSubmit = async (data: any) => {
     try {
       setSubmitting(true);
-      await axios.patch(`http://192.168.0.62:3000/api/contacts/${contactId}`, data);
+      await api.patch(`/api/contacts/${contactId}`, data);
       Alert.alert('Success', 'Contact updated');
       navigation.goBack();
     } catch (err) {
@@ -91,29 +91,32 @@ export default function EditContactScreen() {
         <Text style={styles.header}>Edit Contact</Text>
 
         {(['firstName', 'lastName', 'email', 'phone', 'notes'] as const).map((field) => (
-        <View key={field}>
+          <View key={field}>
             <Text style={styles.label}>{field.replace(/^\w/, (c) => c.toUpperCase())}</Text>
             <Controller
-            control={control}
-            name={field}
-            render={({ field: { value, onChange } }) => (
+              control={control}
+              name={field}
+              render={({ field: { value, onChange } }) => (
                 <TextInput
-                style={[styles.input, field === 'notes' && styles.notesInput]}
-                value={value}
-                onChangeText={onChange}
-                placeholder={`Enter ${field}`}
-                multiline={field === 'notes'}
+                  style={[styles.input, field === 'notes' && styles.notesInput]}
+                  value={value}
+                  onChangeText={onChange}
+                  placeholder={`Enter ${field}`}
+                  multiline={field === 'notes'}
                 />
-            )}
+              )}
             />
             {errors[field] && (
-            <Text style={styles.error}>{(errors as any)[field]?.message}</Text>
+              <Text style={styles.error}>{(errors as any)[field]?.message}</Text>
             )}
-        </View>
+          </View>
         ))}
 
-
-        <TouchableOpacity style={styles.button} onPress={handleSubmit(onSubmit)} disabled={submitting}>
+        <TouchableOpacity
+          style={styles.button}
+          onPress={handleSubmit(onSubmit)}
+          disabled={submitting}
+        >
           <Text style={styles.buttonText}>{submitting ? 'Saving...' : 'Save Changes'}</Text>
         </TouchableOpacity>
       </ScrollView>

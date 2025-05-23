@@ -4,21 +4,20 @@ import {
   Text,
   TextInput,
   StyleSheet,
-  ActivityIndicator,
   Alert,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
   TouchableOpacity,
 } from 'react-native';
-import axios from 'axios';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useForm, Controller } from 'react-hook-form';
 import { yupResolver } from '@hookform/resolvers/yup';
 import * as yup from 'yup';
 import { RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../navigation/StackNavigator';
-import { Contact } from '../types/types';
+import { Contact } from '../../packages/types/dist';
+import api from '../lib/api'; // ✅ Centralized Axios instance
 
 const schema = yup.object().shape({
   firstName: yup.string().required('Required'),
@@ -71,7 +70,7 @@ export default function EditContactScreen() {
   const onSubmit = async (data: any) => {
     try {
       setSubmitting(true);
-      await axios.patch(`http://192.168.0.62:3000/api/contacts/${contact._id}`, data);
+      await api.patch(`/api/contacts/${contact._id}`, data);
       Alert.alert('Success', 'Contact updated');
       navigation.goBack();
     } catch (err) {

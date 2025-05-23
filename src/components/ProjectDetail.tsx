@@ -9,12 +9,13 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { getStrippedTitle } from '../utils/projectUtils';
-import { Project as BaseProject } from '../types/types';
+import { Project as BaseProject } from '../../packages/types/dist';
 
 interface ExtendedProject extends BaseProject {
   contactName?: string;
   phone?: string;
   email?: string;
+  [key: string]: any; // Allow dynamic fields
 }
 
 interface ProjectDetailProps {
@@ -23,9 +24,24 @@ interface ProjectDetailProps {
   project: ExtendedProject | null;
 }
 
-
 export default function ProjectDetail({ isVisible, onClose, project }: ProjectDetailProps) {
   if (!isVisible || !project) return null;
+
+  // Display dynamic fields not already rendered above
+  const excluded = [
+    '_id', 'title', 'contactName', 'phone', 'email', 'status', 'notes', 'createdAt',
+    'updatedAt', '__v', 'userId', 'locationId', 'contactId'
+  ];
+  const extraFields = Object.entries(project)
+    .filter(([key, val]) => !excluded.includes(key) && val && typeof val !== 'object')
+    .map(([key, value]) => (
+      <React.Fragment key={key}>
+        <Text style={styles.label}>
+          {key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase())}
+        </Text>
+        <Text style={styles.value}>{String(value)}</Text>
+      </React.Fragment>
+    ));
 
   return (
     <View style={styles.overlay}>
@@ -77,6 +93,9 @@ export default function ProjectDetail({ isVisible, onClose, project }: ProjectDe
               </Text>
             </>
           )}
+
+          {/* Render any dynamic fields */}
+          {extraFields}
         </ScrollView>
       </View>
     </View>
@@ -128,10 +147,10 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   projectTitle: {
-  fontSize: 18,
-  fontWeight: '600',
-  color: '#1A1F36',
-  marginTop: 4,
-},
-
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1A1F36',
+    marginTop: 4,
+  },
 });
+

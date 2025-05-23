@@ -23,7 +23,7 @@ module.exports = function (api) {
           [
             '@babel/preset-typescript',
             {
-              tsconfigPath: './tsconfig.expo.json', // ✅ Explicitly point to Expo's TS config
+              tsconfigPath: './tsconfig.json', // ✅ Adjust this if you're not using a separate Expo-specific tsconfig
             },
           ],
         ],

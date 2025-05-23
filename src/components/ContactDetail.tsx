@@ -7,15 +7,16 @@ import {
   ScrollView,
   Dimensions,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import axios from 'axios';
 import { getStrippedTitle } from '../utils/projectUtils';
-import { Contact, Project } from '../types/types';
+import { Contact, Project } from '../../packages/types/dist';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { RouteProp, useRoute } from '@react-navigation/native';
 import { RootStackParamList } from '../navigation/StackNavigator';
+import api from '../lib/api';
+import { useAuth } from '../contexts/AuthContext';
 
 interface Props {
   isVisible: boolean;
@@ -26,43 +27,77 @@ interface Props {
 export default function ContactDetail({ isVisible, onClose, contact }: Props) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(false);
-  const navigation = useNavigation<NativeStackNavigationProp<any>>();
+  const [syncedContact, setSyncedContact] = useState<Contact | null>(contact);
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const { token } = useAuth();
 
   useEffect(() => {
-    const fetchProjects = async () => {
+    const syncAndLoad = async () => {
       if (!contact?._id) return;
       setLoading(true);
-      try {
-        const res = await axios.get(`http://192.168.0.62:3000/api/projects/byContact`, {
-          params: {
-            contactId: contact._id,
-            locationId: contact.locationId,
-          },
-        });
+      let updated = contact;
 
-        setProjects(
-          res.data.map((project: Project) => ({
-            ...project,
-            contactName: `${contact.firstName} ${contact.lastName}`,
-          }))
-        );
+      try {
+        // 1. 🔄 Sync with GHL if GHL contact exists
+        if (contact.ghlContactId) {
+          console.log('[ContactDetail] Attempting to sync contact from /api/ghl/[id]');
+          try {
+            // GET request to your backend sync endpoint
+            const syncRes = await api.get(
+              `/api/ghl/${contact._id}`,
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+            updated = syncRes.data.contact;
+            if (syncRes.data.synced) {
+              console.log('[ContactDetail] Contact was synced from GHL');
+            } else {
+              console.log('[ContactDetail] Contact already in sync with GHL');
+            }
+          } catch (err: any) {
+            // Log out error response
+            console.error('[ContactDetail] Error syncing contact:', err?.response?.data || err?.message || err);
+            Alert.alert('Sync Error', `Failed to sync contact from GHL: ${err?.response?.data?.error || err.message || 'Unknown error'}`);
+          }
+        } else {
+          console.log('[ContactDetail] No GHL contact ID found, skipping sync.');
+        }
+
+        setSyncedContact(updated);
+
+        // 2. 📦 Fetch Projects
+        try {
+          const projRes = await api.get('/api/projects/byContact', {
+            params: {
+              contactId: updated._id,
+              locationId: updated.locationId,
+            },
+            headers: { Authorization: `Bearer ${token}` },
+          });
+
+          setProjects(
+            projRes.data.map((project: Project) => ({
+              ...project,
+              contactName: `${updated.firstName} ${updated.lastName}`,
+            }))
+          );
+        } catch (projErr: any) {
+          console.error('[ContactDetail] Failed to fetch projects:', projErr?.response?.data || projErr?.message || projErr);
+        }
       } catch (err) {
-        console.error('Failed to load projects for contact', err);
+        console.error('[ContactDetail] Unexpected error in syncAndLoad:', err);
       } finally {
         setLoading(false);
       }
     };
 
     if (isVisible && contact?._id) {
-      fetchProjects();
+      syncAndLoad();
     }
-  }, [contact, isVisible]);
+  }, [isVisible, contact?._id, token]);
 
-  if (!isVisible || !contact) return null;
+  if (!isVisible || !syncedContact) return null;
 
-  const fullName = `${contact.firstName} ${contact.lastName}`;
-
-  // Safe badge style lookup
+  const fullName = `${syncedContact.firstName} ${syncedContact.lastName}`;
   const getBadgeStyle = (status: string) => {
     const key = `badge_${status.replace(/\s/g, '')}` as keyof typeof styles;
     return styles[key] || {};
@@ -77,9 +112,9 @@ export default function ContactDetail({ isVisible, onClose, contact }: Props) {
             <View style={{ flexDirection: 'row', gap: 12 }}>
               <TouchableOpacity
                 onPress={() => {
-                  onClose(); // close drawer first
+                  onClose();
                   setTimeout(() => {
-                    navigation.navigate('EditContact', { contact });
+                    navigation.navigate('EditContact', { contact: syncedContact });
                   }, 250);
                 }}
               >
@@ -95,31 +130,31 @@ export default function ContactDetail({ isVisible, onClose, contact }: Props) {
           <Text style={styles.value}>{fullName}</Text>
 
           <Text style={styles.label}>Email</Text>
-          <Text style={styles.value}>{contact.email}</Text>
+          <Text style={styles.value}>{syncedContact.email}</Text>
 
-          {contact.phone && (
+          {syncedContact.phone && (
             <>
               <Text style={styles.label}>Phone</Text>
-              <Text style={styles.value}>{contact.phone}</Text>
+              <Text style={styles.value}>{syncedContact.phone}</Text>
             </>
           )}
 
-          {contact.address && (
+          {syncedContact.address && (
             <>
               <Text style={styles.label}>Address</Text>
-              <Text style={styles.value}>{contact.address}</Text>
+              <Text style={styles.value}>{syncedContact.address}</Text>
             </>
           )}
 
-          {contact.status && (
+          {syncedContact.status && (
             <>
               <Text style={styles.label}>Status</Text>
-              <Text style={styles.value}>{contact.status}</Text>
+              <Text style={styles.value}>{syncedContact.status}</Text>
             </>
           )}
 
           <Text style={styles.label}>Notes</Text>
-          <Text style={styles.value}>{contact.notes || '—'}</Text>
+          <Text style={styles.value}>{syncedContact.notes || '—'}</Text>
 
           <Text style={styles.label}>Projects</Text>
           {loading ? (
@@ -145,6 +180,7 @@ export default function ContactDetail({ isVisible, onClose, contact }: Props) {
 }
 
 const styles = StyleSheet.create({
+  // ... (styles unchanged)
   overlay: {
     position: 'absolute',
     top: 0,
@@ -161,21 +197,14 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     shadowOffset: { width: -3, height: 0 },
   },
-  container: {
-    flex: 1,
-    padding: 20,
-  },
+  container: { flex: 1, padding: 20 },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 16,
   },
-  header: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#1A1F36',
-  },
+  header: { fontSize: 22, fontWeight: '700', color: '#1A1F36' },
   label: {
     marginTop: 16,
     fontSize: 14,
@@ -189,23 +218,18 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   projectCard: {
-  marginTop: 12,
-  marginHorizontal: 6, // ✅ adds breathing room on both sides
-  padding: 16,
-  backgroundColor: '#fff',
-  borderRadius: 12,
-  shadowColor: '#000',
-  shadowOpacity: 0.1,
-  shadowRadius: 10,
-  shadowOffset: { width: 0, height: 4 },
-  elevation: 6,
-},
-
-  projectTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#1A1F36',
+    marginTop: 12,
+    marginHorizontal: 6,
+    padding: 16,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
   },
+  projectTitle: { fontSize: 15, fontWeight: '600', color: '#1A1F36' },
   statusBadge: {
     paddingVertical: 2,
     paddingHorizontal: 8,
@@ -213,11 +237,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     marginTop: 6,
   },
-  badgeText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#fff',
-  },
+  badgeText: { fontSize: 12, fontWeight: '600', color: '#fff' },
   badge_Open: { backgroundColor: '#3498db' },
   badge_Quoted: { backgroundColor: '#f1c40f' },
   badge_Scheduled: { backgroundColor: '#9b59b6' },

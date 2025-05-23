@@ -2,7 +2,8 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface User {
-  userId: string;
+  _id?: string;        // Mongo ObjectId, optional for legacy support
+  userId: string;      // GHL userId
   name: string;
   email: string;
   role: string;

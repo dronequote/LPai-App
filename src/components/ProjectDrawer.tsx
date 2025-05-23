@@ -17,6 +17,8 @@ interface Project {
   contactId: string;
   status?: string;
   notes?: string;
+  // Add any future fields here (scopeOfWork, products, etc.)
+  [key: string]: any; // allow dynamic extras
 }
 
 interface Props {
@@ -29,6 +31,19 @@ export default function ProjectDetail({ isVisible, onClose, project }: Props) {
   const navigation = useNavigation();
 
   if (!project) return null;
+
+  // Helper: Render extra fields if any
+  const renderExtras = () => {
+    const exclude = ['_id', 'title', 'contactName', 'contactId', 'status', 'notes'];
+    return Object.entries(project)
+      .filter(([key]) => !exclude.includes(key))
+      .map(([key, value]) => (
+        <React.Fragment key={key}>
+          <Text style={styles.label}>{key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}</Text>
+          <Text style={styles.value}>{value || '—'}</Text>
+        </React.Fragment>
+      ));
+  };
 
   return (
     <Modal
@@ -67,6 +82,9 @@ export default function ProjectDetail({ isVisible, onClose, project }: Props) {
 
           <Text style={styles.label}>Notes</Text>
           <Text style={styles.value}>{project.notes || '—'}</Text>
+
+          {/* Renders any future/dynamic fields */}
+          {renderExtras()}
         </ScrollView>
 
         <TouchableOpacity style={styles.closeButton} onPress={onClose}>

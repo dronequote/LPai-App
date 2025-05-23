@@ -13,7 +13,6 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '@react-navigation/native';
 import ProjectCard from '../components/ProjectCard';
@@ -21,6 +20,7 @@ import FilterModal from '../components/FilterModal';
 import Modal from 'react-native-modal';
 import AddProjectForm from '../components/AddProjectForm';
 import ProjectDetail from '../components/ProjectDetail';
+import api from '../lib/api';
 
 interface Project {
   _id: string;
@@ -51,13 +51,14 @@ export default function ProjectsScreen() {
 
   const [isAddModalVisible, setIsAddModalVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [isSyncingPipelines, setIsSyncingPipelines] = useState(false); // <--- NEW
 
   const [isDetailVisible, setIsDetailVisible] = useState(false);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
 
   const fetchProjects = async () => {
     try {
-      const res = await axios.get('http://192.168.0.62:3000/api/projects', {
+      const res = await api.get('/api/projects', {
         params: { locationId: user?.locationId },
       });
       setProjects(res.data);
@@ -118,6 +119,23 @@ export default function ProjectsScreen() {
   useEffect(() => {
     applyFilters();
   }, [search, topFilter, statusFilter, projectFilter, phoneFilter, projects]);
+
+  // ---- Handle Add Project Button ----
+  const handleAddProject = async () => {
+    if (!user?.locationId) {
+      Alert.alert('Error', 'Missing location ID');
+      return;
+    }
+    setIsSyncingPipelines(true);
+    try {
+      await api.get(`/api/ghl/pipelines/${user.locationId}`);
+    } catch (e) {
+      console.error('[ProjectsScreen] Failed to sync pipelines:', e);
+      // You can optionally show an alert or toast here
+    }
+    setIsSyncingPipelines(false);
+    setIsAddModalVisible(true);
+  };
 
   if (loading) return <ActivityIndicator size="large" style={{ marginTop: 32 }} />;
 
@@ -198,9 +216,10 @@ export default function ProjectsScreen() {
 
         <TouchableOpacity
           style={styles.addButton}
-          onPress={() => setIsAddModalVisible(true)}
+          onPress={handleAddProject}
+          disabled={isSyncingPipelines}
         >
-          <Text style={styles.addIcon}>＋</Text>
+          <Text style={styles.addIcon}>{isSyncingPipelines ? '⏳' : '＋'}</Text>
         </TouchableOpacity>
 
         <FilterModal
@@ -251,7 +270,7 @@ export default function ProjectsScreen() {
                   onSubmit={async (data) => {
                     try {
                       setSubmitting(true);
-                      await axios.post('http://192.168.0.62:3000/api/projects', {
+                      await api.post('/api/projects', {
                         ...data,
                         locationId: user?.locationId,
                       });

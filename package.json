@@ -13,7 +13,10 @@
   "dependencies": {
     "@gorhom/bottom-sheet": "^5.1.4",
     "@hookform/resolvers": "^5.0.1",
+    "@lpai/types": "workspace:*",
     "@react-native-async-storage/async-storage": "^2.1.2",
+    "@react-native-community/datetimepicker": "^8.3.0",
+    "@react-native-picker/picker": "^2.11.0",
     "@react-navigation/native": "^7.1.9",
     "@react-navigation/native-stack": "^7.3.13",
     "axios": "^1.9.0",
@@ -26,11 +29,15 @@
     "jsonwebtoken": "^9.0.2",
     "jwt-decode": "^4.0.0",
     "mongodb": "^6.16.0",
+    "nodemailer": "^7.0.3",
     "react": "19.0.0",
     "react-hook-form": "^7.56.3",
     "react-native": "0.79.2",
+    "react-native-calendars": "^1.1312.0",
     "react-native-gesture-handler": "~2.24.0",
     "react-native-modal": "^14.0.0-rc.1",
+    "react-native-modal-datetime-picker": "^18.0.0",
+    "react-native-paper": "^5.14.5",
     "react-native-reanimated": "~3.17.4",
     "react-native-safe-area-context": "5.4.0",
     "react-native-screens": "~4.10.0",
@@ -46,5 +53,13 @@
     "react-native-dotenv": "^3.4.11",
     "typescript": "~5.8.3"
   },
-  "private": true
+  "workspaces": {
+    "packages": [
+      "src",
+      "lpai-backend",
+      "packages/*"
+    ]
+  },
+  "private": true,
+  "packageManager": "yarn@4.9.1"
 }

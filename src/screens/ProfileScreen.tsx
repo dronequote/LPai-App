@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
-import axios from 'axios';
 import { useNavigation } from '@react-navigation/native';
+import api from '../lib/api'; // ✅ Use centralized axios instance
 
 export default function ProfileScreen() {
   const { user, token, logout } = useAuth();
@@ -16,7 +16,7 @@ export default function ProfileScreen() {
   const handleSave = async () => {
     setLoading(true);
     try {
-      await axios.patch(`http://192.168.0.62:3000/api/users/${user?.userId}`, {
+      await api.patch(`/api/users/${user?.userId}`, {
         name,
         email,
         phone,

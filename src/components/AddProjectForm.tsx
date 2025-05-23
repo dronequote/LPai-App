@@ -5,10 +5,11 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  FlatList
+  FlatList,
 } from 'react-native';
-import axios from 'axios';
+import { Picker } from '@react-native-picker/picker';
 import { useAuth } from '../contexts/AuthContext';
+import api from '../lib/api';
 
 interface Contact {
   _id: string;
@@ -18,15 +19,20 @@ interface Contact {
   phone: string;
 }
 
+interface Pipeline {
+  id: string;
+  name: string;
+}
+
 interface Props {
   onSubmit: (data: any) => void;
   submitting: boolean;
   onAddContactPress: () => void;
-  locationId: string | undefined;
+  locationId?: string;
 }
 
 export default function AddProjectForm({ onSubmit, submitting, onAddContactPress }: Props) {
-  const { user, loading } = useAuth();
+  const { user } = useAuth();
   const locationId = user?.locationId;
 
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -34,18 +40,21 @@ export default function AddProjectForm({ onSubmit, submitting, onAddContactPress
   const [filteredContacts, setFilteredContacts] = useState<Contact[]>([]);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
 
+  const [pipelines, setPipelines] = useState<Pipeline[]>([]);
+  const [selectedPipelineId, setSelectedPipelineId] = useState('');
+  const [selectedPipelineName, setSelectedPipelineName] = useState('');
+
   const [title, setTitle] = useState('');
   const [status, setStatus] = useState('Open');
   const [notes, setNotes] = useState('');
+  const [customFields, setCustomFields] = useState<{ [key: string]: string }>({});
 
+  // --- Fetch Contacts ---
   useEffect(() => {
     if (!locationId) return;
-
-    console.log('📍 Fetching contacts with locationId:', locationId);
-
     const fetchContacts = async () => {
       try {
-        const res = await axios.get('http://192.168.0.62:3000/api/contacts', {
+        const res = await api.get('/api/contacts', {
           params: { locationId },
         });
         setContacts(res.data);
@@ -53,7 +62,6 @@ export default function AddProjectForm({ onSubmit, submitting, onAddContactPress
         console.error('❌ Failed to fetch contacts:', err);
       }
     };
-
     fetchContacts();
   }, [locationId]);
 
@@ -68,18 +76,60 @@ export default function AddProjectForm({ onSubmit, submitting, onAddContactPress
     setFilteredContacts(matches);
   }, [contactSearch, contacts]);
 
+  // --- Load Pipelines from DB ---
+  useEffect(() => {
+    if (!locationId) return;
+
+    const loadPipelines = async () => {
+      try {
+        // Only fetch from locations DB (pipelines already synced by ProjectsScreen)
+        const locRes = await api.get('/api/locations/byLocation', {
+          params: { locationId },
+        });
+        const mongoPipes = locRes.data?.pipelines || [];
+        setPipelines(mongoPipes);
+        // Auto-select first pipeline if any
+        if (mongoPipes.length) {
+          setSelectedPipelineId(mongoPipes[0].id);
+          setSelectedPipelineName(mongoPipes[0].name);
+        } else {
+          setSelectedPipelineId('');
+          setSelectedPipelineName('');
+        }
+        console.log('[AddProjectForm] Pipelines loaded from DB:', mongoPipes);
+      } catch (err) {
+        setPipelines([]);
+        setSelectedPipelineId('');
+        setSelectedPipelineName('');
+        console.error('❌ Failed to fetch pipelines from DB:', err);
+      }
+    };
+
+    loadPipelines();
+  }, [locationId]);
+
+  // --- Handle Pipeline Picker Change ---
+  const handlePipelineChange = (id: string) => {
+    setSelectedPipelineId(id);
+    const found = pipelines.find((p) => p.id === id);
+    setSelectedPipelineName(found?.name || '');
+    console.log('[AddProjectForm] User selected pipeline:', found);
+  };
+
+  // --- Submit ---
   const handleSubmit = () => {
     if (!selectedContact || !user || !locationId) return;
-
     const fullTitle = `${selectedContact.firstName} ${selectedContact.lastName} – ${title}`;
-
     onSubmit({
       contactId: selectedContact._id,
       userId: user.userId,
-      locationId: locationId,
+      locationId,
       title: fullTitle,
       status,
       notes,
+      pipelineId: selectedPipelineId,
+      pipelineName: selectedPipelineName,
+      ...customFields,
     });
   };
 
@@ -124,6 +174,23 @@ export default function AddProjectForm({ onSubmit, submitting, onAddContactPress
         </View>
       )}
 
+      {/* --- Pipeline Picker --- */}
+      <Text style={[styles.label, !selectedContact && styles.disabled]}>Pipeline</Text>
+      {pipelines.length > 0 ? (
+        <Picker
+          enabled={!!selectedContact}
+          selectedValue={selectedPipelineId}
+          onValueChange={handlePipelineChange}
+          style={styles.input}
+        >
+          {pipelines.map((pipe) => (
+            <Picker.Item key={pipe.id} label={pipe.name} value={pipe.id} />
+          ))}
+        </Picker>
+      ) : (
+        <Text style={{ color: '#aaa', marginBottom: 8 }}>No pipelines found.</Text>
+      )}
+
       <Text style={[styles.label, !selectedContact && styles.disabled]}>Title</Text>
       <TextInput
         editable={!!selectedContact}
@@ -133,18 +200,8 @@ export default function AddProjectForm({ onSubmit, submitting, onAddContactPress
         onChangeText={setTitle}
       />
 
-      <Text style={[styles.label, !selectedContact && styles.disabled]}>Status</Text>
-      {['Open', 'Quoted', 'Scheduled', 'Job Complete'].map((s) => (
-        <TouchableOpacity
-          key={s}
-          onPress={() => selectedContact && setStatus(s)}
-          style={[styles.statusOption, status === s && styles.selectedStatus]}
-        >
-          <Text style={status === s ? { color: '#fff', fontWeight: '600' } : {}}>
-            {s}
-          </Text>
-        </TouchableOpacity>
-      ))}
+      {/* Status is always Open for new projects sent to GHL */}
+
 
       <Text style={[styles.label, !selectedContact && styles.disabled]}>Notes</Text>
       <TextInput
@@ -154,6 +211,16 @@ export default function AddProjectForm({ onSubmit, submitting, onAddContactPress
         placeholder="Optional notes..."
         value={notes}
         onChangeText={setNotes}
+      />
+
+      {/* Example: add custom field for "Scope of Work" */}
+      <Text style={[styles.label, !selectedContact && styles.disabled]}>Scope of Work</Text>
+      <TextInput
+        editable={!!selectedContact}
+        style={styles.input}
+        placeholder="Describe scope of work"
+        value={customFields.scopeOfWork || ''}
+        onChangeText={(val) => setCustomFields((f) => ({ ...f, scopeOfWork: val }))}
       />
 
       <TouchableOpacity

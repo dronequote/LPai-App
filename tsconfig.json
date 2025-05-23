@@ -11,8 +11,22 @@
     "module": "CommonJS",
     "target": "ES2020",
     "moduleResolution": "node",
-    "outDir": "dist"
+    "outDir": "dist",
+    "baseUrl": ".",                                // <--- IMPORTANT for alias to work!
+    "paths": {
+      "@types/*": ["packages/types/*"]                      // <--- Use this for easy type imports!
+    }
   },
   "extends": "expo/tsconfig.base",
-  "exclude": ["node_modules", "babel.config.js", "metro.config.js", "jest.config.js"]
+  "exclude": [
+    "node_modules",
+    "babel.config.js",
+    "metro.config.js",
+    "jest.config.js"
+  ],
+  "include": [
+    "env.d.ts",
+    "src",
+    "packages/types"
+  ]
 }

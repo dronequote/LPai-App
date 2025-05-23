@@ -8,7 +8,7 @@ import LoginScreen from '../screens/LoginScreen';
 import HomeScreen from '../screens/HomeScreen';
 import ContactsScreen from '../screens/ContactsScreen';
 import ProjectsScreen from '../screens/ProjectsScreen';
-import DashboardScreen from '../screens/DashboardScreen';
+import CalendarScreen from '../screens/CalendarScreen';
 import QuoteBuilderScreen from '../screens/QuoteBuilderScreen';
 import ConversationScreen from '../screens/ConversationScreen';
 import JobCompletionScreen from '../screens/JobCompletionScreen';
@@ -17,13 +17,13 @@ import NotificationScreen from '../screens/NotificationScreen';
 import AddContactScreen from '../screens/AddContactScreen';
 import EditContactScreen from '../screens/EditContactScreen'; // ✅ NEW
 
-import { Contact } from '../types/types'; // ✅ for type-safe route param
+import { Contact } from '../../packages/types/dist'; // ✅ for type-safe route param
 
 export type RootStackParamList = {
   AuthMethodScreen: undefined;
   Login: undefined;
   Home: undefined;
-  Dashboard: undefined;
+  Calendar: undefined;
   Contacts: undefined;
   Projects: undefined;
   QuoteBuilder: undefined;
@@ -50,7 +50,7 @@ export default function StackNavigator() {
       <Stack.Screen name="AuthMethodScreen" component={AuthMethodScreen} />
       <Stack.Screen name="Login" component={LoginScreen} />
       <Stack.Screen name="Home" component={HomeScreen} />
-      <Stack.Screen name="Dashboard" component={DashboardScreen} />
+      <Stack.Screen name="Calendar" component={CalendarScreen} />
       <Stack.Screen name="Contacts" component={ContactsScreen} />
       <Stack.Screen name="Projects" component={ProjectsScreen} />
       <Stack.Screen name="QuoteBuilder" component={QuoteBuilderScreen} />

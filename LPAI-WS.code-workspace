@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"name": "src",
+			"path": "src"
+		},
+		{
+			"name": "lpai-backend",
+			"path": "lpai-backend"
+		},
+		{
+			"name": "lpai-app",
+			"path": "."
+		}
+	],
+	"settings": {}
+}

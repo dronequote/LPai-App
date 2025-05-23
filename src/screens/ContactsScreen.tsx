@@ -13,7 +13,6 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '@react-navigation/native';
 import ContactCard from '../components/ContactCard';
@@ -21,8 +20,8 @@ import FilterModal from '../components/FilterModal';
 import Modal from 'react-native-modal';
 import AddContactForm from '../components/AddContactForm';
 import ContactDetail from '../components/ContactDetail';
-import { Contact, Project } from '../types/types';
-
+import { Contact, Project } from '../../packages/types/dist';
+import api from '../lib/api';
 
 const topFilters = ['All', 'Open', 'Quoted', 'Scheduled'];
 
@@ -47,21 +46,20 @@ export default function ContactsScreen() {
   const [isDetailVisible, setIsDetailVisible] = useState(false);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
 
-const fetchContacts = async () => {
-  try {
-    const res = await axios.get('http://192.168.0.62:3000/api/contacts/withProjects', {
-      params: { locationId: user?.locationId },
-    });
-
-    setContacts(res.data);
-    setFiltered(res.data);
-  } catch (err) {
-    console.error('Failed to fetch contacts with projects:', err);
-  } finally {
-    setLoading(false);
-    setRefreshing(false);
-  }
-};
+  const fetchContacts = async () => {
+    try {
+      const res = await api.get('/api/contacts/withProjects', {
+        params: { locationId: user?.locationId },
+      });
+      setContacts(res.data);
+      setFiltered(res.data);
+    } catch (err) {
+      console.error('Failed to fetch contacts with projects:', err);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -203,7 +201,7 @@ const fetchContacts = async () => {
               projects={contact.projects || []}
               onPress={async () => {
                 try {
-                  const res = await axios.get('http://192.168.0.62:3000/api/projects/byContact', {
+                  const res = await api.get('/api/projects/byContact', {
                     params: {
                       contactId: contact._id,
                       locationId: user?.locationId,
@@ -286,7 +284,7 @@ const fetchContacts = async () => {
                   onSubmit={async (data) => {
                     try {
                       setSubmitting(true);
-                      await axios.post('http://192.168.0.62:3000/api/contacts/withProjects', {
+                      await api.post('/api/contacts', {
                         ...data,
                         status: 'Open',
                         locationId: user?.locationId,

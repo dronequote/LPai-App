@@ -12,12 +12,12 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { AntDesign } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import axios from 'axios';
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
 import { useAuth } from '../contexts/AuthContext';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/StackNavigator';
+import api from '../lib/api'; // ✅ use centralized API instance
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -50,26 +50,22 @@ export default function LoginScreen({ navigation }: Props) {
     setLoading(true);
     setError('');
     try {
-      const res = await axios.post('http://192.168.0.62:3000/api/login', {
+      const res = await api.post('/api/login', {
         email,
         password,
       });
+      console.log('Login API raw response:', res.data);
 
-      const { token, locationId, userId, permissions, name } = res.data;
+      // Save ALL user fields, including _id and email
+      const { token, ...user } = res.data;
+      await login({ token, user });
 
-      await login({
-        token,
-        user: {
-          userId,
-          name,
-          locationId,
-          permissions,
-        },
-      });
+      // Debug: confirm user object shape
+      console.log('User saved to AuthContext:', user);
 
       navigation.navigate('Home');
     } catch (err: any) {
-     setError(err.response?.data?.error || 'Login failed. Please try again.');    
+      setError(err.response?.data?.error || 'Login failed. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -79,7 +75,6 @@ export default function LoginScreen({ navigation }: Props) {
     <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
       <Text style={styles.title}>Welcome Back</Text>
 
-      {/* Email Input */}
       <View style={styles.inputContainer}>
         <Ionicons name="mail-outline" size={20} color="#AAB2BD" style={styles.icon} />
         <TextInput
@@ -92,7 +87,6 @@ export default function LoginScreen({ navigation }: Props) {
         />
       </View>
 
-      {/* Password Input */}
       <View style={styles.inputContainer}>
         <Ionicons name="lock-closed-outline" size={20} color="#AAB2BD" style={styles.icon} />
         <TextInput
@@ -111,7 +105,6 @@ export default function LoginScreen({ navigation }: Props) {
         </TouchableOpacity>
       </View>
 
-      {/* Forgot Password */}
       <TouchableOpacity
         onPress={() => Linking.openURL('https://leadprospecting.ai/passwordrecovery')}
         style={{ marginBottom: 8 }}
@@ -119,15 +112,12 @@ export default function LoginScreen({ navigation }: Props) {
         <Text style={styles.linkText}>Forgot your password?</Text>
       </TouchableOpacity>
 
-      {/* Error Message */}
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-      {/* Login Button */}
       <TouchableOpacity style={styles.button} onPress={handleLogin} disabled={loading}>
         {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Login</Text>}
       </TouchableOpacity>
 
-      {/* Footer CTA */}
       <TouchableOpacity onPress={() => Linking.openURL('https://leadprospecting.ai')}>
         <Text style={styles.footerText}>
           Don’t have an account?{' '}

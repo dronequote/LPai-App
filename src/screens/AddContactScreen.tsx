@@ -9,9 +9,9 @@ import {
   SafeAreaView,
   ScrollView,
 } from 'react-native';
-import axios from 'axios';
 import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
+import api from '../lib/api'; // ✅ centralized axios instance
 
 export default function AddContactScreen() {
   const { user } = useAuth();
@@ -31,12 +31,12 @@ export default function AddContactScreen() {
 
     try {
       setSubmitting(true);
-      await axios.post('http://192.168.0.62:3000/api/contacts', {
+      await api.post('/api/contacts', {
         name,
         email,
         phone,
         notes,
-        status: 'Open', // ✅ hidden default
+        status: 'Open',
         locationId: user?.locationId,
       });
 

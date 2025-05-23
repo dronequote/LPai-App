@@ -1,0 +1,143 @@
+📄 LPai App MongoDB Schema Overview (May 2025)
+1. locations
+_id: ObjectId
+
+locationId: string (GHL Location ID, unique/tenant key)
+
+name: string
+
+apiKey: string (GHL API key for sync, never exposed to frontend)
+
+pipelines: array of pipeline objects (see below)
+
+pipelinesUpdatedAt: date
+
+...other location-wide config fields as needed
+
+Pipelines structure:
+
+js
+Copy
+Edit
+pipelines: [
+  {
+    id: string,           // GHL pipeline ID
+    name: string,         // Pipeline display name
+    stages: [             // (Optional) Pipeline stages array
+      { id: string, name: string }
+    ]
+  },
+  ...
+]
+2. users
+_id: ObjectId
+
+name: string
+
+email: string
+
+hashedPassword: string
+
+role: string ('admin' | 'user' | etc)
+
+locationId: string (tenant key)
+
+phone: string
+
+...other custom fields as needed
+
+3. contacts
+_id: ObjectId
+
+locationId: string
+
+firstName: string
+
+lastName: string
+
+email: string
+
+phone: string
+
+ghlContactId: string (GHL Contact ID)
+
+address: string
+
+notes: string
+
+updatedAt: date
+
+...other dynamic fields allowed
+
+4. projects
+_id: ObjectId
+
+contactId: string (links to contacts._id)
+
+userId: string (creator/owner, optional)
+
+locationId: string
+
+title: string
+
+status: string (Open, Quoted, Scheduled, Job Complete, etc.)
+
+pipelineId: string (GHL pipeline ID)
+
+pipelineName: string
+
+ghlOpportunityId: string (if pushed to GHL)
+
+notes: string (stored as customFields.notes for future-proofing)
+
+customFields: object (for scopeOfWork, products, etc)
+
+createdAt: date
+
+...any other fields are allowed (schema is flexible)
+
+5. appointments
+_id: ObjectId
+
+contactId: string (links to contacts._id)
+
+userId: string (assigned tech/consultant)
+
+locationId: string
+
+projectId: string (if linked to a project)
+
+title: string
+
+start: datetime
+
+end: datetime
+
+notes: string
+
+ghlAppointmentId: string (if synced with GHL)
+
+createdAt: date
+
+...dynamic fields allowed
+
+General Rules & Best Practices
+Always filter every fetch/mutation by locationId for tenant security.
+
+Never expose GHL API keys or internal IDs to the client/frontend.
+
+All custom/dynamic fields for contacts, projects, etc., should go under a customFields object for future flexibility.
+
+Any schema is extensible; you can add fields as needed for your business.
+
+Pipelines are only stored/updated on the locations document, and are always mirrored from GHL (never created in-app).
+
+Helpful Notes for ChatGPT and Developers
+All frontend fetches should go through backend API routes, which read from MongoDB.
+
+Two-way sync: If a contact/project/appointment is changed in GHL, it should update in MongoDB if the updatedAt is newer and fields differ.
+
+Projects in the app are called Opportunities in GHL.
+
+Status values for projects must be one of: 'open', 'won', 'lost', 'abandoned' for GHL compatibility, but can be mapped to more user-friendly labels in the app.
+
