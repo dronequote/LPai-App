@@ -2,7 +2,7 @@
   "name": "lpai-app",
   "license": "0BSD",
   "version": "1.0.0",
-  "packageManager": "yarn@4.9.1",
+  "packageManager": "yarn@4.1.1",
   "private": true,
   "main": "index.js",
   "scripts": {
