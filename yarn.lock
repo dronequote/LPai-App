@@ -7185,6 +7185,7 @@ __metadata:
     next: "npm:15.3.2"
     react: "npm:19.0.0"
     react-dom: "npm:19.0.0"
+    react-native-dotenv: "npm:^3.4.11"
     resend: "npm:^4.5.1"
     ts-node: "npm:^10.9.2"
     typescript: "npm:^5.8.3"

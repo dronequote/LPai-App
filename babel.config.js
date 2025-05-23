@@ -3,6 +3,7 @@ module.exports = function (api) {
   return {
     presets: ['babel-preset-expo'],
     plugins: [
+      // Dotenv plugin for loading environment variables
       [
         'module:react-native-dotenv',
         {
@@ -14,7 +15,8 @@ module.exports = function (api) {
           allowUndefined: true,
         },
       ],
-      'react-native-reanimated/plugin', // ✅ Keep this last
+      // React Native Reanimated plugin (must be last)
+      'react-native-reanimated/plugin',
     ],
     overrides: [
       {
@@ -23,7 +25,7 @@ module.exports = function (api) {
           [
             '@babel/preset-typescript',
             {
-              tsconfigPath: './tsconfig.json', // ✅ Adjust this if you're not using a separate Expo-specific tsconfig
+              tsconfigPath: './tsconfig.json', // Make sure this matches your project structure
             },
           ],
         ],
