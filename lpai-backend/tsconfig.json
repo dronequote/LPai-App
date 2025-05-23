@@ -15,7 +15,7 @@
     "incremental": true,
     "paths": {
       "@/*": ["./src/*"],
-      "@types/*": ["../packages/types/*"]
+      "@types/*": ["../../packages/types/*"]
     }
   },
   "include": [
