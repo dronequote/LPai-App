@@ -1,5 +1,5 @@
 {
   "installCommand": "npm i -g corepack && corepack enable && corepack prepare yarn@4.9.1 --activate && yarn install",
   "buildCommand": "cd lpai-backend && yarn build",
-  "outputDirectory": "lpai-backend/.vercel/output"
+  "outputDirectory": "lpai-backend/.next"
 }
