@@ -1,0 +1,6 @@
+{
+  "buildCommand": "yarn workspace lpai-backend build",
+  "outputDirectory": "lpai-backend/.next",
+  "installCommand": "yarn install",
+  "framework": null
+}
