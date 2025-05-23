@@ -1,22 +1,5 @@
 {
   "/_app": "pages/_app.js",
   "/_error": "pages/_error.js",
-  "/api/appointments": "pages/api/appointments.js",
-  "/api/appointments/[id]": "pages/api/appointments/[id].js",
-  "/api/contacts/withProjects": "pages/api/contacts/withProjects.js",
-  "/api/contacts": "pages/api/contacts.js",
-  "/api/contacts/[id]": "pages/api/contacts/[id].js",
-  "/api/ghl/[id]": "pages/api/ghl/[id].js",
-  "/api/ghl/calendars/[locationId]": "pages/api/ghl/calendars/[locationId].js",
-  "/api/ghl/pipelines/[locationId]": "pages/api/ghl/pipelines/[locationId].js",
-  "/api/ghl/syncContacts": "pages/api/ghl/syncContacts.js",
-  "/api/locations/byLocation": "pages/api/locations/byLocation.js",
-  "/api/login": "pages/api/login.js",
-  "/api/projects/[id]": "pages/api/projects/[id].js",
-  "/api/projects/byContact": "pages/api/projects/byContact.js",
-  "/api/projects": "pages/api/projects.js",
-  "/api/users": "pages/api/users.js",
-  "/api/users/byLocation": "pages/api/users/byLocation.js",
-  "/_document": "pages/_document.js",
-  "/404": "pages/404.html"
+  "/_document": "pages/_document.js"
 }
