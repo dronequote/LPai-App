@@ -1,12 +1,5 @@
 {
-  "buildCommand": "yarn workspace lpai-backend build",
-  "outputDirectory": "lpai-backend/.next",
   "installCommand": "npm i -g corepack && corepack enable && corepack prepare yarn@4.9.1 --activate && yarn install",
-  "framework": null,
-  "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/lpai-backend/$1"
-    }
-  ]
+  "buildCommand": "cd lpai-backend && yarn build",
+  "outputDirectory": "lpai-backend/.vercel/output"
 }
