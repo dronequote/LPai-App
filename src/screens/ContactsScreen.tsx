@@ -10,14 +10,11 @@ import {
   SafeAreaView,
   TouchableOpacity,
   Alert,
-  KeyboardAvoidingView,
-  Platform,
 } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '@react-navigation/native';
 import ContactCard from '../components/ContactCard';
 import FilterModal from '../components/FilterModal';
-import Modal from 'react-native-modal';
 import AddContactForm from '../components/AddContactForm';
 import ContactDetail from '../components/ContactDetail';
 import { Contact, Project } from '../../packages/types/dist';
@@ -41,7 +38,6 @@ export default function ContactsScreen() {
   const [phoneFilter, setPhoneFilter] = useState('');
 
   const [isAddModalVisible, setIsAddModalVisible] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
 
   const [isDetailVisible, setIsDetailVisible] = useState(false);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
@@ -124,6 +120,32 @@ export default function ContactsScreen() {
     applyFilters();
   }, [search, topFilter, statusFilter, projectFilter, phoneFilter, contacts]);
 
+  const handleCreateContact = async (contactData: any) => {
+    try {
+      const response = await api.post('/api/contacts', {
+        ...contactData,
+        status: 'Open',
+        locationId: user?.locationId,
+      });
+      
+      setIsAddModalVisible(false);
+      await fetchContacts();
+      
+      // Navigate to the new contact detail screen
+      const newContact = { 
+        _id: response.data.contactId, 
+        ...contactData,
+        status: 'Open',
+        locationId: user?.locationId,
+        projects: []
+      };
+      navigation.navigate('ContactDetailScreen', { contact: newContact });
+    } catch (error) {
+      console.error('Failed to create contact:', error);
+      Alert.alert('Error', 'Failed to create contact. Please try again.');
+    }
+  };
+
   const validContacts = filtered.filter(
     (c) =>
       c &&
@@ -199,27 +221,9 @@ export default function ContactsScreen() {
               email={contact.email}
               phone={contact.phone}
               projects={contact.projects || []}
-              onPress={async () => {
-                try {
-                  const res = await api.get('/api/projects/byContact', {
-                    params: {
-                      contactId: contact._id,
-                      locationId: user?.locationId,
-                    },
-                  });
-
-                  setSelectedContact({
-                    ...contact,
-                    projects: res.data.map((project: Project) => ({
-                      ...project,
-                      contactName: `${contact.firstName} ${contact.lastName}`,
-                    })),
-                  });
-
-                  setIsDetailVisible(true);
-                } catch (err) {
-                  console.error('❌ Failed to load contact projects:', err);
-                }
+              onPress={() => {
+                // Navigate directly to ContactDetailScreen
+                navigation.navigate('ContactDetailScreen', { contact });
               }}
             />
           ))}
@@ -252,58 +256,13 @@ export default function ContactsScreen() {
           }}
         />
 
-        <Modal
-          isVisible={isAddModalVisible}
-          onBackdropPress={() => setIsAddModalVisible(false)}
-          onSwipeComplete={() => setIsAddModalVisible(false)}
-          swipeDirection="down"
-          style={{ justifyContent: 'flex-end', margin: 0 }}
-        >
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={{ flex: 1, justifyContent: 'flex-end' }}
-          >
-            <View
-              style={{
-                backgroundColor: 'white',
-                borderTopLeftRadius: 16,
-                borderTopRightRadius: 16,
-                maxHeight: '90%',
-              }}
-            >
-              <ScrollView
-                contentContainerStyle={{ padding: 20, paddingBottom: 40 }}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-              >
-                <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 12 }}>
-                  Add Contact
-                </Text>
-
-                <AddContactForm
-                  onSubmit={async (data) => {
-                    try {
-                      setSubmitting(true);
-                      await api.post('/api/contacts', {
-                        ...data,
-                        status: 'Open',
-                        locationId: user?.locationId,
-                      });
-                      setIsAddModalVisible(false);
-                      fetchContacts();
-                    } catch (error) {
-                      console.error(error);
-                      Alert.alert('Error', 'Failed to add contact.');
-                    } finally {
-                      setSubmitting(false);
-                    }
-                  }}
-                  submitting={submitting}
-                />
-              </ScrollView>
-            </View>
-          </KeyboardAvoidingView>
-        </Modal>
+        {/* Updated AddContactForm Modal */}
+        <AddContactForm
+          visible={isAddModalVisible}
+          onClose={() => setIsAddModalVisible(false)}
+          onSubmit={handleCreateContact}
+          isModal={true} // Use as standalone modal
+        />
 
         <ContactDetail
           isVisible={isDetailVisible}

@@ -1,0 +1,48 @@
+📱 App Frontend
+     ↕️
+🗄️ /api/projects/ (MongoDB CRUD)
+     ↕️
+🗃️ MongoDB (Source of Truth)
+     ↕️  
+🔗 /api/ghl/ (GHL Sync Layer)
+     ↕️
+🌐 GoHighLevel API
+
+⚡ Your Event-Driven Sync Strategy:
+📱 Frontend Triggers → Sync MongoDB:
+🗓️ "Schedule Appointment" button → Sync calendars from GHL
+📋 "Add Project" button → Sync pipelines from GHL  
+👥 "Add Contact" form → Sync contacts (if needed)
+🎣 GHL Webhooks → Update MongoDB:
+GHL Opportunity Updated → Update project in MongoDB
+GHL Contact Updated → Update contact in MongoDB
+GHL Appointment Changed → Update appointment in MongoDB
+📱 App Edits → Update Both:
+App project edit → 1. Update MongoDB → 2. Push to GHL
+App contact edit → 1. Update MongoDB → 2. Push to GHL
+App appointment → 1. Update MongoDB → 2. Push to GHL
+
+🎯 Implementation Plan:
+
+1. Update Existing Sync Points:
+javascript// In ProjectsScreen - before opening AddProjectForm
+const handleAddProject = async () => {
+  // ✅ You already do this!
+  await api.get(`/api/ghl/pipelines/${user.locationId}`); 
+  setIsAddModalVisible(true);
+};
+2. Add Calendar Sync to CreateAppointmentModal:
+javascript// In CalendarScreen - before opening modal
+const handleOpenCreateModal = async () => {
+  await refetchCalendars(); // ✅ You already do this!
+  setShowCreateModal(true);
+};
+3. Create GHL Webhook Handlers:
+/api/webhooks/ghl/opportunity-updated
+/api/webhooks/ghl/contact-updated  
+/api/webhooks/ghl/appointment-updated
+
+🚀 Next Steps:
+
+🎣 GHL Webhook handlers (so GHL can push updates to your MongoDB)
+🔄 More sync triggers (contact sync, etc.)

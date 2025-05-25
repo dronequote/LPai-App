@@ -8,6 +8,7 @@ interface Props {
   appointment: Appointment;
   contact?: Contact | null;
   calendar?: Calendar | null;
+  onPress?: () => void;
   onContactPress?: () => void;
   onEdit?: () => void;
   onCancel?: () => void;
@@ -17,6 +18,7 @@ export default function AppointmentCard({
   appointment,
   contact,
   calendar,
+  onPress,
   onContactPress,
   onEdit,
   onCancel,
@@ -26,11 +28,15 @@ export default function AppointmentCard({
   const calIcon = calendar?.icon && typeof calendar.icon === 'string' ? calendar.icon : 'calendar-outline';
 
   return (
-    <View style={[
-      styles.card,
-      { borderLeftColor: calColor, shadowColor: calColor },
-      isCancelled && { backgroundColor: COLORS.background, opacity: 0.65 }
-    ]}>
+    <TouchableOpacity 
+      style={[
+        styles.card,
+        { borderLeftColor: calColor, shadowColor: calColor },
+        isCancelled && { backgroundColor: COLORS.background, opacity: 0.65 }
+      ]}
+      onPress={onPress}
+      activeOpacity={0.7}
+    >
       {/* Title and Icon (top row) */}
       <View style={styles.topRow}>
         <Text style={isCancelled ? styles.titleCancelled : styles.title}>
@@ -90,7 +96,7 @@ export default function AppointmentCard({
           )}
         </View>
       )}
-    </View>
+    </TouchableOpacity>
   );
 }
 

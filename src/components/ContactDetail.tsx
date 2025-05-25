@@ -114,7 +114,7 @@ export default function ContactDetail({ isVisible, onClose, contact }: Props) {
                 onPress={() => {
                   onClose();
                   setTimeout(() => {
-                    navigation.navigate('EditContact', { contact: syncedContact });
+                    navigation.navigate('ContactDetailScreen', { contact: syncedContact });
                   }, 250);
                 }}
               >

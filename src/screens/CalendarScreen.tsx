@@ -179,33 +179,38 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
           : `No appointments for ${selectedDate}.`}
       </Text>
 
-      {loading ? (
-        <ActivityIndicator style={{ marginTop: 20 }} color={COLORS.accent} />
-      ) : (
-        <FlatList
-          data={filteredAppointments}
-          keyExtractor={(item) => item._id}
-          renderItem={({ item }: { item: Appointment }) => {
-            const contact = contactsMap[item.contactId] || contacts.find(
-              (c) => c._id === item.contactId || c.contactId === item.contactId
-            );
-            const calendar = calendarMap[item.calendarId];
-            return (
-              <AppointmentCard
-                appointment={item}
-                contact={contact}
-                calendar={calendar}
-                onContactPress={() => {
-                  if (contact) navigation.navigate('EditContact', { contactId: contact._id });
-                }}
-                onEdit={() => {/* edit logic */}}
-                onCancel={() => handleDeleteAppointment(item._id)}
-              />
-            );
+{loading ? (
+  <ActivityIndicator style={{ marginTop: 20 }} color={COLORS.accent} />
+) : (
+  <FlatList
+    data={filteredAppointments}
+    keyExtractor={(item) => item._id}
+    renderItem={({ item }: { item: Appointment }) => {
+      const contact = contactsMap[item.contactId] || contacts.find(
+        (c) => c._id === item.contactId || c.contactId === item.contactId
+      );
+      const calendar = calendarMap[item.calendarId];
+      return (
+        <AppointmentCard
+          appointment={item}
+          contact={contact}
+          calendar={calendar}
+          onPress={() => {
+            navigation.navigate('AppointmentDetail', { 
+              appointmentId: item._id 
+            });
           }}
-          style={styles.list}
+          onContactPress={() => {
+            if (contact) navigation.navigate('ContactDetailScreen', { contact: contact });
+          }}
+          onEdit={() => {/* edit logic */}}
+          onCancel={() => handleDeleteAppointment(item._id)}
         />
-      )}
+      );
+    }}
+    style={styles.list}
+  />
+)}
 
       {/* Floating Action Button */}
       <TouchableOpacity style={styles.fab} onPress={handleOpenCreateModal}>

@@ -10,17 +10,17 @@ import {
   SafeAreaView,
   TouchableOpacity,
   Alert,
-  KeyboardAvoidingView,
-  Platform,
 } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../navigation/StackNavigator';
 import ProjectCard from '../components/ProjectCard';
 import FilterModal from '../components/FilterModal';
-import Modal from 'react-native-modal';
 import AddProjectForm from '../components/AddProjectForm';
-import ProjectDetail from '../components/ProjectDetail';
 import api from '../lib/api';
+
+type ProjectsScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Projects'>;
 
 interface Project {
   _id: string;
@@ -36,7 +36,8 @@ const topFilters = ['All', 'Scheduled', 'In Progress', 'Job Complete'];
 
 export default function ProjectsScreen() {
   const { user } = useAuth();
-  const navigation = useNavigation();
+  const navigation = useNavigation<ProjectsScreenNavigationProp>();
+  
   const [projects, setProjects] = useState<Project[]>([]);
   const [filtered, setFiltered] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,11 +51,7 @@ export default function ProjectsScreen() {
   const [phoneFilter, setPhoneFilter] = useState('');
 
   const [isAddModalVisible, setIsAddModalVisible] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [isSyncingPipelines, setIsSyncingPipelines] = useState(false); // <--- NEW
-
-  const [isDetailVisible, setIsDetailVisible] = useState(false);
-  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [isSyncingPipelines, setIsSyncingPipelines] = useState(false);
 
   const fetchProjects = async () => {
     try {
@@ -120,7 +117,6 @@ export default function ProjectsScreen() {
     applyFilters();
   }, [search, topFilter, statusFilter, projectFilter, phoneFilter, projects]);
 
-  // ---- Handle Add Project Button ----
   const handleAddProject = async () => {
     if (!user?.locationId) {
       Alert.alert('Error', 'Missing location ID');
@@ -131,10 +127,31 @@ export default function ProjectsScreen() {
       await api.get(`/api/ghl/pipelines/${user.locationId}`);
     } catch (e) {
       console.error('[ProjectsScreen] Failed to sync pipelines:', e);
-      // You can optionally show an alert or toast here
     }
     setIsSyncingPipelines(false);
     setIsAddModalVisible(true);
+  };
+
+  const handleProjectSubmit = async (projectData: any) => {
+    try {
+      const response = await api.post('/api/projects', {
+        ...projectData,
+        locationId: user?.locationId,
+      });
+      
+      setIsAddModalVisible(false);
+      await fetchProjects();
+      
+      // Navigate to the new project detail screen
+      const newProject = { 
+        _id: response.data.projectId, 
+        ...projectData 
+      };
+      navigation.navigate('ProjectDetailScreen', { project: newProject });
+    } catch (error) {
+      console.error('Failed to create project:', error);
+      Alert.alert('Error', 'Failed to create project. Please try again.');
+    }
   };
 
   if (loading) return <ActivityIndicator size="large" style={{ marginTop: 32 }} />;
@@ -203,8 +220,7 @@ export default function ProjectsScreen() {
               phone={project.phone}
               status={project.status}
               onPress={() => {
-                setSelectedProject(project);
-                setIsDetailVisible(true);
+                navigation.navigate('ProjectDetailScreen', { project });
               }}
             />
           ))}
@@ -238,73 +254,23 @@ export default function ProjectsScreen() {
           }}
         />
 
-        <Modal
-          isVisible={isAddModalVisible}
-          onBackdropPress={() => setIsAddModalVisible(false)}
-          onSwipeComplete={() => setIsAddModalVisible(false)}
-          swipeDirection="down"
-          style={{ justifyContent: 'flex-end', margin: 0 }}
-        >
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={{ flex: 1, justifyContent: 'flex-end' }}
-          >
-            <View
-              style={{
-                backgroundColor: 'white',
-                borderTopLeftRadius: 16,
-                borderTopRightRadius: 16,
-                maxHeight: '90%',
-              }}
-            >
-              <ScrollView
-                contentContainerStyle={{ padding: 20, paddingBottom: 40 }}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-              >
-                <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 12 }}>
-                  Add Project
-                </Text>
-
-                <AddProjectForm
-                  onSubmit={async (data) => {
-                    try {
-                      setSubmitting(true);
-                      await api.post('/api/projects', {
-                        ...data,
-                        locationId: user?.locationId,
-                      });
-                      setIsAddModalVisible(false);
-                      fetchProjects();
-                    } catch (error) {
-                      console.error(error);
-                      Alert.alert('Error', 'Failed to add project.');
-                    } finally {
-                      setSubmitting(false);
-                    }
-                  }}
-                  submitting={submitting}
-                  locationId={user?.locationId}
-                  onAddContactPress={() => {
-                    setIsAddModalVisible(false);
-                    navigation.navigate('AddContactScreen');
-                  }}
-                />
-              </ScrollView>
-            </View>
-          </KeyboardAvoidingView>
-        </Modal>
-
-        <ProjectDetail
-          isVisible={isDetailVisible}
-          onClose={() => setIsDetailVisible(false)}
-          project={selectedProject}
+        {/* Updated AddProjectForm Modal */}
+        <AddProjectForm
+          visible={isAddModalVisible}
+          onClose={() => setIsAddModalVisible(false)}
+          onSubmit={handleProjectSubmit}
+          onAddContactPress={() => {
+            setIsAddModalVisible(false);
+            setTimeout(() => navigation.navigate('AddContactScreen'), 300);
+          }}
+          isModal={true} // Use as standalone modal
         />
       </View>
     </SafeAreaView>
   );
 }
 
+// Styles remain the same
 const styles = StyleSheet.create({
   container: { paddingHorizontal: 16, paddingBottom: 32 },
   header: { fontSize: 26, fontWeight: '700', marginTop: 16, marginBottom: 12, color: '#1A1F36' },

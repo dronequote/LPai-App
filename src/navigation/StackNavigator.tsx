@@ -9,15 +9,17 @@ import HomeScreen from '../screens/HomeScreen';
 import ContactsScreen from '../screens/ContactsScreen';
 import ProjectsScreen from '../screens/ProjectsScreen';
 import CalendarScreen from '../screens/CalendarScreen';
-import QuoteBuilderScreen from '../screens/QuoteBuilderScreen';
 import ConversationScreen from '../screens/ConversationScreen';
 import JobCompletionScreen from '../screens/JobCompletionScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import NotificationScreen from '../screens/NotificationScreen';
 import AddContactScreen from '../screens/AddContactScreen';
-import EditContactScreen from '../screens/EditContactScreen'; // ✅ NEW
-
-import { Contact } from '../../packages/types/dist'; // ✅ for type-safe route param
+import ContactDetailScreen from '../screens/ContactDetailScreen';
+import AppointmentDetail from '../screens/AppointmentDetail';
+import ProjectDetailScreen from '../screens/ProjectDetailScreen';
+import QuoteBuilderScreen from '../screens/QuoteBuilderScreen';
+import QuoteEditorScreen from '../screens/QuoteEditorScreen';
+import { Contact, Project, Quote } from '../../packages/types/dist'; // ✅ ADDED Quote import
 
 export type RootStackParamList = {
   AuthMethodScreen: undefined;
@@ -26,13 +28,20 @@ export type RootStackParamList = {
   Calendar: undefined;
   Contacts: undefined;
   Projects: undefined;
-  QuoteBuilder: undefined;
   Conversations: undefined;
   JobCompletion: undefined;
   Profile: undefined;
   Notifications: undefined;
   AddContactScreen: undefined;
-  EditContact: { contact: Contact }; // ✅ ADDED
+  ContactDetailScreen: { contact: Contact };
+  AppointmentDetail: { appointmentId: string };
+  ProjectDetailScreen: { project: Project };
+  QuoteBuilder: undefined;
+  QuoteEditor: { 
+    mode: 'create' | 'edit'; 
+    project?: Project; 
+    quote?: Quote; // ✅ NOW Quote is imported
+  };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -53,13 +62,16 @@ export default function StackNavigator() {
       <Stack.Screen name="Calendar" component={CalendarScreen} />
       <Stack.Screen name="Contacts" component={ContactsScreen} />
       <Stack.Screen name="Projects" component={ProjectsScreen} />
-      <Stack.Screen name="QuoteBuilder" component={QuoteBuilderScreen} />
       <Stack.Screen name="Conversations" component={ConversationScreen} />
       <Stack.Screen name="JobCompletion" component={JobCompletionScreen} />
       <Stack.Screen name="Profile" component={ProfileScreen} />
       <Stack.Screen name="Notifications" component={NotificationScreen} />
       <Stack.Screen name="AddContactScreen" component={AddContactScreen} />
-      <Stack.Screen name="EditContact" component={EditContactScreen} /> 
+      <Stack.Screen name="ContactDetailScreen" component={ContactDetailScreen} /> 
+      <Stack.Screen name="AppointmentDetail" component={AppointmentDetail} />
+      <Stack.Screen name="ProjectDetailScreen" component={ProjectDetailScreen} />
+      <Stack.Screen name="QuoteBuilder" component={QuoteBuilderScreen} />
+      <Stack.Screen name="QuoteEditor" component={QuoteEditorScreen} />
     </Stack.Navigator>
   );
 }
