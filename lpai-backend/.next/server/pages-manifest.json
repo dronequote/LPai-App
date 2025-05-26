@@ -3,6 +3,7 @@
   "/_error": "pages/_error.js",
   "/_document": "pages/_document.js",
   "/api/projects": "pages/api/projects.js",
+  "/api/quotes/[id]": "pages/api/quotes/[id].js",
   "/api/quotes": "pages/api/quotes.js",
   "/api/libraries/[LocationID]": "pages/api/libraries/[LocationID].js"
 }
