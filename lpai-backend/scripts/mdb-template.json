@@ -1,0 +1,92 @@
+{
+  "isGlobal": true,
+  "name": "Professional Plumbing Proposal",
+  "description": "Clean, professional layout perfect for residential plumbing projects",
+  "category": "plumbing",
+  "preview": "🔧",
+  "isDefault": true,
+  "styling": {
+    "primaryColor": "#2E86AB",
+    "accentColor": "#A23B72",
+    "fontFamily": "system",
+    "layout": "standard"
+  },
+  "companyOverride": {
+    "name": null,
+    "logo": "🔧",
+    "tagline": "Your trusted plumbing experts since 1995",
+    "phone": null,
+    "email": null,
+    "address": null,
+    "establishedYear": "1995",
+    "warrantyYears": "5"
+  },
+  "sections": [
+    {
+      "id": "company_intro",
+      "type": "company_intro",
+      "title": "Why Choose {companyName}",
+      "enabled": true,
+      "order": 1,
+      "icon": "🏠",
+      "config": {
+        "showBenefits": true,
+        "showContact": true,
+        "customContent": null
+      }
+    },
+    {
+      "id": "quote_details",
+      "type": "quote_details", 
+      "title": "Your Quote Details",
+      "enabled": true,
+      "order": 2,
+      "icon": "💰",
+      "config": {
+        "showBreakdown": true,
+        "showTerms": true,
+        "groupBySection": true
+      }
+    },
+    {
+      "id": "our_process",
+      "type": "our_process",
+      "title": "Our Process", 
+      "enabled": true,
+      "order": 3,
+      "icon": "⚙️",
+      "config": {
+        "showTimeline": true,
+        "showSteps": true
+      }
+    },
+    {
+      "id": "warranty_service",
+      "type": "warranty_service",
+      "title": "Warranty & Service",
+      "enabled": true, 
+      "order": 4,
+      "icon": "🛡️",
+      "config": {
+        "showWarrantyDetails": true,
+        "showServiceInfo": true
+      }
+    },
+    {
+      "id": "system_details", 
+      "type": "system_details",
+      "title": "Project Details",
+      "enabled": true,
+      "order": 5,
+      "icon": "📋",
+      "config": {
+        "showScope": true,
+        "showSpecifications": true,
+        "showPermits": true
+      }
+    }
+  ],
+  "createdAt": "2025-05-26T00:00:00.000Z",
+  "updatedAt": "2025-05-26T00:00:00.000Z",
+  "createdBy": "system"
+}
