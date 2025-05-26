@@ -11,7 +11,10 @@ import {
   SafeAreaView,
   FlatList,
   Animated,
+  Alert,
 } from 'react-native';
+import { useRoute, useNavigation } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -103,11 +106,17 @@ const mockQuoteData = {
 };
 
 const QuotePresentationScreen = () => {
+  const navigation = useNavigation();
+  const route = useRoute();
+  
+  // In real app, these would come from route params
+  const { quote, template } = route.params || { quote: mockQuoteData.quote, template: mockQuoteData.template };
+  
   const [activeTabIndex, setActiveTabIndex] = useState(0);
   const flatListRef = useRef(null);
   const scrollX = useRef(new Animated.Value(0)).current;
 
-  const { quote, company, template } = mockQuoteData;
+  const { company } = mockQuoteData; // This would come from location data
   const enabledSections = template.sections.filter(section => section.enabled);
 
   const handleTabPress = (index) => {
@@ -138,6 +147,22 @@ const QuotePresentationScreen = () => {
       .replace(/{email}/g, company.email);
   };
 
+  const handleClose = () => {
+    navigation.goBack();
+  };
+
+  const handleShare = () => {
+    Alert.alert('Share Proposal', 'Share functionality will be implemented here');
+  };
+
+  const handleSaveForLater = () => {
+    Alert.alert('Save for Later', 'Proposal saved to drafts');
+  };
+
+  const handleGetSignature = () => {
+    navigation.navigate('SignatureCapture', { quote, template });
+  };
+
   const renderCompanyIntro = () => (
     <ScrollView style={styles.sectionContainer} showsVerticalScrollIndicator={false}>
       <View style={styles.heroSection}>
@@ -151,7 +176,7 @@ const QuotePresentationScreen = () => {
           <Text style={styles.benefitIcon}>🏆</Text>
           <Text style={styles.benefitTitle}>Expert Craftsmanship</Text>
           <Text style={styles.benefitText}>
-            Professional plumbing solutions with over {company.establishedYear.slice(-2)} years of experience in residential and commercial projects.
+            Professional plumbing solutions with over {parseInt(new Date().getFullYear()) - parseInt(company.establishedYear)} years of experience in residential and commercial projects.
           </Text>
         </View>
 
@@ -247,13 +272,13 @@ const QuotePresentationScreen = () => {
           { step: 5, title: 'Project Complete', time: 'Same day', description: 'Final cleanup and warranty activation' }
         ].map((item, index) => (
           <View key={index} style={styles.processStep}>
-            <View style={styles.processStepNumber}>
+            <View style={[styles.processStepNumber, { backgroundColor: template.primaryColor }]}>
               <Text style={styles.processStepNumberText}>{item.step}</Text>
             </View>
             <View style={styles.processStepContent}>
               <View style={styles.processStepHeader}>
                 <Text style={styles.processStepTitle}>{item.title}</Text>
-                <Text style={styles.processStepTime}>{item.time}</Text>
+                <Text style={[styles.processStepTime, { color: template.accentColor }]}>{item.time}</Text>
               </View>
               <Text style={styles.processStepDescription}>{item.description}</Text>
             </View>
@@ -326,10 +351,10 @@ const QuotePresentationScreen = () => {
         <View style={styles.scopeList}>
           <Text style={styles.scopeItem}>🔹 Kitchen sink and faucet replacement</Text>
           <Text style={styles.scopeItem}>🔹 Master bathroom vanity installation</Text>
-          <Text style={styles.scopeItem">🔹 Shower system upgrade with modern fixtures</Text>
-          <Text style={styles.scopeItem">🔹 Water line routing and connections</Text>
-          <Text style={styles.scopeItem">🔹 Drain line installation and testing</Text>
-          <Text style={styles.scopeItem">🔹 Pressure testing and system certification</Text>
+          <Text style={styles.scopeItem}>🔹 Shower system upgrade with modern fixtures</Text>
+          <Text style={styles.scopeItem}>🔹 Water line routing and connections</Text>
+          <Text style={styles.scopeItem}>🔹 Drain line installation and testing</Text>
+          <Text style={styles.scopeItem}>🔹 Pressure testing and system certification</Text>
         </View>
       </View>
 
@@ -382,12 +407,12 @@ const QuotePresentationScreen = () => {
       
       {/* Header */}
       <View style={[styles.header, { backgroundColor: template.primaryColor }]}>
-        <TouchableOpacity style={styles.closeButton}>
-          <Text style={styles.closeButtonText}>✕</Text>
+        <TouchableOpacity style={styles.closeButton} onPress={handleClose}>
+          <Ionicons name="close" size={20} color="#fff" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Proposal Presentation</Text>
-        <TouchableOpacity style={styles.shareButton}>
-          <Text style={styles.shareButtonText}>📤</Text>
+        <TouchableOpacity style={styles.shareButton} onPress={handleShare}>
+          <Ionicons name="share-outline" size={20} color="#fff" />
         </TouchableOpacity>
       </View>
 
@@ -435,14 +460,14 @@ const QuotePresentationScreen = () => {
       <View style={styles.bottomBar}>
         <TouchableOpacity 
           style={[styles.actionButton, styles.secondaryButton]} 
-          onPress={() => console.log('Save for later')}
+          onPress={handleSaveForLater}
         >
           <Text style={styles.secondaryButtonText}>Save for Later</Text>
         </TouchableOpacity>
         
         <TouchableOpacity 
           style={[styles.actionButton, styles.primaryButton, { backgroundColor: template.primaryColor }]} 
-          onPress={() => console.log('Get Signature')}
+          onPress={handleGetSignature}
         >
           <Text style={styles.primaryButtonText}>Get Signature</Text>
         </TouchableOpacity>
@@ -476,11 +501,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  closeButtonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '600',
-  },
   headerTitle: {
     color: '#fff',
     fontSize: 18,
@@ -493,9 +513,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.2)',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  shareButtonText: {
-    fontSize: 16,
   },
   tabContainer: {
     backgroundColor: '#fff',
@@ -847,4 +864,195 @@ const styles = StyleSheet.create({
   warrantySubtitle: {
     fontSize: 16,
     color: '#6b7280',
-    textAlign: '
+    textAlign: 'center',
+  },
+  warrantyCards: {
+    gap: 16,
+    marginBottom: 30,
+  },
+  warrantyCard: {
+    backgroundColor: '#fff',
+    padding: 20,
+    borderRadius: 12,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  warrantyCardIcon: {
+    fontSize: 32,
+    marginBottom: 12,
+  },
+  warrantyCardTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1f2937',
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  warrantyCardSubtitle: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#6b7280',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  warrantyCardDescription: {
+    fontSize: 14,
+    color: '#6b7280',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  serviceInfo: {
+    backgroundColor: '#fff',
+    padding: 20,
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  serviceInfoTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1f2937',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  serviceInfoList: {
+    gap: 8,
+  },
+  serviceInfoItem: {
+    fontSize: 16,
+    color: '#374151',
+    lineHeight: 24,
+  },
+
+  // System Details Styles
+  detailsHeader: {
+    alignItems: 'center',
+    marginBottom: 30,
+  },
+  detailsTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#1f2937',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  detailsSubtitle: {
+    fontSize: 16,
+    color: '#6b7280',
+    textAlign: 'center',
+  },
+  scopeSection: {
+    backgroundColor: '#fff',
+    padding: 20,
+    borderRadius: 12,
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  scopeTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1f2937',
+    marginBottom: 16,
+  },
+  scopeList: {
+    gap: 8,
+  },
+  scopeItem: {
+    fontSize: 16,
+    color: '#374151',
+    lineHeight: 24,
+  },
+  specificationsGrid: {
+    flexDirection: 'row',
+    gap: 16,
+    marginBottom: 20,
+  },
+  specCard: {
+    flex: 1,
+    backgroundColor: '#fff',
+    padding: 16,
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  specTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1f2937',
+    marginBottom: 12,
+  },
+  specText: {
+    fontSize: 14,
+    color: '#6b7280',
+    lineHeight: 20,
+    marginBottom: 4,
+  },
+  permitsSection: {
+    backgroundColor: '#f9fafb',
+    padding: 20,
+    borderRadius: 12,
+  },
+  permitsTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 12,
+  },
+  permitsText: {
+    fontSize: 14,
+    color: '#6b7280',
+    lineHeight: 20,
+  },
+
+  // Bottom Action Bar
+  bottomBar: {
+    flexDirection: 'row',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+    gap: 12,
+  },
+  actionButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  secondaryButton: {
+    backgroundColor: '#f3f4f6',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+  },
+  primaryButton: {
+    backgroundColor: '#2E86AB',
+  },
+  secondaryButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  primaryButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
+  },
+});
+
+export default QuotePresentationScreen;

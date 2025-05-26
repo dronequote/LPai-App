@@ -19,6 +19,8 @@ import { useAuth } from '../contexts/AuthContext';
 import api from '../lib/api';
 import { COLORS, FONT, RADIUS, SHADOW } from '../styles/theme';
 import type { Project, Quote, QuoteSection, QuoteLineItem, ProductLibrary, LibraryItem } from '../../packages/types/dist';
+// Add this import at the top of QuoteEditorScreen.tsx
+import TemplateSelectionModal from '../components/TemplateSelectionModal';
 
 type QuoteEditorRouteParams = {
   mode: 'create' | 'edit';
@@ -53,6 +55,9 @@ export default function QuoteEditorScreen() {
   const [editingSection, setEditingSection] = useState<string | null>(null);
   const [showLibraryBrowser, setShowLibraryBrowser] = useState(false);
   const [selectedSectionForItem, setSelectedSectionForItem] = useState<string | null>(null);
+
+  // Add this state near the other useState declarations
+  const [showTemplateSelection, setShowTemplateSelection] = useState(false);
 
   // Load data on mount
   useEffect(() => {
@@ -268,6 +273,11 @@ export default function QuoteEditorScreen() {
     }));
   };
 
+  // Form validation
+  const isFormValid = () => {
+    return title.trim() && sections.length > 0;
+  };
+
   // Save quote
   const saveQuote = async () => {
     if (!title.trim()) {
@@ -339,6 +349,88 @@ export default function QuoteEditorScreen() {
     } finally {
       setSaving(false);
     }
+  };
+
+  // Add this function after the existing saveQuote function
+  const handlePresentQuote = async () => {
+    // First, save the quote if there are unsaved changes
+    if (!title.trim()) {
+      Alert.alert('Error', 'Please enter a quote title before presenting');
+      return;
+    }
+
+    if (!user?.locationId) {
+      Alert.alert('Error', 'Missing location information');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      
+      // Save quote data (same logic as saveQuote)
+      const quoteData = {
+        title: title.trim(),
+        description: description.trim(),
+        sections,
+        taxRate,
+        discountPercentage,
+        termsAndConditions: termsAndConditions.trim(),
+        paymentTerms: paymentTerms.trim(),
+        notes: notes.trim(),
+        projectId: project?._id || existingQuote?.projectId,
+        contactId: project?.contactId || existingQuote?.contactId,
+        locationId: user.locationId,
+        userId: user._id,
+      };
+
+      let savedQuote;
+      if (mode === 'create') {
+        const response = await api.post('/api/quotes', quoteData);
+        savedQuote = { ...response.data, ...quoteData };
+        console.log('[QuoteEditor] Created quote for presentation:', response.data.quoteNumber);
+      } else if (existingQuote) {
+        await api.patch(`/api/quotes/${existingQuote._id}`, {
+          ...quoteData,
+          action: 'update_content',
+          locationId: user.locationId,
+        });
+        savedQuote = { ...existingQuote, ...quoteData };
+        console.log('[QuoteEditor] Updated quote for presentation:', existingQuote.quoteNumber);
+      }
+
+      // Show template selection modal
+      setShowTemplateSelection(true);
+      
+    } catch (error) {
+      console.error('[QuoteEditor] Failed to save quote before presentation:', error);
+      Alert.alert('Error', 'Failed to save quote. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Add this function to handle template selection
+  const handleTemplateSelected = (template) => {
+    // Navigate to presentation with quote and template data
+    const quoteForPresentation = {
+      _id: existingQuote?._id || 'new_quote',
+      quoteNumber: existingQuote?.quoteNumber || 'Q-2025-001',
+      customerName: project?.contactName || 'Customer',
+      projectTitle: project?.title || title,
+      totalAmount: totals.total,
+      sections,
+      subtotal: totals.subtotal,
+      taxAmount: totals.taxAmount,
+      total: totals.total,
+      termsAndConditions,
+      paymentTerms,
+      notes,
+    };
+
+    navigation.navigate('QuotePresentation', {
+      quote: quoteForPresentation,
+      template,
+    });
   };
 
   // Open library browser
@@ -596,23 +688,47 @@ export default function QuoteEditorScreen() {
           <View style={{ height: 50 }} />
         </ScrollView>
 
-        {/* Save Button */}
+        {/* Save Container - Updated with two buttons */}
         <View style={styles.saveContainer}>
           <TouchableOpacity 
-            style={[styles.saveButton, saving && styles.saveButtonDisabled]}
+            style={[styles.saveButton, styles.secondaryButton]}
             onPress={saveQuote}
             disabled={saving}
           >
             {saving ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={COLORS.textDark} size="small" />
             ) : (
-              <Text style={styles.saveButtonText}>
-                {mode === 'create' ? 'Create Quote' : 'Save Changes'}
+              <Text style={styles.secondaryButtonText}>
+                {mode === 'create' ? 'Save Draft' : 'Save Changes'}
               </Text>
+            )}
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={[
+              styles.saveButton, 
+              styles.primaryButton,
+              (!isFormValid() || saving) && styles.saveButtonDisabled
+            ]}
+            onPress={handlePresentQuote}
+            disabled={!isFormValid() || saving}
+          >
+            {saving ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={styles.primaryButtonText}>Present Quote</Text>
             )}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+
+      {/* Add the Template Selection Modal at the end, just before the closing tag: */}
+      <TemplateSelectionModal
+        visible={showTemplateSelection}
+        onClose={() => setShowTemplateSelection(false)}
+        onSelectTemplate={handleTemplateSelected}
+        userPermissions={user?.permissions || []}
+      />
     </SafeAreaView>
   );
 }
@@ -974,15 +1090,16 @@ const styles = StyleSheet.create({
     color: COLORS.accent,
   },
   
-  // Save Button
+  // Updated Save Container and Button Styles
   saveContainer: {
+    flexDirection: 'row', // Changed from single button to row
     padding: 20,
     backgroundColor: COLORS.card,
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
+    gap: 12,
   },
   saveButton: {
-    backgroundColor: COLORS.accent,
     borderRadius: RADIUS.button,
     padding: 16,
     alignItems: 'center',
@@ -991,7 +1108,24 @@ const styles = StyleSheet.create({
   saveButtonDisabled: {
     backgroundColor: COLORS.textGray,
   },
-  saveButtonText: {
+  secondaryButton: {
+    backgroundColor: COLORS.background,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    flex: 1,
+    marginRight: 8,
+  },
+  primaryButton: {
+    backgroundColor: COLORS.accent,
+    flex: 1,
+    marginLeft: 8,
+  },
+  secondaryButtonText: {
+    color: COLORS.textDark,
+    fontSize: FONT.input,
+    fontWeight: '600',
+  },
+  primaryButtonText: {
     color: '#fff',
     fontSize: FONT.input,
     fontWeight: '600',

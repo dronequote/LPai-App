@@ -19,7 +19,24 @@ import AppointmentDetail from '../screens/AppointmentDetail';
 import ProjectDetailScreen from '../screens/ProjectDetailScreen';
 import QuoteBuilderScreen from '../screens/QuoteBuilderScreen';
 import QuoteEditorScreen from '../screens/QuoteEditorScreen';
-import { Contact, Project, Quote } from '../../packages/types/dist'; // ✅ ADDED Quote import
+import QuotePresentationScreen from '../screens/QuotePresentationScreen';
+import { Contact, Project, Quote } from '../../packages/types/dist';
+
+// Template type for quote presentation
+interface QuoteTemplate {
+  _id: string;
+  locationId: string;
+  name: string;
+  primaryColor: string;
+  accentColor: string;
+  sections: Array<{
+    id: string;
+    title: string;
+    enabled: boolean;
+    order: number;
+    icon: string;
+  }>;
+}
 
 export type RootStackParamList = {
   AuthMethodScreen: undefined;
@@ -40,7 +57,11 @@ export type RootStackParamList = {
   QuoteEditor: { 
     mode: 'create' | 'edit'; 
     project?: Project; 
-    quote?: Quote; // ✅ NOW Quote is imported
+    quote?: Quote;
+  };
+  QuotePresentation: {
+    quote: Quote;
+    template: QuoteTemplate;
   };
 };
 
@@ -72,6 +93,7 @@ export default function StackNavigator() {
       <Stack.Screen name="ProjectDetailScreen" component={ProjectDetailScreen} />
       <Stack.Screen name="QuoteBuilder" component={QuoteBuilderScreen} />
       <Stack.Screen name="QuoteEditor" component={QuoteEditorScreen} />
+      <Stack.Screen name="QuotePresentation" component={QuotePresentationScreen} />
     </Stack.Navigator>
   );
 }
