@@ -1,4 +1,5 @@
 {
+  "_id": "template_professional_plumbing_001",
   "isGlobal": true,
   "name": "Professional Plumbing Proposal",
   "description": "Clean, professional layout perfect for residential plumbing projects",
@@ -11,7 +12,7 @@
     "fontFamily": "system",
     "layout": "standard"
   },
-  "companyOverride": {
+  "companyOverrides": {
     "name": null,
     "logo": "🔧",
     "tagline": "Your trusted plumbing experts since 1995",
@@ -21,69 +22,309 @@
     "establishedYear": "1995",
     "warrantyYears": "5"
   },
-  "sections": [
+  "tabs": [
     {
-      "id": "company_intro",
-      "type": "company_intro",
+      "id": "tab_1",
       "title": "Why Choose {companyName}",
+      "icon": "🏠",
       "enabled": true,
       "order": 1,
-      "icon": "🏠",
-      "config": {
-        "showBenefits": true,
-        "showContact": true,
-        "customContent": null
-      }
+      "blocks": [
+        {
+          "id": "block_1",
+          "type": "hero",
+          "position": 1,
+          "content": {
+            "title": "Why Choose {companyName}",
+            "subtitle": "{companyTagline}",
+            "icon": "{companyLogo}"
+          }
+        },
+        {
+          "id": "block_2",
+          "type": "benefit_cards",
+          "position": 2,
+          "content": {
+            "cards": [
+              {
+                "icon": "🏆",
+                "title": "Expert Craftsmanship",
+                "subtitle": "Professional Excellence",
+                "description": "Professional plumbing solutions with over {experienceYears} years of experience in residential and commercial projects."
+              },
+              {
+                "icon": "⚡",
+                "title": "Fast & Reliable",
+                "subtitle": "Quick Response",
+                "description": "Quick response times and efficient installations that minimize disruption to your daily routine."
+              },
+              {
+                "icon": "🛡️",
+                "title": "{warrantyYears}-Year Warranty",
+                "subtitle": "Complete Protection",
+                "description": "Comprehensive warranty covering all materials and labor for complete peace of mind."
+              }
+            ]
+          }
+        },
+        {
+          "id": "block_3",
+          "type": "contact_info",
+          "position": 3,
+          "content": {
+            "title": "Contact Information",
+            "items": [
+              {
+                "icon": "📞",
+                "label": "Phone",
+                "value": "{phone}"
+              },
+              {
+                "icon": "✉️",
+                "label": "Email", 
+                "value": "{email}"
+              },
+              {
+                "icon": "📍",
+                "label": "Address",
+                "value": "{address}"
+              }
+            ]
+          }
+        }
+      ]
     },
     {
-      "id": "quote_details",
-      "type": "quote_details", 
+      "id": "tab_2",
       "title": "Your Quote Details",
+      "icon": "💰",
       "enabled": true,
       "order": 2,
-      "icon": "💰",
-      "config": {
-        "showBreakdown": true,
-        "showTerms": true,
-        "groupBySection": true
-      }
+      "blocks": [
+        {
+          "id": "block_4",
+          "type": "quote_header",
+          "position": 1,
+          "content": {
+            "title": "Quote #{quoteNumber}",
+            "subtitle": "{projectTitle}",
+            "customerLabel": "Prepared for: {customerName}"
+          }
+        },
+        {
+          "id": "block_5",
+          "type": "quote_breakdown",
+          "position": 2,
+          "content": {
+            "title": "Pricing Breakdown",
+            "labels": {
+              "subtotal": "Subtotal",
+              "tax": "Tax",
+              "total": "Total",
+              "quantity": "Qty",
+              "sectionTotal": "Section Total"
+            }
+          }
+        },
+        {
+          "id": "block_6",
+          "type": "terms_section",
+          "position": 3,
+          "content": {
+            "title": "Terms & Conditions",
+            "content": "{termsAndConditions}"
+          }
+        }
+      ]
     },
     {
-      "id": "our_process",
-      "type": "our_process",
-      "title": "Our Process", 
+      "id": "tab_3",
+      "title": "Our Process",
+      "icon": "⚙️", 
       "enabled": true,
       "order": 3,
-      "icon": "⚙️",
-      "config": {
-        "showTimeline": true,
-        "showSteps": true
-      }
+      "blocks": [
+        {
+          "id": "block_7",
+          "type": "hero",
+          "position": 1,
+          "content": {
+            "title": "The {companyName} Process",
+            "subtitle": "From consultation to completion, we guide you through every step",
+            "icon": "⚙️"
+          }
+        },
+        {
+          "id": "block_8",
+          "type": "process_steps",
+          "position": 2,
+          "content": {
+            "steps": [
+              {
+                "stepNumber": 1,
+                "title": "Initial Consultation",
+                "time": "1-2 days",
+                "description": "Free in-home assessment and detailed quote preparation"
+              },
+              {
+                "stepNumber": 2,
+                "title": "Project Planning",
+                "time": "3-5 days", 
+                "description": "Permit acquisition and material ordering"
+              },
+              {
+                "stepNumber": 3,
+                "title": "Installation Begins",
+                "time": "1-3 days",
+                "description": "Professional installation by certified technicians"
+              },
+              {
+                "stepNumber": 4,
+                "title": "Quality Inspection",
+                "time": "1 day",
+                "description": "Thorough testing and final walkthrough"
+              },
+              {
+                "stepNumber": 5,
+                "title": "Project Complete",
+                "time": "Same day",
+                "description": "Final cleanup and warranty activation"
+              }
+            ]
+          }
+        }
+      ]
     },
     {
-      "id": "warranty_service",
-      "type": "warranty_service",
+      "id": "tab_4",
       "title": "Warranty & Service",
-      "enabled": true, 
-      "order": 4,
       "icon": "🛡️",
-      "config": {
-        "showWarrantyDetails": true,
-        "showServiceInfo": true
-      }
+      "enabled": true,
+      "order": 4,
+      "blocks": [
+        {
+          "id": "block_9",
+          "type": "hero",
+          "position": 1,
+          "content": {
+            "title": "{warrantyYears}-Year Peace of Mind",
+            "subtitle": "Comprehensive protection for your investment",
+            "icon": "🛡️"
+          }
+        },
+        {
+          "id": "block_10",
+          "type": "warranty_cards",
+          "position": 2,
+          "content": {
+            "cards": [
+              {
+                "icon": "🔧",
+                "title": "Materials Warranty",
+                "subtitle": "Manufacturer & Installation",
+                "description": "All fixtures and materials covered against defects and installation issues"
+              },
+              {
+                "icon": "👨‍🔧",
+                "title": "Labor Warranty",
+                "subtitle": "Workmanship Guarantee", 
+                "description": "Professional installation work guaranteed for the full warranty period"
+              },
+              {
+                "icon": "🚨",
+                "title": "Emergency Service",
+                "subtitle": "24/7 Support",
+                "description": "Priority emergency service for warranty-covered issues"
+              }
+            ]
+          }
+        },
+        {
+          "id": "block_11",
+          "type": "service_list",
+          "position": 3,
+          "content": {
+            "title": "What's Included in Your {warrantyYears}-Year Warranty",
+            "items": [
+              "✅ All fixtures and fittings",
+              "✅ Installation workmanship", 
+              "✅ Water damage protection",
+              "✅ Free annual inspections",
+              "✅ Priority scheduling for service calls",
+              "✅ Transferable warranty (if home is sold)"
+            ]
+          }
+        }
+      ]
     },
     {
-      "id": "system_details", 
-      "type": "system_details",
+      "id": "tab_5",
       "title": "Project Details",
+      "icon": "📋",
       "enabled": true,
       "order": 5,
-      "icon": "📋",
-      "config": {
-        "showScope": true,
-        "showSpecifications": true,
-        "showPermits": true
-      }
+      "blocks": [
+        {
+          "id": "block_12",
+          "type": "hero",
+          "position": 1,
+          "content": {
+            "title": "Project Specifications",
+            "subtitle": "Technical details and scope of work",
+            "icon": "📋"
+          }
+        },
+        {
+          "id": "block_13",
+          "type": "scope_list",
+          "position": 2,
+          "content": {
+            "title": "Scope of Work",
+            "items": [
+              "🔹 Kitchen sink and faucet replacement",
+              "🔹 Master bathroom vanity installation", 
+              "🔹 Shower system upgrade with modern fixtures",
+              "🔹 Water line routing and connections",
+              "🔹 Drain line installation and testing",
+              "🔹 Pressure testing and system certification"
+            ]
+          }
+        },
+        {
+          "id": "block_14",
+          "type": "specifications",
+          "position": 3,
+          "content": {
+            "specs": [
+              {
+                "title": "Materials Used",
+                "items": [
+                  "• Premium PEX tubing",
+                  "• Brass fittings and valves", 
+                  "• Code-compliant fixtures"
+                ]
+              },
+              {
+                "title": "Timeline",
+                "items": [
+                  "• Start: Within 1 week",
+                  "• Duration: 2-3 days",
+                  "• Completion: Full testing"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "block_15",
+          "type": "text_section",
+          "position": 4,
+          "content": {
+            "title": "Permits & Compliance",
+            "content": "All work will be performed to local building codes and permit requirements. We handle all permit applications and inspections to ensure your project meets all safety and regulatory standards."
+          }
+        }
+      ]
     }
   ],
   "createdAt": "2025-05-26T00:00:00.000Z",
