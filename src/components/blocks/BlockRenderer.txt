@@ -1,0 +1,289 @@
+# Complete Dynamic Template System Architecture & Progress
+
+## Overview
+Create a fully dynamic, database-driven template system where admins can:
+- Edit every piece of content (text, icons, colors)
+- Mix and match reusable content blocks
+- Create unlimited custom templates
+- Reuse block types multiple times per template
+
+## 1. Database Schema (MongoDB) ✅ COMPLETE
+### Templates Collection
+```javascript
+{
+  _id: "template_professional_plumbing_001",
+  isGlobal: true, // Global templates can be copied by locations
+  locationId: "loc_456", // null for global templates
+  name: "Professional Plumbing Proposal",
+  description: "Clean, professional layout perfect for residential plumbing projects",
+  category: "plumbing",
+  preview: "🔧",
+  isDefault: true,
+  styling: {
+    primaryColor: "#2E86AB",
+    accentColor: "#A23B72",
+    fontFamily: "system",
+    layout: "standard"
+  },
+  companyOverrides: {
+    name: null,
+    logo: "🔧",
+    tagline: "Your trusted plumbing experts since 1995",
+    phone: null,
+    email: null,
+    address: null,
+    establishedYear: "1995",
+    warrantyYears: "5"
+  },
+  tabs: [
+    {
+      id: "tab_1",
+      title: "Why Choose {companyName}",
+      icon: "🏠",
+      enabled: true,
+      order: 1,
+      blocks: [
+        {
+          id: "block_1",
+          type: "hero",
+          position: 1,
+          content: {
+            title: "Why Choose {companyName}",
+            subtitle: "{companyTagline}",
+            icon: "{companyLogo}"
+          }
+        }
+        // ... more blocks
+      ]
+    }
+    // ... more tabs
+  ],
+  createdAt: "2025-05-26T00:00:00.000Z",
+  updatedAt: "2025-05-26T00:00:00.000Z",
+  createdBy: "system"
+}
+```
+
+### User Schema Updates 🆕 PLANNED
+```javascript
+{
+  // ... existing user fields
+  preferences: {
+    showGlobalTemplates: true, // NEW: Toggle for template selection
+    // ... other preferences
+  }
+}
+```
+
+## 2. Block Type Definitions ✅ COMPLETE
+### Implemented Block Components:
+
+1. **HeroBlock** - Title + subtitle + icon ✅
+2. **BenefitCardsBlock** - Grid of icon + title + subtitle + description ✅
+3. **ContactInfoBlock** - Contact details with icons ✅
+4. **QuoteHeaderBlock** - Quote number + project + customer ✅
+5. **QuoteBreakdownBlock** - Pricing table with sections/totals ✅
+6. **TermsSectionBlock** - Terms and conditions text ✅
+7. **ProcessStepsBlock** - Numbered steps with timeline ✅
+8. **WarrantyCardsBlock** - Warranty feature cards ✅
+9. **ServiceListBlock** - Checkmark list items ✅
+10. **ScopeListBlock** - Bulleted scope items ✅
+11. **SpecificationsBlock** - Two-column spec cards ✅
+12. **TextSectionBlock** - Simple title + paragraph ✅
+
+### Block Features:
+- Icon mapping (emoji → Ionicons) ✅
+- Variable replacement {companyName} → actual values ✅
+- Dynamic styling using template colors ✅
+- Quote data integration for pricing blocks ✅
+
+## 3. API Endpoints Status
+### ✅ TEMPLATE APIs - COMPLETE:
+- `GET /api/templates/global` - Get all global templates ✅
+- `POST /api/templates/global` - Create global template (admin only) ✅
+- `GET /api/templates/[locationId]` - Get location + global templates ✅
+- `POST /api/templates/[locationId]` - Create new location template ✅
+- `GET /api/templates/[locationId]/[templateId]` - Get specific template ✅
+- `PATCH /api/templates/[locationId]/[templateId]` - Update template ✅
+- `DELETE /api/templates/[locationId]/[templateId]` - Delete template ✅
+- `POST /api/templates/[locationId]/copy/[globalTemplateId]` - Copy global to location ✅
+
+### ✅ QUOTE APIs - COMPLETE:
+- `GET /api/quotes?locationId=...` - Get quotes with filters ✅
+- `POST /api/quotes` - Create new quote ✅
+- `GET /api/quotes/[id]?locationId=...` - Get single quote with details ✅
+- `PATCH /api/quotes/[id]` - Update quote (status, content, create revision) ✅
+- `DELETE /api/quotes/[id]` - Soft delete quote ✅
+
+### ⏳ NEEDED APIs:
+- `GET /api/locations/byLocation?locationId=...` - NEEDED for company data (name, logo, phone, etc.)
+- `PATCH /api/users/[userId]` - NEEDED for saving user preferences (showGlobalTemplates toggle)
+
+## 4. Frontend Components ✅ COMPLETE
+### Block Components Structure:
+```
+src/components/blocks/
+├── HeroBlock.tsx ✅
+├── BenefitCardsBlock.tsx ✅
+├── ContactInfoBlock.tsx ✅
+├── QuoteHeaderBlock.tsx ✅
+├── QuoteBreakdownBlock.tsx ✅
+├── TermsSectionBlock.tsx ✅
+├── ProcessStepsBlock.tsx ✅
+├── WarrantyCardsBlock.tsx ✅
+├── ServiceListBlock.tsx ✅
+├── ScopeListBlock.tsx ✅
+├── SpecificationsBlock.tsx ✅
+└── TextSectionBlock.tsx ✅
+```
+
+### Generic Block Renderer: ✅ COMPLETE
+```javascript
+// src/components/BlockRenderer.tsx
+export default function BlockRenderer({ block, styling, variables, quote }) {
+  switch (block.type) {
+    case 'hero': return <HeroBlock ... />;
+    case 'benefit_cards': return <BenefitCardsBlock ... />;
+    case 'contact_info': return <ContactInfoBlock ... />;
+    case 'quote_header': return <QuoteHeaderBlock ... />;
+    case 'quote_breakdown': return <QuoteBreakdownBlock ... />;
+    case 'terms_section': return <TermsSectionBlock ... />;
+    case 'process_steps': return <ProcessStepsBlock ... />;
+    case 'warranty_cards': return <WarrantyCardsBlock ... />;
+    case 'service_list': return <ServiceListBlock ... />;
+    case 'scope_list': return <ScopeListBlock ... />;
+    case 'specifications': return <SpecificationsBlock ... />;
+    case 'text_section': return <TextSectionBlock ... />;
+    // All 12 block types implemented ✅
+  }
+}
+```
+
+### Template Selection Flow: 🚧 NEEDS UPDATE
+**Current Implementation:**
+- QuoteEditor → "Present Quote" button
+- TemplateSelectionModal → User picks template (currently uses mock data)
+- QuotePresentationScreen → Renders with selected template
+
+**Planned Updates:**
+- TemplateSelectionModal to use real APIs ⏳
+- Toggle for global templates with user preference saving ⏳
+- Visual grouping of global vs location templates ⏳
+- Auto-copy global templates to location when selected ⏳
+
+## 5. Variable System ✅ COMPLETE
+### Variable Sources (Priority Order):
+1. Quote data (amounts, customer info)
+2. Company/Location data (needs API integration)
+3. Template overrides
+4. Fallback defaults
+
+### Implemented Variables:
+```javascript
+const variables = {
+  // Company variables (will pull from /api/locations/byLocation)
+  companyName: company.name,
+  companyLogo: company.logo,
+  companyTagline: company.tagline,
+  phone: company.phone,
+  email: company.email,
+  address: company.address,
+  establishedYear: company.establishedYear,
+  warrantyYears: company.warrantyYears,
+  experienceYears: calculatedYears,
+  
+  // Quote variables  
+  quoteNumber: quote.quoteNumber,
+  customerName: quote.customerName,
+  projectTitle: quote.projectTitle,
+  totalAmount: quote.total,
+  termsAndConditions: quote.termsAndConditions
+};
+```
+
+## 6. Implementation Status
+
+### Phase 1: Core System ✅ COMPLETE
+- ✅ Create block component definitions
+- ✅ Build generic BlockRenderer component
+- ✅ Create MongoDB template schema
+- ✅ Seed database with Professional Plumbing template
+
+### Phase 2: Template Management ✅ COMPLETE
+- ✅ Create template CRUD APIs
+- ✅ Convert static definitions to database records
+- ✅ Create default global templates
+
+### Phase 3: Data Integration 🚧 IN PROGRESS
+**NEXT STEPS (Priority Order):**
+1. ⏳ **HIGH PRIORITY** - Update TemplateSelectionModal to use real APIs
+2. ⏳ **HIGH PRIORITY** - Create `/api/locations/byLocation` API for company data
+3. ⏳ **HIGH PRIORITY** - Update QuotePresentationScreen to use template + BlockRenderer
+4. ⏳ **MEDIUM PRIORITY** - Add user preferences API for global template toggle
+5. ⏳ **MEDIUM PRIORITY** - Build template management UI for admins
+
+### Phase 4: Advanced Features ⏳ PLANNED
+- Template versioning
+- Template sharing between locations
+- Custom block type creation
+- Advanced variable system
+
+## 7. Current Architecture Flow
+### Data Flow:
+```
+MongoDB Templates → API → TemplateSelectionModal → QuotePresentationScreen → BlockRenderer → Individual Block Components
+```
+
+### Template Structure:
+```
+Template JSON → tabs[] → blocks[] → BlockRenderer → React Components
+```
+
+### Variable Flow:
+```
+Company Data (API) + Quote Data → Variables Object → Block Components (via replaceVariables())
+```
+
+## 8. User Context & Authentication ✅ ESTABLISHED
+- Uses `const { user } = useAuth()` pattern (established in QuoteEditorScreen)
+- Access `user.locationId` for API calls
+- Access `user.permissions` for permission-based features
+- User preferences will be stored in `user.preferences.showGlobalTemplates`
+
+## 9. Template Selection Strategy 🆕 DEFINED
+- **API Integration**: Use `/api/templates/[locationId]` to get both location + global templates
+- **UI Grouping**: Visual separation between "Global Templates" and "Your Custom Templates"
+- **Toggle Feature**: "Show Global Templates" toggle saved in user preferences
+- **Global Template Handling**: Auto-copy global templates to location when selected via `/api/templates/[locationId]/copy/[globalTemplateId]`
+- **Error Handling**: Show error messages, no fallback to mock data
+
+## 10. Current System Status
+### ✅ WORKING & COMPLETE:
+- All 12 block components implemented and functional
+- BlockRenderer handles all block types with proper imports
+- Template APIs fully functional
+- Quote APIs fully functional
+- Template structure matches MongoDB schema
+- Variable replacement system working
+- User/location context established
+
+### 🚧 CURRENT TASKS (IN ORDER):
+1. **Update TemplateSelectionModal** - Replace mock data with real API calls
+2. **Create company data API** - `/api/locations/byLocation` endpoint
+3. **Update QuotePresentationScreen** - Use template + BlockRenderer instead of hardcoded JSX
+4. **Add user preferences API** - For saving global template toggle
+
+### ❌ CURRENT LIMITATIONS:
+- TemplateSelectionModal still uses mock data
+- QuotePresentationScreen still uses hardcoded content
+- No company data API yet
+- No user preferences saving yet
+
+## 11. Success Metrics
+- ✅ Templates are 100% dynamic and database-driven
+- ✅ Any template JSON structure renders correctly  
+- ✅ Quote data integrates properly with templates
+- 🚧 Template selection flow works with real APIs (in progress)
+- 🚧 Company data integration complete (pending)
+
+**This system is ~75% complete and ready for the final data integration phase!** The main remaining work is connecting all the real APIs and removing mock data dependencies.

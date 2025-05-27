@@ -6,120 +6,225 @@ import {
   Dimensions,
   TouchableOpacity,
   ScrollView,
-  Image,
   StatusBar,
   SafeAreaView,
   FlatList,
   Animated,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '../contexts/AuthContext';
+import api from '../lib/api';
+import BlockRenderer from '../components/BlockRenderer';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-// Mock data representing what would come from MongoDB
-const mockQuoteData = {
-  quote: {
-    _id: 'quote_123',
-    quoteNumber: 'Q-2025-001',
-    customerName: 'Michael Dean',
-    projectTitle: 'Kitchen & Master Bath Remodel',
-    totalAmount: 15750,
-    sections: [
-      {
-        name: 'Fixtures',
-        lineItems: [
-          { name: 'Premium Kitchen Sink', quantity: 1, unitPrice: 450, totalPrice: 450 },
-          { name: 'Master Bath Vanity', quantity: 1, unitPrice: 1200, totalPrice: 1200 },
-          { name: 'Shower System', quantity: 1, unitPrice: 890, totalPrice: 890 },
-        ],
-        subtotal: 2540
-      },
-      {
-        name: 'Labor & Installation',
-        lineItems: [
-          { name: 'Kitchen Plumbing Installation', quantity: 1, unitPrice: 2400, totalPrice: 2400 },
-          { name: 'Bathroom Rough-in', quantity: 1, unitPrice: 1800, totalPrice: 1800 },
-          { name: 'Fixture Installation', quantity: 8, unitPrice: 150, totalPrice: 1200 },
-        ],
-        subtotal: 5400
-      }
-    ],
-    subtotal: 13950,
-    taxAmount: 1116,
-    total: 15750,
-    termsAndConditions: 'Payment due within 30 days of completion. 50% deposit required.',
-  },
-  company: {
-    name: 'Premier Plumbing Solutions',
-    logo: '🔧', // In real app, this would be an image URL
-    phone: '(555) 123-4567',
-    email: 'info@premierplumbing.com',
-    address: '123 Main Street, Anytown, CA 90210',
-    tagline: 'Your trusted plumbing experts since 1995',
-    establishedYear: '1995',
-    warrantyYears: '5',
-  },
-  template: {
-    name: 'Professional Plumbing Proposal',
-    primaryColor: '#2E86AB',
-    accentColor: '#A23B72',
-    sections: [
-      {
-        id: 'company_intro',
-        title: 'Why Choose {companyName}',
-        enabled: true,
-        order: 1,
-        icon: '🏠'
-      },
-      {
-        id: 'quote_details',
-        title: 'Your Quote Details',
-        enabled: true,
-        order: 2,
-        icon: '💰'
-      },
-      {
-        id: 'our_process',
-        title: 'Our Process',
-        enabled: true,
-        order: 3,
-        icon: '⚙️'
-      },
-      {
-        id: 'warranty_service',
-        title: 'Warranty & Service',
-        enabled: true,
-        order: 4,
-        icon: '🛡️'
-      },
-      {
-        id: 'system_details',
-        title: 'Project Details',
-        enabled: true,
-        order: 5,
-        icon: '📋'
-      }
-    ]
-  }
-};
+interface Template {
+  _id: string;
+  name: string;
+  styling: {
+    primaryColor: string;
+    accentColor: string;
+  };
+  companyOverrides: {
+    name?: string;
+    logo?: string;
+    tagline?: string;
+    phone?: string;
+    email?: string;
+    address?: string;
+    establishedYear?: string;
+    warrantyYears?: string;
+  };
+  tabs: Array<{
+    id: string;
+    title: string;
+    icon: string;
+    enabled: boolean;
+    order: number;
+    blocks: Array<{
+      id: string;
+      type: string;
+      position: number;
+      content: any;
+    }>;
+  }>;
+}
+
+interface CompanyData {
+  name?: string;
+  logo?: string;
+  tagline?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  establishedYear?: string;
+  warrantyYears?: string;
+  website?: string;
+  licenseNumber?: string;
+}
 
 const QuotePresentationScreen = () => {
   const navigation = useNavigation();
   const route = useRoute();
+  const { user } = useAuth();
   
-  // In real app, these would come from route params
-  const { quote, template } = route.params || { quote: mockQuoteData.quote, template: mockQuoteData.template };
+  // Get quote and template from route params with safety checks
+  const routeParams = route.params as { quote: any; template: Template } || {};
+  const { quote, template } = routeParams;
   
+  console.log('[QuotePresentation] ===== STARTING QUOTE PRESENTATION =====');
+  console.log('[QuotePresentation] Route params received:', { 
+    hasQuote: !!quote, 
+    hasTemplate: !!template 
+  });
+  
+  // CRITICAL: Log the actual quote object structure
+  if (quote) {
+    console.log('[QuotePresentation] Quote object:', {
+      quoteNumber: quote.quoteNumber,
+      title: quote.title,
+      customerName: quote.customerName,
+      contactName: quote.contactName,
+      hasTermsAndConditions: quote.hasOwnProperty('termsAndConditions'),
+      termsAndConditions: quote.termsAndConditions,
+      total: quote.total,
+      sections: Array.isArray(quote.sections) ? quote.sections.length : 'NOT_ARRAY'
+    });
+  } else {
+    console.log('[QuotePresentation] Quote object is NULL/UNDEFINED');
+  }
+  
+  if (template) {
+    console.log('[QuotePresentation] Template check:', {
+      id: template._id,
+      name: template.name,
+      hasTabsArray: Array.isArray(template.tabs),
+      tabsLength: template.tabs?.length,
+      tabsType: typeof template.tabs,
+      tabs: template.tabs
+    });
+    
+    // Log each tab structure
+    if (template.tabs && Array.isArray(template.tabs)) {
+      template.tabs.forEach((tab, index) => {
+        console.log(`[QuotePresentation] Tab ${index}:`, {
+          id: tab?.id,
+          title: tab?.title,
+          enabled: tab?.enabled,
+          hasBlocks: Array.isArray(tab?.blocks),
+          blocksLength: tab?.blocks?.length,
+          blocksType: typeof tab?.blocks
+        });
+      });
+    }
+  }
+  
+  console.log('[QuotePresentation] About to call getEnabledTabs...');
+  
+  // Safety check - if no template, show error
+  if (!template) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <Text style={styles.emptyText}>No template provided</Text>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+            <Text style={styles.backButtonText}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+  
+  // State
   const [activeTabIndex, setActiveTabIndex] = useState(0);
+  const [companyData, setCompanyData] = useState<CompanyData>({});
+  const [loading, setLoading] = useState(true);
   const flatListRef = useRef(null);
   const scrollX = useRef(new Animated.Value(0)).current;
 
-  const { company } = mockQuoteData; // This would come from location data
-  const enabledSections = template.sections.filter(section => section.enabled);
+  // Load company data on mount
+  useEffect(() => {
+    loadCompanyData();
+  }, []);
 
-  const handleTabPress = (index) => {
+  const loadCompanyData = async () => {
+    if (!user?.locationId) {
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const response = await api.get(`/api/locations/byLocation?locationId=${user.locationId}`);
+      
+      if (response.data?.companyInfo) {
+        setCompanyData(response.data.companyInfo);
+      }
+    } catch (error) {
+      console.error('[QuotePresentation] Failed to load company data:', error);
+      // Continue with empty company data - not critical
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Build variables object for template rendering
+  const buildVariables = () => {
+    const currentYear = new Date().getFullYear();
+    const establishedYear = parseInt(
+      template?.companyOverrides?.establishedYear || 
+      companyData.establishedYear || 
+      currentYear.toString()
+    );
+    const experienceYears = currentYear - establishedYear;
+
+    return {
+      // Company variables (template overrides take priority)
+      companyName: template?.companyOverrides?.name || companyData.name || 'Your Company',
+      companyLogo: template?.companyOverrides?.logo || companyData.logo || '🏢',
+      companyTagline: template?.companyOverrides?.tagline || companyData.tagline || 'Professional service you can trust',
+      phone: template?.companyOverrides?.phone || companyData.phone || '',
+      email: template?.companyOverrides?.email || companyData.email || '',
+      address: template?.companyOverrides?.address || companyData.address || '',
+      establishedYear: template?.companyOverrides?.establishedYear || companyData.establishedYear || currentYear.toString(),
+      warrantyYears: template?.companyOverrides?.warrantyYears || companyData.warrantyYears || '1',
+      experienceYears: experienceYears.toString(),
+      
+      // Quote variables
+      quoteNumber: quote.quoteNumber || 'Q-XXXX-XXX',
+      customerName: quote.customerName || quote.contactName || 'Customer',
+      projectTitle: quote.projectTitle || quote.title || 'Project',
+      totalAmount: quote.total ? `$${quote.total.toLocaleString()}` : '$0',
+      termsAndConditions: quote.termsAndConditions || 'Standard terms and conditions apply.',
+      paymentTerms: quote.paymentTerms || 'Payment due upon completion.',
+      notes: quote.notes || '',
+    };
+  };
+
+  // Get enabled tabs sorted by order
+  const getEnabledTabs = () => {
+    console.log('[QuotePresentation] Getting enabled tabs, template.tabs:', template?.tabs);
+    
+    if (!template?.tabs || !Array.isArray(template.tabs)) {
+      console.log('[QuotePresentation] No valid tabs array found');
+      return [];
+    }
+    
+    const enabledTabs = template.tabs
+      .filter(tab => {
+        console.log('[QuotePresentation] Checking tab:', tab?.id, 'enabled:', tab?.enabled);
+        return tab && tab.enabled === true;
+      })
+      .sort((a, b) => (a?.order || 0) - (b?.order || 0));
+    
+    console.log('[QuotePresentation] Enabled tabs count:', enabledTabs.length);
+    return enabledTabs;
+  };
+
+  // Handle tab navigation
+  const handleTabPress = (index: number) => {
     setActiveTabIndex(index);
     flatListRef.current?.scrollToIndex({ index, animated: true });
   };
@@ -134,17 +239,14 @@ const QuotePresentationScreen = () => {
     itemVisiblePercentThreshold: 50,
   }).current;
 
-  // Replace template variables with actual data
-  const replaceVariables = (text) => {
-    return text
-      .replace(/{companyName}/g, company.name)
-      .replace(/{customerName}/g, quote.customerName)
-      .replace(/{projectTitle}/g, quote.projectTitle)
-      .replace(/{totalAmount}/g, `$${quote.total.toLocaleString()}`)
-      .replace(/{establishedYear}/g, company.establishedYear)
-      .replace(/{warrantyYears}/g, company.warrantyYears)
-      .replace(/{phone}/g, company.phone)
-      .replace(/{email}/g, company.email);
+  // Replace variables in text
+  const replaceVariables = (text: string, variables: Record<string, string>): string => {
+    let result = text;
+    Object.entries(variables).forEach(([key, value]) => {
+      const regex = new RegExp(`{${key}}`, 'g');
+      result = result.replace(regex, value || `{${key}}`);
+    });
+    return result;
   };
 
   const handleClose = () => {
@@ -163,250 +265,78 @@ const QuotePresentationScreen = () => {
     navigation.navigate('SignatureCapture', { quote, template });
   };
 
-  const renderCompanyIntro = () => (
-    <ScrollView style={styles.sectionContainer} showsVerticalScrollIndicator={false}>
-      <View style={styles.heroSection}>
-        <Text style={styles.heroEmoji}>{company.logo}</Text>
-        <Text style={styles.heroTitle}>Why Choose {company.name}</Text>
-        <Text style={styles.heroSubtitle}>{company.tagline}</Text>
-      </View>
-
-      <View style={styles.benefitsGrid}>
-        <View style={styles.benefitCard}>
-          <Text style={styles.benefitIcon}>🏆</Text>
-          <Text style={styles.benefitTitle}>Expert Craftsmanship</Text>
-          <Text style={styles.benefitText}>
-            Professional plumbing solutions with over {parseInt(new Date().getFullYear()) - parseInt(company.establishedYear)} years of experience in residential and commercial projects.
-          </Text>
-        </View>
-
-        <View style={styles.benefitCard}>
-          <Text style={styles.benefitIcon}>⚡</Text>
-          <Text style={styles.benefitTitle}>Fast & Reliable</Text>
-          <Text style={styles.benefitText}>
-            Quick response times and efficient installations that minimize disruption to your daily routine.
-          </Text>
-        </View>
-
-        <View style={styles.benefitCard}>
-          <Text style={styles.benefitIcon}>🛡️</Text>
-          <Text style={styles.benefitTitle}>{company.warrantyYears}-Year Warranty</Text>
-          <Text style={styles.benefitText}>
-            Comprehensive warranty covering all materials and labor for complete peace of mind.
-          </Text>
-        </View>
-      </View>
-
-      <View style={styles.contactSection}>
-        <Text style={styles.contactTitle}>Contact Information</Text>
-        <Text style={styles.contactItem}>📞 {company.phone}</Text>
-        <Text style={styles.contactItem}>✉️ {company.email}</Text>
-        <Text style={styles.contactItem}>📍 {company.address}</Text>
-      </View>
-    </ScrollView>
-  );
-
-  const renderQuoteDetails = () => (
-    <ScrollView style={styles.sectionContainer} showsVerticalScrollIndicator={false}>
-      <View style={styles.quoteHeader}>
-        <Text style={styles.quoteTitle}>Quote #{quote.quoteNumber}</Text>
-        <Text style={styles.quoteSubtitle}>{quote.projectTitle}</Text>
-        <Text style={styles.quoteCustomer}>Prepared for: {quote.customerName}</Text>
-      </View>
-
-      <View style={styles.pricingBreakdown}>
-        {quote.sections.map((section, index) => (
-          <View key={index} style={styles.sectionCard}>
-            <Text style={styles.sectionTitle}>{section.name}</Text>
-            {section.lineItems.map((item, itemIndex) => (
-              <View key={itemIndex} style={styles.lineItem}>
-                <View style={styles.lineItemLeft}>
-                  <Text style={styles.lineItemName}>{item.name}</Text>
-                  <Text style={styles.lineItemQty}>Qty: {item.quantity}</Text>
-                </View>
-                <Text style={styles.lineItemPrice}>${item.totalPrice.toLocaleString()}</Text>
-              </View>
-            ))}
-            <View style={styles.sectionTotal}>
-              <Text style={styles.sectionTotalText}>Section Total: ${section.subtotal.toLocaleString()}</Text>
-            </View>
+  // Render tab content using BlockRenderer
+  const renderTabContent = (tab: any) => {
+    if (!tab?.blocks || !Array.isArray(tab.blocks)) {
+      return (
+        <ScrollView style={styles.sectionContainer}>
+          <View style={styles.emptyContent}>
+            <Text style={styles.emptyText}>No content available for this section</Text>
           </View>
-        ))}
-
-        <View style={styles.totalSection}>
-          <View style={styles.totalRow}>
-            <Text style={styles.totalLabel}>Subtotal</Text>
-            <Text style={styles.totalValue}>${quote.subtotal.toLocaleString()}</Text>
-          </View>
-          <View style={styles.totalRow}>
-            <Text style={styles.totalLabel}>Tax</Text>
-            <Text style={styles.totalValue}>${quote.taxAmount.toLocaleString()}</Text>
-          </View>
-          <View style={[styles.totalRow, styles.finalTotal]}>
-            <Text style={styles.finalTotalLabel}>Total</Text>
-            <Text style={styles.finalTotalValue}>${quote.total.toLocaleString()}</Text>
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.termsSection}>
-        <Text style={styles.termsTitle}>Terms & Conditions</Text>
-        <Text style={styles.termsText}>{quote.termsAndConditions}</Text>
-      </View>
-    </ScrollView>
-  );
-
-  const renderOurProcess = () => (
-    <ScrollView style={styles.sectionContainer} showsVerticalScrollIndicator={false}>
-      <View style={styles.processHeader}>
-        <Text style={styles.processTitle}>The {company.name} Process</Text>
-        <Text style={styles.processSubtitle}>From consultation to completion, we guide you through every step</Text>
-      </View>
-
-      <View style={styles.processSteps}>
-        {[
-          { step: 1, title: 'Initial Consultation', time: '1-2 days', description: 'Free in-home assessment and detailed quote preparation' },
-          { step: 2, title: 'Project Planning', time: '3-5 days', description: 'Permit acquisition and material ordering' },
-          { step: 3, title: 'Installation Begins', time: '1-3 days', description: 'Professional installation by certified technicians' },
-          { step: 4, title: 'Quality Inspection', time: '1 day', description: 'Thorough testing and final walkthrough' },
-          { step: 5, title: 'Project Complete', time: 'Same day', description: 'Final cleanup and warranty activation' }
-        ].map((item, index) => (
-          <View key={index} style={styles.processStep}>
-            <View style={[styles.processStepNumber, { backgroundColor: template.primaryColor }]}>
-              <Text style={styles.processStepNumberText}>{item.step}</Text>
-            </View>
-            <View style={styles.processStepContent}>
-              <View style={styles.processStepHeader}>
-                <Text style={styles.processStepTitle}>{item.title}</Text>
-                <Text style={[styles.processStepTime, { color: template.accentColor }]}>{item.time}</Text>
-              </View>
-              <Text style={styles.processStepDescription}>{item.description}</Text>
-            </View>
-          </View>
-        ))}
-      </View>
-    </ScrollView>
-  );
-
-  const renderWarrantyService = () => (
-    <ScrollView style={styles.sectionContainer} showsVerticalScrollIndicator={false}>
-      <View style={styles.warrantyHeader}>
-        <Text style={styles.warrantyTitle}>{company.warrantyYears}-Year Peace of Mind</Text>
-        <Text style={styles.warrantySubtitle}>Comprehensive protection for your investment</Text>
-      </View>
-
-      <View style={styles.warrantyCards}>
-        {[
-          {
-            icon: '🔧',
-            title: 'Materials Warranty',
-            subtitle: 'Manufacturer & Installation',
-            description: 'All fixtures and materials covered against defects and installation issues'
-          },
-          {
-            icon: '👨‍🔧',
-            title: 'Labor Warranty',
-            subtitle: 'Workmanship Guarantee',
-            description: 'Professional installation work guaranteed for the full warranty period'
-          },
-          {
-            icon: '🚨',
-            title: 'Emergency Service',
-            subtitle: '24/7 Support',
-            description: 'Priority emergency service for warranty-covered issues'
-          }
-        ].map((item, index) => (
-          <View key={index} style={styles.warrantyCard}>
-            <Text style={styles.warrantyCardIcon}>{item.icon}</Text>
-            <Text style={styles.warrantyCardTitle}>{item.title}</Text>
-            <Text style={styles.warrantyCardSubtitle}>{item.subtitle}</Text>
-            <Text style={styles.warrantyCardDescription}>{item.description}</Text>
-          </View>
-        ))}
-      </View>
-
-      <View style={styles.serviceInfo}>
-        <Text style={styles.serviceInfoTitle}>What's Included in Your {company.warrantyYears}-Year Warranty</Text>
-        <View style={styles.serviceInfoList}>
-          <Text style={styles.serviceInfoItem}>✅ All fixtures and fittings</Text>
-          <Text style={styles.serviceInfoItem}>✅ Installation workmanship</Text>
-          <Text style={styles.serviceInfoItem}>✅ Water damage protection</Text>
-          <Text style={styles.serviceInfoItem}>✅ Free annual inspections</Text>
-          <Text style={styles.serviceInfoItem}>✅ Priority scheduling for service calls</Text>
-          <Text style={styles.serviceInfoItem}>✅ Transferable warranty (if home is sold)</Text>
-        </View>
-      </View>
-    </ScrollView>
-  );
-
-  const renderSystemDetails = () => (
-    <ScrollView style={styles.sectionContainer} showsVerticalScrollIndicator={false}>
-      <View style={styles.detailsHeader}>
-        <Text style={styles.detailsTitle}>Project Specifications</Text>
-        <Text style={styles.detailsSubtitle}>Technical details and scope of work</Text>
-      </View>
-
-      <View style={styles.scopeSection}>
-        <Text style={styles.scopeTitle}>Scope of Work</Text>
-        <View style={styles.scopeList}>
-          <Text style={styles.scopeItem}>🔹 Kitchen sink and faucet replacement</Text>
-          <Text style={styles.scopeItem}>🔹 Master bathroom vanity installation</Text>
-          <Text style={styles.scopeItem}>🔹 Shower system upgrade with modern fixtures</Text>
-          <Text style={styles.scopeItem}>🔹 Water line routing and connections</Text>
-          <Text style={styles.scopeItem}>🔹 Drain line installation and testing</Text>
-          <Text style={styles.scopeItem}>🔹 Pressure testing and system certification</Text>
-        </View>
-      </View>
-
-      <View style={styles.specificationsGrid}>
-        <View style={styles.specCard}>
-          <Text style={styles.specTitle}>Materials Used</Text>
-          <Text style={styles.specText}>• Premium PEX tubing</Text>
-          <Text style={styles.specText}>• Brass fittings and valves</Text>
-          <Text style={styles.specText}>• Code-compliant fixtures</Text>
-        </View>
-        <View style={styles.specCard}>
-          <Text style={styles.specTitle}>Timeline</Text>
-          <Text style={styles.specText}>• Start: Within 1 week</Text>
-          <Text style={styles.specText}>• Duration: 2-3 days</Text>
-          <Text style={styles.specText}>• Completion: Full testing</Text>
-        </View>
-      </View>
-
-      <View style={styles.permitsSection}>
-        <Text style={styles.permitsTitle}>Permits & Compliance</Text>
-        <Text style={styles.permitsText}>
-          All work will be performed to local building codes and permit requirements. 
-          We handle all permit applications and inspections to ensure your project meets 
-          all safety and regulatory standards.
-        </Text>
-      </View>
-    </ScrollView>
-  );
-
-  const getSectionContent = (sectionId) => {
-    switch (sectionId) {
-      case 'company_intro': return renderCompanyIntro();
-      case 'quote_details': return renderQuoteDetails();
-      case 'our_process': return renderOurProcess();
-      case 'warranty_service': return renderWarrantyService();
-      case 'system_details': return renderSystemDetails();
-      default: return <View><Text>Section not found</Text></View>;
+        </ScrollView>
+      );
     }
+
+    const variables = buildVariables();
+    
+    // Sort blocks by position
+    const sortedBlocks = [...tab.blocks].sort((a, b) => a.position - b.position);
+
+    return (
+      <ScrollView style={styles.sectionContainer} showsVerticalScrollIndicator={false}>
+        {sortedBlocks.map((block) => (
+          <BlockRenderer
+            key={block.id}
+            block={block}
+            styling={template?.styling || { primaryColor: '#2E86AB', accentColor: '#A23B72' }}
+            variables={variables}
+            quote={quote}
+          />
+        ))}
+      </ScrollView>
+    );
   };
 
-  const renderSection = ({ item, index }) => (
+  const renderSection = ({ item: tab, index }) => (
     <View style={[styles.slideContainer, { width: SCREEN_WIDTH }]}>
-      {getSectionContent(item.id)}
+      {renderTabContent(tab)}
     </View>
   );
 
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={template?.styling?.primaryColor || '#2E86AB'} />
+          <Text style={styles.loadingText}>Loading presentation...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const enabledTabs = getEnabledTabs();
+  const variables = buildVariables();
+
+  // Safety check - don't render if no enabled tabs
+  if (!enabledTabs || enabledTabs.length === 0) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <Text style={styles.emptyText}>No template sections available</Text>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+            <Text style={styles.backButtonText}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor={template.primaryColor} />
+      <StatusBar barStyle="light-content" backgroundColor={template?.styling?.primaryColor || '#2E86AB'} />
       
       {/* Header */}
-      <View style={[styles.header, { backgroundColor: template.primaryColor }]}>
+      <View style={[styles.header, { backgroundColor: template?.styling?.primaryColor || '#2E86AB' }]}>
         <TouchableOpacity style={styles.closeButton} onPress={handleClose}>
           <Ionicons name="close" size={20} color="#fff" />
         </TouchableOpacity>
@@ -419,21 +349,21 @@ const QuotePresentationScreen = () => {
       {/* Tab Navigation */}
       <View style={styles.tabContainer}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabScrollView}>
-          {enabledSections.map((section, index) => (
+          {enabledTabs.map((tab, index) => (
             <TouchableOpacity
-              key={section.id}
+              key={tab.id}
               style={[
                 styles.tab,
-                activeTabIndex === index && [styles.activeTab, { borderBottomColor: template.accentColor }]
+                activeTabIndex === index && [styles.activeTab, { borderBottomColor: template?.styling?.accentColor || '#A23B72' }]
               ]}
               onPress={() => handleTabPress(index)}
             >
-              <Text style={styles.tabIcon}>{section.icon}</Text>
+              <Text style={styles.tabIcon}>{tab.icon}</Text>
               <Text style={[
                 styles.tabText,
-                activeTabIndex === index && [styles.activeTabText, { color: template.accentColor }]
+                activeTabIndex === index && [styles.activeTabText, { color: template?.styling?.accentColor || '#A23B72' }]
               ]}>
-                {replaceVariables(section.title)}
+                {replaceVariables(tab.title, variables)}
               </Text>
             </TouchableOpacity>
           ))}
@@ -443,7 +373,7 @@ const QuotePresentationScreen = () => {
       {/* Content */}
       <FlatList
         ref={flatListRef}
-        data={enabledSections}
+        data={enabledTabs}
         renderItem={renderSection}
         horizontal
         pagingEnabled
@@ -466,7 +396,7 @@ const QuotePresentationScreen = () => {
         </TouchableOpacity>
         
         <TouchableOpacity 
-          style={[styles.actionButton, styles.primaryButton, { backgroundColor: template.primaryColor }]} 
+          style={[styles.actionButton, styles.primaryButton, { backgroundColor: template?.styling?.primaryColor || '#2E86AB' }]} 
           onPress={handleGetSignature}
         >
           <Text style={styles.primaryButtonText}>Get Signature</Text>
@@ -480,6 +410,16 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f8f9fb',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#6b7280',
   },
   header: {
     flexDirection: 'row',
@@ -554,471 +494,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 20,
   },
-
-  // Company Intro Styles
-  heroSection: {
-    alignItems: 'center',
-    paddingVertical: 30,
-    marginBottom: 30,
-  },
-  heroEmoji: {
-    fontSize: 48,
-    marginBottom: 16,
-  },
-  heroTitle: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#1f2937',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  heroSubtitle: {
-    fontSize: 16,
-    color: '#6b7280',
-    textAlign: 'center',
-  },
-  benefitsGrid: {
-    gap: 16,
-    marginBottom: 30,
-  },
-  benefitCard: {
-    backgroundColor: '#fff',
-    padding: 20,
-    borderRadius: 12,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  benefitIcon: {
-    fontSize: 32,
-    marginBottom: 12,
-  },
-  benefitTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1f2937',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  benefitText: {
-    fontSize: 14,
-    color: '#6b7280',
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  contactSection: {
-    backgroundColor: '#fff',
-    padding: 20,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  contactTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1f2937',
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  contactItem: {
-    fontSize: 16,
-    color: '#374151',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-
-  // Quote Details Styles
-  quoteHeader: {
-    backgroundColor: '#fff',
-    padding: 24,
-    borderRadius: 12,
-    marginBottom: 20,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  quoteTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#1f2937',
-    marginBottom: 8,
-  },
-  quoteSubtitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 4,
-  },
-  quoteCustomer: {
-    fontSize: 16,
-    color: '#6b7280',
-  },
-  pricingBreakdown: {
-    gap: 16,
-    marginBottom: 24,
-  },
-  sectionCard: {
-    backgroundColor: '#fff',
-    padding: 20,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1f2937',
-    marginBottom: 16,
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-  },
-  lineItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  lineItemLeft: {
-    flex: 1,
-  },
-  lineItemName: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#374151',
-  },
-  lineItemQty: {
-    fontSize: 14,
-    color: '#6b7280',
-  },
-  lineItemPrice: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1f2937',
-  },
-  sectionTotal: {
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-    alignItems: 'flex-end',
-  },
-  sectionTotalText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#374151',
-  },
-  totalSection: {
-    backgroundColor: '#fff',
-    padding: 20,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  totalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  totalLabel: {
-    fontSize: 16,
-    color: '#374151',
-  },
-  totalValue: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#374151',
-  },
-  finalTotal: {
-    borderTopWidth: 2,
-    borderTopColor: '#e5e7eb',
-    paddingTop: 16,
-    marginTop: 8,
-  },
-  finalTotalLabel: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#1f2937',
-  },
-  finalTotalValue: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#059669',
-  },
-  termsSection: {
-    backgroundColor: '#f9fafb',
-    padding: 20,
-    borderRadius: 12,
-    marginTop: 20,
-  },
-  termsTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 12,
-  },
-  termsText: {
-    fontSize: 14,
-    color: '#6b7280',
-    lineHeight: 20,
-  },
-
-  // Process Styles
-  processHeader: {
-    alignItems: 'center',
-    marginBottom: 30,
-  },
-  processTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#1f2937',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  processSubtitle: {
-    fontSize: 16,
-    color: '#6b7280',
-    textAlign: 'center',
-  },
-  processSteps: {
-    gap: 20,
-  },
-  processStep: {
-    flexDirection: 'row',
-    backgroundColor: '#fff',
-    padding: 20,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  processStepNumber: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#2E86AB',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 16,
-  },
-  processStepNumberText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  processStepContent: {
-    flex: 1,
-  },
-  processStepHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  processStepTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1f2937',
-  },
-  processStepTime: {
-    fontSize: 14,
-    color: '#A23B72',
-    fontWeight: '500',
-  },
-  processStepDescription: {
-    fontSize: 14,
-    color: '#6b7280',
-    lineHeight: 20,
-  },
-
-  // Warranty Styles
-  warrantyHeader: {
-    alignItems: 'center',
-    marginBottom: 30,
-  },
-  warrantyTitle: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#1f2937',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  warrantySubtitle: {
-    fontSize: 16,
-    color: '#6b7280',
-    textAlign: 'center',
-  },
-  warrantyCards: {
-    gap: 16,
-    marginBottom: 30,
-  },
-  warrantyCard: {
-    backgroundColor: '#fff',
-    padding: 20,
-    borderRadius: 12,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  warrantyCardIcon: {
-    fontSize: 32,
-    marginBottom: 12,
-  },
-  warrantyCardTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1f2937',
-    marginBottom: 4,
-    textAlign: 'center',
-  },
-  warrantyCardSubtitle: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#6b7280',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  warrantyCardDescription: {
-    fontSize: 14,
-    color: '#6b7280',
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  serviceInfo: {
-    backgroundColor: '#fff',
-    padding: 20,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  serviceInfoTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1f2937',
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  serviceInfoList: {
-    gap: 8,
-  },
-  serviceInfoItem: {
-    fontSize: 16,
-    color: '#374151',
-    lineHeight: 24,
-  },
-
-  // System Details Styles
-  detailsHeader: {
-    alignItems: 'center',
-    marginBottom: 30,
-  },
-  detailsTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#1f2937',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  detailsSubtitle: {
-    fontSize: 16,
-    color: '#6b7280',
-    textAlign: 'center',
-  },
-  scopeSection: {
-    backgroundColor: '#fff',
-    padding: 20,
-    borderRadius: 12,
-    marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  scopeTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1f2937',
-    marginBottom: 16,
-  },
-  scopeList: {
-    gap: 8,
-  },
-  scopeItem: {
-    fontSize: 16,
-    color: '#374151',
-    lineHeight: 24,
-  },
-  specificationsGrid: {
-    flexDirection: 'row',
-    gap: 16,
-    marginBottom: 20,
-  },
-  specCard: {
-    flex: 1,
-    backgroundColor: '#fff',
-    padding: 16,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  specTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1f2937',
-    marginBottom: 12,
-  },
-  specText: {
-    fontSize: 14,
-    color: '#6b7280',
-    lineHeight: 20,
-    marginBottom: 4,
-  },
-  permitsSection: {
-    backgroundColor: '#f9fafb',
-    padding: 20,
-    borderRadius: 12,
-  },
-  permitsTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 12,
-  },
-  permitsText: {
-    fontSize: 14,
-    color: '#6b7280',
-    lineHeight: 20,
-  },
-
-  // Bottom Action Bar
   bottomBar: {
     flexDirection: 'row',
     paddingHorizontal: 20,
@@ -1052,6 +527,29 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#fff',
+  },
+  emptyContent: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 60,
+  },
+  emptyText: {
+    fontSize: 16,
+    color: '#6b7280',
+    textAlign: 'center',
+  },
+  backButton: {
+    backgroundColor: '#2E86AB',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginTop: 20,
+  },
+  backButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 

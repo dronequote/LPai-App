@@ -9,70 +9,37 @@ import {
   ActivityIndicator,
   Dimensions,
   Animated,
+  Switch,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { COLORS, FONT, RADIUS, SHADOW } from '../styles/theme';
+import { useAuth } from '../contexts/AuthContext';
 import api from '../lib/api';
+import { COLORS, FONT, RADIUS, SHADOW } from '../styles/theme';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-const MODAL_HEIGHT = SCREEN_HEIGHT * 0.7;
+const MODAL_HEIGHT = SCREEN_HEIGHT * 0.8;
 
-// Mock templates - in real app, these come from MongoDB
-const mockTemplates = [
-  {
-    _id: 'template_1',
-    name: 'Professional Plumbing Proposal',
-    description: 'Clean, professional layout perfect for residential plumbing projects',
-    primaryColor: '#2E86AB',
-    accentColor: '#A23B72',
-    preview: '🔧',
-    isDefault: true,
-    sections: [
-      { id: 'company_intro', title: 'Why Choose {companyName}', enabled: true, order: 1, icon: '🏠' },
-      { id: 'quote_details', title: 'Your Quote Details', enabled: true, order: 2, icon: '💰' },
-      { id: 'our_process', title: 'Our Process', enabled: true, order: 3, icon: '⚙️' },
-      { id: 'warranty_service', title: 'Warranty & Service', enabled: true, order: 4, icon: '🛡️' },
-      { id: 'system_details', title: 'Project Details', enabled: true, order: 5, icon: '📋' }
-    ]
-  },
-  {
-    _id: 'template_2', 
-    name: 'Executive Summary',
-    description: 'Concise, high-level presentation for quick decisions',
-    primaryColor: '#1E3A8A',
-    accentColor: '#F59E0B',
-    preview: '📊',
-    isDefault: false,
-    sections: [
-      { id: 'company_intro', title: 'Why Choose {companyName}', enabled: true, order: 1, icon: '🏠' },
-      { id: 'quote_details', title: 'Your Quote Details', enabled: true, order: 2, icon: '💰' },
-      { id: 'warranty_service', title: 'Warranty & Service', enabled: true, order: 3, icon: '🛡️' }
-    ]
-  },
-  {
-    _id: 'template_3',
-    name: 'Detailed Technical',
-    description: 'Comprehensive technical presentation for complex projects',
-    primaryColor: '#059669',
-    accentColor: '#DC2626',
-    preview: '🔬',
-    isDefault: false,
-    sections: [
-      { id: 'company_intro', title: 'Why Choose {companyName}', enabled: true, order: 1, icon: '🏠' },
-      { id: 'quote_details', title: 'Your Quote Details', enabled: true, order: 2, icon: '💰' },
-      { id: 'our_process', title: 'Our Process', enabled: true, order: 3, icon: '⚙️' },
-      { id: 'warranty_service', title: 'Warranty & Service', enabled: true, order: 4, icon: '🛡️' },
-      { id: 'system_details', title: 'Project Details', enabled: true, order: 5, icon: '📋' },
-      { id: 'technical_specs', title: 'Technical Specifications', enabled: true, order: 6, icon: '🔧' }
-    ]
-  }
-];
+interface Template {
+  _id: string;
+  name: string;
+  description: string;
+  styling: {
+    primaryColor: string;
+    accentColor: string;
+  };
+  preview?: string;
+  isDefault?: boolean;
+  isGlobal: boolean;
+  tabs: any[];
+  category?: string;
+}
 
 interface Props {
   visible: boolean;
   onClose: () => void;
-  onSelectTemplate: (template: any) => void;
+  onSelectTemplate: (template: Template) => void;
   userPermissions?: string[];
 }
 
@@ -82,19 +49,33 @@ export default function TemplateSelectionModal({
   onSelectTemplate,
   userPermissions = []
 }: Props) {
-  const [templates, setTemplates] = useState([]);
+  const { user } = useAuth();
+  
+  // State
+  const [locationTemplates, setLocationTemplates] = useState<Template[]>([]);
+  const [globalTemplates, setGlobalTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(false);
-  const [selectedTemplate, setSelectedTemplate] = useState(null);
+  const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
+  const [showGlobalTemplates, setShowGlobalTemplates] = useState(true);
+  
+  // Animation
   const [translateY] = useState(new Animated.Value(MODAL_HEIGHT));
   const [overlayOpacity] = useState(new Animated.Value(0));
 
   // Load templates when modal opens
   useEffect(() => {
-    if (visible) {
+    if (visible && user?.locationId) {
       loadTemplates();
       animateIn();
     }
-  }, [visible]);
+  }, [visible, user?.locationId]);
+
+  // Load user preference for global templates toggle
+  useEffect(() => {
+    if (user?.preferences?.showGlobalTemplates !== undefined) {
+      setShowGlobalTemplates(user.preferences.showGlobalTemplates);
+    }
+  }, [user?.preferences]);
 
   const animateIn = () => {
     Animated.parallel([
@@ -111,7 +92,7 @@ export default function TemplateSelectionModal({
     ]).start();
   };
 
-  const animateOut = (callback) => {
+  const animateOut = (callback?: () => void) => {
     Animated.parallel([
       Animated.timing(translateY, {
         toValue: MODAL_HEIGHT,
@@ -134,59 +115,129 @@ export default function TemplateSelectionModal({
   };
 
   const loadTemplates = async () => {
+    if (!user?.locationId) return;
+    
     setLoading(true);
     try {
-      // In real app: const response = await api.get(`/api/templates/${user.locationId}`);
-      // For now, use mock data with permission filtering
-      const availableTemplates = mockTemplates.filter(template => {
-        // If no permissions specified, show all templates
-        if (!userPermissions.length) return true;
-        
-        // Show default templates to everyone
-        if (template.isDefault) return true;
-        
-        // Check user permissions for custom templates
-        return userPermissions.includes(template._id) || userPermissions.includes('all_templates');
-      });
+      const response = await api.get(`/api/templates/${user.locationId}`);
       
-      setTemplates(availableTemplates);
+      if (response.data) {
+        setLocationTemplates(response.data.locationTemplates || []);
+        setGlobalTemplates(response.data.globalTemplates || []);
+      }
     } catch (error) {
       console.error('Failed to load templates:', error);
-      setTemplates(mockTemplates); // Fallback to mock data
+      Alert.alert(
+        'Error', 
+        'Failed to load templates. Please check your connection and try again.'
+      );
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSelectTemplate = (template) => {
+  const saveGlobalTemplatePreference = async (value: boolean) => {
+    if (!user?._id) return;
+    
+    try {
+      // TODO: Create this API endpoint
+      await api.patch(`/api/users/${user._id}`, {
+        preferences: {
+          ...user.preferences,
+          showGlobalTemplates: value,
+        },
+      });
+    } catch (error) {
+      console.error('Failed to save preference:', error);
+      // Don't show error to user - this is not critical
+    }
+  };
+
+  const handleGlobalTemplateToggle = (value: boolean) => {
+    setShowGlobalTemplates(value);
+    saveGlobalTemplatePreference(value);
+  };
+
+  const handleSelectTemplate = (template: Template) => {
+    // Simply select the template - no copying needed
     setSelectedTemplate(template);
   };
 
   const handleConfirmSelection = () => {
     if (selectedTemplate) {
+      console.log('[TemplateModal] Confirming selection - selectedTemplate:', {
+        id: selectedTemplate._id,
+        name: selectedTemplate.name,
+        hasStyling: !!selectedTemplate.styling,
+        hasCompanyOverrides: !!selectedTemplate.companyOverrides,
+        hasTabsArray: Array.isArray(selectedTemplate.tabs),
+        tabsLength: selectedTemplate.tabs?.length,
+        tabsStructure: selectedTemplate.tabs?.map(tab => ({
+          id: tab?.id,
+          hasBlocks: Array.isArray(tab?.blocks),
+          blocksLength: tab?.blocks?.length
+        }))
+      });
+      
       onSelectTemplate(selectedTemplate);
       handleClose();
     }
   };
 
-  const renderTemplate = ({ item }) => {
+  // Combine and filter templates for display
+  const getDisplayTemplates = () => {
+    console.log('[TemplateModal] getDisplayTemplates - locationTemplates:', locationTemplates);
+    console.log('[TemplateModal] getDisplayTemplates - globalTemplates:', globalTemplates);
+    
+    const templates = [...(locationTemplates || [])];
+    
+    if (showGlobalTemplates) {
+      templates.push(...(globalTemplates || []));
+    }
+    
+    console.log('[TemplateModal] Combined templates before filter:', templates);
+    
+    // Filter by permissions if specified
+    const filtered = templates.filter(template => {
+      if (!userPermissions || !userPermissions.length) return true;
+      if (template?.isDefault) return true;
+      return userPermissions.includes(template?._id) || userPermissions.includes('all_templates');
+    });
+    
+    console.log('[TemplateModal] Filtered templates:', filtered);
+    return filtered;
+  };
+
+  const renderSectionHeader = (title: string, count: number) => (
+    <View style={styles.sectionHeader}>
+      <Text style={styles.sectionHeaderText}>{title}</Text>
+      <Text style={styles.sectionHeaderCount}>({count})</Text>
+    </View>
+  );
+
+  const renderTemplate = ({ item }: { item: Template }) => {
     const isSelected = selectedTemplate?._id === item._id;
     
     return (
       <TouchableOpacity
         style={[
           styles.templateCard,
-          isSelected && [styles.selectedTemplateCard, { borderColor: item.primaryColor }]
+          isSelected && [styles.selectedTemplateCard, { borderColor: item.styling.primaryColor }]
         ]}
         onPress={() => handleSelectTemplate(item)}
         activeOpacity={0.8}
       >
         {/* Template Preview */}
-        <View style={[styles.templatePreview, { backgroundColor: item.primaryColor }]}>
-          <Text style={styles.templatePreviewIcon}>{item.preview}</Text>
+        <View style={[styles.templatePreview, { backgroundColor: item.styling.primaryColor }]}>
+          <Text style={styles.templatePreviewIcon}>{item.preview || '📄'}</Text>
           {item.isDefault && (
             <View style={styles.defaultBadge}>
               <Text style={styles.defaultBadgeText}>DEFAULT</Text>
+            </View>
+          )}
+          {item.isGlobal && (
+            <View style={[styles.globalBadge, { backgroundColor: item.styling.accentColor }]}>
+              <Text style={styles.globalBadgeText}>GLOBAL</Text>
             </View>
           )}
         </View>
@@ -196,25 +247,25 @@ export default function TemplateSelectionModal({
           <View style={styles.templateHeader}>
             <Text style={styles.templateName}>{item.name}</Text>
             {isSelected && (
-              <Ionicons name="checkmark-circle" size={24} color={item.primaryColor} />
+              <Ionicons name="checkmark-circle" size={24} color={item.styling.primaryColor} />
             )}
           </View>
           
           <Text style={styles.templateDescription}>{item.description}</Text>
           
-          {/* Section Count */}
+          {/* Template Meta */}
           <View style={styles.templateMeta}>
             <View style={styles.sectionCount}>
               <Ionicons name="layers-outline" size={16} color={COLORS.textGray} />
               <Text style={styles.sectionCountText}>
-                {item.sections.filter(s => s.enabled).length} sections
+                {item.tabs?.filter(t => t.enabled).length || 0} sections
               </Text>
             </View>
             
             {/* Color Preview */}
             <View style={styles.colorPreview}>
-              <View style={[styles.colorDot, { backgroundColor: item.primaryColor }]} />
-              <View style={[styles.colorDot, { backgroundColor: item.accentColor }]} />
+              <View style={[styles.colorDot, { backgroundColor: item.styling.primaryColor }]} />
+              <View style={[styles.colorDot, { backgroundColor: item.styling.accentColor }]} />
             </View>
           </View>
         </View>
@@ -223,6 +274,10 @@ export default function TemplateSelectionModal({
   };
 
   if (!visible) return null;
+
+  const displayTemplates = getDisplayTemplates();
+  const locationCount = locationTemplates.length;
+  const globalCount = showGlobalTemplates ? globalTemplates.length : 0;
 
   return (
     <Modal
@@ -259,6 +314,17 @@ export default function TemplateSelectionModal({
           <View style={styles.header}>
             <Text style={styles.title}>Choose Presentation Template</Text>
             <Text style={styles.subtitle}>Select the template that best fits your presentation style</Text>
+            
+            {/* Global Templates Toggle */}
+            <View style={styles.toggleContainer}>
+              <Text style={styles.toggleLabel}>Show Global Templates</Text>
+              <Switch
+                value={showGlobalTemplates}
+                onValueChange={handleGlobalTemplateToggle}
+                trackColor={{ false: COLORS.border, true: COLORS.accent }}
+                thumbColor={showGlobalTemplates ? '#fff' : '#f4f3f4'}
+              />
+            </View>
           </View>
 
           {/* Content */}
@@ -270,11 +336,39 @@ export default function TemplateSelectionModal({
               </View>
             ) : (
               <FlatList
-                data={templates}
+                data={displayTemplates}
                 renderItem={renderTemplate}
                 keyExtractor={(item) => item._id}
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={styles.templateList}
+                ListHeaderComponent={() => (
+                  <View>
+                    {locationCount > 0 && (
+                      <>
+                        {renderSectionHeader('Your Custom Templates', locationCount)}
+                        {/* Location templates will be rendered first in the list */}
+                      </>
+                    )}
+                    {showGlobalTemplates && globalCount > 0 && locationCount > 0 && (
+                      <View style={styles.sectionSeparator} />
+                    )}
+                    {showGlobalTemplates && globalCount > 0 && (
+                      renderSectionHeader('Global Templates', globalCount)
+                    )}
+                  </View>
+                )}
+                ListEmptyComponent={() => (
+                  <View style={styles.emptyState}>
+                    <Ionicons name="document-outline" size={64} color={COLORS.textLight} />
+                    <Text style={styles.emptyTitle}>No templates found</Text>
+                    <Text style={styles.emptySubtitle}>
+                      {showGlobalTemplates 
+                        ? 'No templates are available for your account'
+                        : 'Enable global templates to see more options'
+                      }
+                    </Text>
+                  </View>
+                )}
               />
             )}
           </View>
@@ -354,6 +448,21 @@ const styles = StyleSheet.create({
     color: COLORS.textGray,
     textAlign: 'center',
     lineHeight: 20,
+    marginBottom: 16,
+  },
+  toggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+  },
+  toggleLabel: {
+    fontSize: FONT.input,
+    fontWeight: '500',
+    color: COLORS.textDark,
   },
   content: {
     flex: 1,
@@ -371,7 +480,27 @@ const styles = StyleSheet.create({
   },
   templateList: {
     paddingVertical: 20,
-    gap: 16,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    marginTop: 8,
+  },
+  sectionHeaderText: {
+    fontSize: FONT.input,
+    fontWeight: '600',
+    color: COLORS.textDark,
+  },
+  sectionHeaderCount: {
+    fontSize: FONT.meta,
+    color: COLORS.textGray,
+    marginLeft: 8,
+  },
+  sectionSeparator: {
+    height: 1,
+    backgroundColor: COLORS.border,
+    marginVertical: 20,
   },
   templateCard: {
     backgroundColor: COLORS.card,
@@ -381,6 +510,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 2,
     borderColor: 'transparent',
+    marginBottom: 12,
     ...SHADOW.card,
   },
   selectedTemplateCard: {
@@ -410,6 +540,19 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   defaultBadgeText: {
+    fontSize: 8,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  globalBadge: {
+    position: 'absolute',
+    bottom: -6,
+    left: -6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  globalBadgeText: {
     fontSize: 8,
     fontWeight: '700',
     color: '#fff',
@@ -457,6 +600,25 @@ const styles = StyleSheet.create({
     width: 12,
     height: 12,
     borderRadius: 6,
+  },
+  emptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 60,
+  },
+  emptyTitle: {
+    fontSize: FONT.sectionTitle,
+    fontWeight: '600',
+    color: COLORS.textGray,
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptySubtitle: {
+    fontSize: FONT.input,
+    color: COLORS.textLight,
+    textAlign: 'center',
+    lineHeight: 20,
   },
   actionBar: {
     flexDirection: 'row',
