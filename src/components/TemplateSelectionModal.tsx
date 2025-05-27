@@ -19,7 +19,7 @@ import api from '../lib/api';
 import { COLORS, FONT, RADIUS, SHADOW } from '../styles/theme';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-const MODAL_HEIGHT = SCREEN_HEIGHT * 0.8;
+const MODAL_HEIGHT = SCREEN_HEIGHT * 0.85; // ✅ Increased from 0.8 to 0.85
 
 interface Template {
   _id: string;
@@ -198,11 +198,15 @@ export default function TemplateSelectionModal({
     console.log('[TemplateModal] Combined templates before filter:', templates);
     
     // Filter by permissions if specified
-    const filtered = templates.filter(template => {
-      if (!userPermissions || !userPermissions.length) return true;
-      if (template?.isDefault) return true;
-      return userPermissions.includes(template?._id) || userPermissions.includes('all_templates');
-    });
+const filtered = templates.filter(template => {
+  // Allow all global templates regardless of permissions
+  if (template.isGlobal) return true;
+  
+  // For location-specific templates, check permissions
+  if (!userPermissions || !userPermissions.length) return true;
+  if (template?.isDefault) return true;
+  return userPermissions.includes(template?._id) || userPermissions.includes('all_templates');
+});
     
     console.log('[TemplateModal] Filtered templates:', filtered);
     return filtered;
@@ -327,7 +331,7 @@ export default function TemplateSelectionModal({
             </View>
           </View>
 
-          {/* Content */}
+          {/* Content - ✅ FIXED: Better flex and scrolling */}
           <View style={styles.content}>
             {loading ? (
               <View style={styles.loadingContainer}>
@@ -339,8 +343,11 @@ export default function TemplateSelectionModal({
                 data={displayTemplates}
                 renderItem={renderTemplate}
                 keyExtractor={(item) => item._id}
-                showsVerticalScrollIndicator={false}
+                showsVerticalScrollIndicator={true} // ✅ Changed to true to show scroll indicator
                 contentContainerStyle={styles.templateList}
+                style={styles.flatListStyle} // ✅ Added explicit style
+                nestedScrollEnabled={true} // ✅ Enable nested scrolling
+                bounces={true} // ✅ Enable bouncing for better UX
                 ListHeaderComponent={() => (
                   <View>
                     {locationCount > 0 && (
@@ -433,7 +440,7 @@ const styles = StyleSheet.create({
   header: {
     alignItems: 'center',
     paddingHorizontal: 24,
-    paddingVertical: 20,
+    paddingVertical: 16, // ✅ Reduced from 20 to 16
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
   },
@@ -465,8 +472,13 @@ const styles = StyleSheet.create({
     color: COLORS.textDark,
   },
   content: {
-    flex: 1,
+    flex: 1, // ✅ Ensure it takes remaining space
     paddingHorizontal: 20,
+    minHeight: 0, // ✅ Allow shrinking
+  },
+  // ✅ NEW: Explicit FlatList style
+  flatListStyle: {
+    flex: 1,
   },
   loadingContainer: {
     flex: 1,
@@ -480,6 +492,7 @@ const styles = StyleSheet.create({
   },
   templateList: {
     paddingVertical: 20,
+    flexGrow: 1, // ✅ Allow content to grow
   },
   sectionHeader: {
     flexDirection: 'row',

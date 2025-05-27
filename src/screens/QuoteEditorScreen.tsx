@@ -1,5 +1,5 @@
 // src/screens/QuoteEditorScreen.tsx
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -19,8 +19,10 @@ import { useAuth } from '../contexts/AuthContext';
 import api from '../lib/api';
 import { COLORS, FONT, RADIUS, SHADOW } from '../styles/theme';
 import type { Project, Quote, QuoteSection, QuoteLineItem, ProductLibrary, LibraryItem } from '../../packages/types/dist';
-// Add this import at the top of QuoteEditorScreen.tsx
 import TemplateSelectionModal from '../components/TemplateSelectionModal';
+
+// Global variable to store quote data for navigation (workaround for React Navigation serialization issues)
+global.tempQuoteData = null;
 
 type QuoteEditorRouteParams = {
   mode: 'create' | 'edit';
@@ -39,6 +41,10 @@ export default function QuoteEditorScreen() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [libraries, setLibraries] = useState<ProductLibrary[]>([]);
+  const [savedQuoteId, setSavedQuoteId] = useState<string | null>(null);
+  
+  // Create a ref to store quote data for navigation
+  const quoteDataRef = useRef<any>(null);
   
   // Quote Data
   const [title, setTitle] = useState('');
@@ -55,8 +61,6 @@ export default function QuoteEditorScreen() {
   const [editingSection, setEditingSection] = useState<string | null>(null);
   const [showLibraryBrowser, setShowLibraryBrowser] = useState(false);
   const [selectedSectionForItem, setSelectedSectionForItem] = useState<string | null>(null);
-
-  // Add this state near the other useState declarations
   const [showTemplateSelection, setShowTemplateSelection] = useState(false);
 
   // Load data on mount
@@ -68,11 +72,14 @@ export default function QuoteEditorScreen() {
     try {
       setLoading(true);
       
-      // Load libraries
-      if (user?.locationId) {
-        const librariesRes = await api.get(`/api/libraries/${user.locationId}`);
-        setLibraries(librariesRes.data || []);
-      }
+      // Load libraries - TODO: Create /api/libraries endpoint
+      // if (user?.locationId) {
+      //   const librariesRes = await api.get('/api/libraries', {
+      //     params: { locationId: user.locationId }
+      //   });
+      //   setLibraries(librariesRes.data || []);
+      // }
+      setLibraries([]); // Set empty array for now
       
       // Set initial data based on mode
       if (mode === 'create' && project) {
@@ -118,6 +125,10 @@ export default function QuoteEditorScreen() {
       
     } catch (error) {
       console.error('[QuoteEditor] Failed to load initial data:', error);
+      console.error('[QuoteEditor] Error response:', error.response?.data);
+      console.error('[QuoteEditor] Error status:', error.response?.status);
+      console.error('[QuoteEditor] Request URL:', error.config?.url);
+      console.error('[QuoteEditor] Request params:', error.config?.params);
       Alert.alert('Error', 'Failed to load quote data');
     } finally {
       setLoading(false);
@@ -278,7 +289,25 @@ export default function QuoteEditorScreen() {
     return title.trim() && sections.length > 0;
   };
 
-  // Save quote
+  // Build quote data object
+  const buildQuoteData = () => {
+    return {
+      title: title.trim(),
+      description: description.trim(),
+      sections,
+      taxRate,
+      discountPercentage,
+      termsAndConditions: termsAndConditions.trim(),
+      paymentTerms: paymentTerms.trim(),
+      notes: notes.trim(),
+      projectId: project?._id || existingQuote?.projectId,
+      contactId: project?.contactId || existingQuote?.contactId,
+      locationId: user?.locationId,
+      userId: user?._id,
+    };
+  };
+
+  // Save quote (regular save)
   const saveQuote = async () => {
     if (!title.trim()) {
       Alert.alert('Error', 'Please enter a quote title');
@@ -293,21 +322,8 @@ export default function QuoteEditorScreen() {
     try {
       setSaving(true);
       
-      const quoteData = {
-        title: title.trim(),
-        description: description.trim(),
-        sections,
-        taxRate,
-        discountPercentage,
-        termsAndConditions: termsAndConditions.trim(),
-        paymentTerms: paymentTerms.trim(),
-        notes: notes.trim(),
-        projectId: project?._id || existingQuote?.projectId,
-        contactId: project?.contactId || existingQuote?.contactId,
-        locationId: user.locationId,
-        userId: user._id,
-      };
-
+      const quoteData = buildQuoteData();
+      
       if (mode === 'create') {
         const response = await api.post('/api/quotes', quoteData);
         console.log('[QuoteEditor] Created quote:', response.data.quoteNumber);
@@ -351,9 +367,10 @@ export default function QuoteEditorScreen() {
     }
   };
 
-  // Add this function after the existing saveQuote function
+  // Present quote (save first, then show template selection)
   const handlePresentQuote = async () => {
-    // First, save the quote if there are unsaved changes
+    console.log('[QuoteEditor] ===== HANDLE PRESENT QUOTE STARTED =====');
+    
     if (!title.trim()) {
       Alert.alert('Error', 'Please enter a quote title before presenting');
       return;
@@ -367,26 +384,28 @@ export default function QuoteEditorScreen() {
     try {
       setSaving(true);
       
-      // Save quote data (same logic as saveQuote)
-      const quoteData = {
-        title: title.trim(),
-        description: description.trim(),
-        sections,
-        taxRate,
-        discountPercentage,
-        termsAndConditions: termsAndConditions.trim(),
-        paymentTerms: paymentTerms.trim(),
-        notes: notes.trim(),
-        projectId: project?._id || existingQuote?.projectId,
-        contactId: project?.contactId || existingQuote?.contactId,
-        locationId: user.locationId,
-        userId: user._id,
-      };
+      // Debug: Check sections data before saving
+      console.log('[QuoteEditor] Sections before save:', {
+        sectionsLength: sections.length,
+        sectionsType: typeof sections,
+        isArray: Array.isArray(sections),
+        firstSection: sections[0]
+      });
+      
+      const quoteData = buildQuoteData();
+      
+      // Debug: Check quote data structure
+      console.log('[QuoteEditor] QuoteData being saved:', {
+        hasSections: !!quoteData.sections,
+        sectionsLength: quoteData.sections?.length,
+        sectionsType: typeof quoteData.sections,
+        isArray: Array.isArray(quoteData.sections)
+      });
 
-      let savedQuote;
+      let quoteId;
       if (mode === 'create') {
         const response = await api.post('/api/quotes', quoteData);
-        savedQuote = { ...response.data, ...quoteData };
+        quoteId = response.data._id;
         console.log('[QuoteEditor] Created quote for presentation:', response.data.quoteNumber);
       } else if (existingQuote) {
         await api.patch(`/api/quotes/${existingQuote._id}`, {
@@ -394,9 +413,12 @@ export default function QuoteEditorScreen() {
           action: 'update_content',
           locationId: user.locationId,
         });
-        savedQuote = { ...existingQuote, ...quoteData };
+        quoteId = existingQuote._id;
         console.log('[QuoteEditor] Updated quote for presentation:', existingQuote.quoteNumber);
       }
+
+      // Store the saved quote ID for later use
+      setSavedQuoteId(quoteId);
 
       // Show template selection modal
       setShowTemplateSelection(true);
@@ -409,28 +431,90 @@ export default function QuoteEditorScreen() {
     }
   };
 
-  // Add this function to handle template selection
-  const handleTemplateSelected = (template) => {
-    // Navigate to presentation with quote and template data
-    const quoteForPresentation = {
-      _id: existingQuote?._id || 'new_quote',
-      quoteNumber: existingQuote?.quoteNumber || 'Q-2025-001',
-      customerName: project?.contactName || 'Customer',
-      projectTitle: project?.title || title,
-      totalAmount: totals.total,
-      sections,
-      subtotal: totals.subtotal,
-      taxAmount: totals.taxAmount,
-      total: totals.total,
-      termsAndConditions,
-      paymentTerms,
-      notes,
-    };
+  // Handle template selection and navigate to presentation
+  const handleTemplateSelected = async (template) => {
+    console.log('[QuoteEditor] ===== HANDLE TEMPLATE SELECTED =====');
+    
+    if (!savedQuoteId || !user?.locationId) {
+      Alert.alert('Error', 'Quote data not available');
+      return;
+    }
 
-    navigation.navigate('QuotePresentation', {
-      quote: quoteForPresentation,
-      template,
-    });
+    try {
+      console.log('[QuoteEditor] Fetching fresh quote data from DB, quoteId:', savedQuoteId);
+      
+      // Fetch the complete, fresh quote from database
+      const response = await api.get(`/api/quotes/${savedQuoteId}`, {
+        params: { locationId: user.locationId }
+      });
+      
+      const freshQuoteData = response.data;
+      
+      console.log('[QuoteEditor] Fresh quote data structure:', {
+        id: freshQuoteData._id,
+        quoteNumber: freshQuoteData.quoteNumber,
+        hasSections: Array.isArray(freshQuoteData.sections),
+        sectionsLength: freshQuoteData.sections?.length,
+        sectionsData: freshQuoteData.sections,
+        sectionsActualValue: JSON.stringify(freshQuoteData.sections),
+        hasContact: !!freshQuoteData.contact,
+        hasProject: !!freshQuoteData.project,
+        fullObject: freshQuoteData
+      });
+
+      // CRITICAL FIX: Deep clone and ensure sections is always an array
+      const sectionsArray = Array.isArray(freshQuoteData.sections) 
+        ? JSON.parse(JSON.stringify(freshQuoteData.sections))  // Deep clone
+        : [];
+
+      console.log('[QuoteEditor] Sections processing:', {
+        originalSections: freshQuoteData.sections,
+        originalType: typeof freshQuoteData.sections,
+        originalIsArray: Array.isArray(freshQuoteData.sections),
+        processedSections: sectionsArray,
+        processedType: typeof sectionsArray,
+        processedIsArray: Array.isArray(sectionsArray),
+        processedLength: sectionsArray.length
+      });
+
+      const quoteForNavigation = {
+        _id: freshQuoteData._id,
+        quoteNumber: freshQuoteData.quoteNumber,
+        contactName: freshQuoteData.contactName,
+        customerName: freshQuoteData.contactName || freshQuoteData.customerName,
+        projectTitle: freshQuoteData.projectTitle || freshQuoteData.title,
+        title: freshQuoteData.title,
+        sections: sectionsArray,  // Use the processed array
+        subtotal: freshQuoteData.subtotal || 0,
+        taxAmount: freshQuoteData.taxAmount || 0,
+        total: freshQuoteData.total || 0,
+        termsAndConditions: freshQuoteData.termsAndConditions || '',
+        paymentTerms: freshQuoteData.paymentTerms || '',
+        notes: freshQuoteData.notes || '',
+        contact: freshQuoteData.contact,
+        project: freshQuoteData.project,
+      };
+
+      console.log('[QuoteEditor] Quote prepared for navigation:', {
+        id: quoteForNavigation._id,
+        hasSections: Array.isArray(quoteForNavigation.sections),
+        sectionsLength: quoteForNavigation.sections?.length,
+        sectionsType: typeof quoteForNavigation.sections,
+        sectionsValue: JSON.stringify(quoteForNavigation.sections),
+        customerName: quoteForNavigation.customerName,
+        termsAndConditions: quoteForNavigation.termsAndConditions
+      });
+
+      // Navigate to presentation with sanitized data
+      navigation.navigate('QuotePresentation', {
+        quoteId: savedQuoteId,
+        template: template,
+      });
+            
+    } catch (error) {
+      console.error('[QuoteEditor] Failed to fetch quote for presentation:', error);
+      Alert.alert('Error', 'Failed to load quote data for presentation');
+    }
   };
 
   // Open library browser
@@ -722,7 +806,7 @@ export default function QuoteEditorScreen() {
         </View>
       </KeyboardAvoidingView>
 
-      {/* Add the Template Selection Modal at the end, just before the closing tag: */}
+      {/* Template Selection Modal */}
       <TemplateSelectionModal
         visible={showTemplateSelection}
         onClose={() => setShowTemplateSelection(false)}
@@ -1090,9 +1174,9 @@ const styles = StyleSheet.create({
     color: COLORS.accent,
   },
   
-  // Updated Save Container and Button Styles
+  // Save Container and Button Styles
   saveContainer: {
-    flexDirection: 'row', // Changed from single button to row
+    flexDirection: 'row',
     padding: 20,
     backgroundColor: COLORS.card,
     borderTopWidth: 1,

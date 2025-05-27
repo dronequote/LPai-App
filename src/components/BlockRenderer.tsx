@@ -94,7 +94,8 @@ export default function BlockRenderer({ block, styling, variables, quote }: Bloc
           <TermsSectionBlock 
             content={block.content} 
             styling={styling} 
-            variables={variables} 
+            variables={variables}
+            quote={quote} // ✅ FIX: Added missing quote prop
           />
         );
       
@@ -148,6 +149,9 @@ export default function BlockRenderer({ block, styling, variables, quote }: Bloc
           <View style={{ padding: 20, backgroundColor: '#ffebee', borderRadius: 8, margin: 10 }}>
             <Text style={{ color: '#c62828', fontWeight: 'bold' }}>
               Unknown block type: {block.type}
+            </Text>
+            <Text style={{ color: '#666', fontSize: 12, marginTop: 4 }}>
+              Available types: hero, benefit_cards, contact_info, process_steps, quote_header, quote_breakdown, terms_section, warranty_cards, service_list, scope_list, specifications, text_section
             </Text>
           </View>
         );

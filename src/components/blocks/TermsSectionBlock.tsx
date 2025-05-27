@@ -9,7 +9,7 @@ interface TermsSectionBlockProps {
   };
   styling: { primaryColor: string; accentColor: string };
   variables: Record<string, string>;
-  quote: {
+  quote?: {
     termsAndConditions?: string;
     paymentTerms?: string;
     notes?: string;
@@ -28,8 +28,20 @@ const replaceVariables = (text: string, variables: Record<string, string>): stri
 export default function TermsSectionBlock({ content, styling, variables, quote }: TermsSectionBlockProps) {
   const title = replaceVariables(content.title, variables);
   
-  // Use actual quote terms if available, otherwise use template content
-  const termsText = quote.termsAndConditions || replaceVariables(content.content, variables);
+  // ✅ DEFENSIVE FIX: Handle undefined quote gracefully
+  const termsText = quote?.termsAndConditions || replaceVariables(content.content, variables);
+
+  // Debug logging to help troubleshoot
+  console.log('[TermsSectionBlock] Props received:', {
+    hasContent: !!content,
+    hasStyling: !!styling,
+    hasVariables: !!variables,
+    hasQuote: !!quote,
+    quoteKeys: quote ? Object.keys(quote) : 'NO_QUOTE',
+    termsFromQuote: quote?.termsAndConditions,
+    termsFromTemplate: content?.content,
+    finalTermsText: termsText
+  });
 
   return (
     <View style={styles.termsSection}>

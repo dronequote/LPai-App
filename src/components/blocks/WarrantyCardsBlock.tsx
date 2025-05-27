@@ -32,6 +32,16 @@ const iconMap: Record<string, string> = {
   '👨‍🔧': 'person-outline',
 };
 
+// ✅ FIX: Add missing replaceVariables function
+const replaceVariables = (text: string, variables: Record<string, string>): string => {
+  let result = text;
+  Object.entries(variables).forEach(([key, value]) => {
+    const regex = new RegExp(`{${key}}`, 'g');
+    result = result.replace(regex, value || `{${key}}`);
+  });
+  return result;
+};
+
 export function WarrantyCardsBlock({ content, styling, variables }: WarrantyCardsBlockProps) {
   return (
     <View style={styles.warrantyCards}>

@@ -11,6 +11,7 @@ interface ServiceListBlockProps {
   variables: Record<string, string>;
 }
 
+// ✅ FIX: Add missing replaceVariables function
 const replaceVariables = (text: string, variables: Record<string, string>): string => {
   let result = text;
   Object.entries(variables).forEach(([key, value]) => {

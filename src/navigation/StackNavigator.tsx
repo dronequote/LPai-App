@@ -22,20 +22,47 @@ import QuoteEditorScreen from '../screens/QuoteEditorScreen';
 import QuotePresentationScreen from '../screens/QuotePresentationScreen';
 import { Contact, Project, Quote } from '../../packages/types/dist';
 
-// Template type for quote presentation
+// Template type for quote presentation - matches actual template structure
 interface QuoteTemplate {
   _id: string;
-  locationId: string;
   name: string;
-  primaryColor: string;
-  accentColor: string;
-  sections: Array<{
+  description: string;
+  category?: string;
+  preview?: string;
+  isDefault?: boolean;
+  isGlobal: boolean;
+  styling: {
+    primaryColor: string;
+    accentColor: string;
+    fontFamily?: string;
+    layout?: string;
+  };
+  companyOverrides: {
+    name?: string;
+    logo?: string;
+    tagline?: string;
+    phone?: string;
+    email?: string;
+    address?: string;
+    establishedYear?: string;
+    warrantyYears?: string;
+  };
+  tabs: Array<{
     id: string;
     title: string;
+    icon: string;
     enabled: boolean;
     order: number;
-    icon: string;
+    blocks: Array<{
+      id: string;
+      type: string;
+      position: number;
+      content: any;
+    }>;
   }>;
+  createdAt?: string;
+  updatedAt?: string;
+  createdBy?: string;
 }
 
 export type RootStackParamList = {
@@ -60,8 +87,9 @@ export type RootStackParamList = {
     quote?: Quote;
   };
   QuotePresentation: {
-    quote: Quote;
+    quoteId?: string;        // ✅ New clean approach
     template: QuoteTemplate;
+    quote?: Quote;           // Keep for backward compatibility
   };
 };
 

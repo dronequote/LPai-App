@@ -1,0 +1,338 @@
+{
+  "_id": "template_modern_hvac_001",
+  "isGlobal": true,
+  "locationId": null,
+  "name": "Modern HVAC Professional",
+  "description": "Clean, modern layout perfect for HVAC and climate control projects with emphasis on energy efficiency",
+  "category": "hvac",
+  "preview": "❄️",
+  "isDefault": false,
+  "styling": {
+    "primaryColor": "#059669",
+    "accentColor": "#dc2626",
+    "fontFamily": "system",
+    "layout": "modern"
+  },
+  "companyOverrides": {
+    "name": null,
+    "logo": "❄️",
+    "tagline": "Keeping you comfortable year-round since 2010",
+    "phone": null,
+    "email": null,
+    "address": null,
+    "establishedYear": "2010",
+    "warrantyYears": "3"
+  },
+  "tabs": [
+    {
+      "id": "tab_1",
+      "title": "About {companyName}",
+      "icon": "🏢",
+      "enabled": true,
+      "order": 1,
+      "blocks": [
+        {
+          "id": "block_1",
+          "type": "hero",
+          "position": 1,
+          "content": {
+            "title": "Your Trusted HVAC Experts",
+            "subtitle": "{companyTagline}",
+            "icon": "❄️"
+          }
+        },
+        {
+          "id": "block_2",
+          "type": "benefit_cards",
+          "position": 2,
+          "content": {
+            "cards": [
+              {
+                "icon": "⚡",
+                "title": "Energy Efficient Solutions",
+                "subtitle": "Save on Energy Bills",
+                "description": "Our modern HVAC systems reduce energy consumption by up to 40% while maintaining perfect comfort levels."
+              },
+              {
+                "icon": "🛡️",
+                "title": "{warrantyYears}-Year Comprehensive Warranty",
+                "subtitle": "Complete Peace of Mind",
+                "description": "Full warranty coverage on all equipment and installation work with 24/7 emergency service support."
+              },
+              {
+                "icon": "🏆",
+                "title": "Licensed & Certified",
+                "subtitle": "Professional Excellence",
+                "description": "EPA certified technicians with {experienceYears} years of experience in residential and commercial HVAC."
+              }
+            ]
+          }
+        },
+        {
+          "id": "block_3",
+          "type": "contact_info",
+          "position": 3,
+          "content": {
+            "title": "Get In Touch",
+            "items": [
+              {
+                "icon": "📞",
+                "label": "24/7 Emergency Service",
+                "value": "{phone}"
+              },
+              {
+                "icon": "✉️",
+                "label": "Email",
+                "value": "{email}"
+              },
+              {
+                "icon": "📍",
+                "label": "Service Area",
+                "value": "{address}"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tab_2",
+      "title": "Your Investment",
+      "icon": "💰",
+      "enabled": true,
+      "order": 2,
+      "blocks": [
+        {
+          "id": "block_4",
+          "type": "quote_header",
+          "position": 1,
+          "content": {
+            "title": "Investment Proposal #{quoteNumber}",
+            "subtitle": "{projectTitle}",
+            "customerLabel": "Prepared for: {customerName}"
+          }
+        },
+        {
+          "id": "block_5",
+          "type": "quote_breakdown",
+          "position": 2,
+          "content": {
+            "title": "Investment Breakdown",
+            "labels": {
+              "subtotal": "Subtotal",
+              "tax": "Tax",
+              "total": "Total Investment",
+              "quantity": "Qty",
+              "sectionTotal": "Section Total"
+            }
+          }
+        },
+        {
+          "id": "block_6",
+          "type": "terms_section",
+          "position": 3,
+          "content": {
+            "title": "Investment Terms",
+            "content": "{termsAndConditions}"
+          }
+        }
+      ]
+    },
+    {
+      "id": "tab_3",
+      "title": "Installation Process",
+      "icon": "🔧",
+      "enabled": true,
+      "order": 3,
+      "blocks": [
+        {
+          "id": "block_7",
+          "type": "hero",
+          "position": 1,
+          "content": {
+            "title": "Professional Installation Process",
+            "subtitle": "From consultation to comfort, we handle everything",
+            "icon": "🔧"
+          }
+        },
+        {
+          "id": "block_8",
+          "type": "process_steps",
+          "position": 2,
+          "content": {
+            "steps": [
+              {
+                "stepNumber": 1,
+                "title": "System Assessment",
+                "time": "Day 1",
+                "description": "Comprehensive evaluation of your current system and home energy requirements"
+              },
+              {
+                "stepNumber": 2,
+                "title": "Custom Design",
+                "time": "Day 2-3",
+                "description": "Engineering the perfect HVAC solution tailored to your home's unique needs"
+              },
+              {
+                "stepNumber": 3,
+                "title": "Professional Installation",
+                "time": "Day 4-5",
+                "description": "Expert installation by certified technicians with minimal disruption to your routine"
+              },
+              {
+                "stepNumber": 4,
+                "title": "System Testing & Training",
+                "time": "Day 6",
+                "description": "Complete system testing and homeowner training on optimal operation"
+              },
+              {
+                "stepNumber": 5,
+                "title": "Ongoing Support",
+                "time": "Ongoing",
+                "description": "Regular maintenance scheduling and 24/7 emergency service availability"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tab_4",
+      "title": "Equipment & Warranty",
+      "icon": "🛡️",
+      "enabled": true,
+      "order": 4,
+      "blocks": [
+        {
+          "id": "block_9",
+          "type": "hero",
+          "position": 1,
+          "content": {
+            "title": "Premium Equipment & Protection",
+            "subtitle": "Industry-leading brands with comprehensive warranty coverage",
+            "icon": "🛡️"
+          }
+        },
+        {
+          "id": "block_10",
+          "type": "warranty_cards",
+          "position": 2,
+          "content": {
+            "cards": [
+              {
+                "icon": "❄️",
+                "title": "Equipment Warranty",
+                "subtitle": "Manufacturer Coverage",
+                "description": "Up to 10-year manufacturer warranty on all major components including compressors and heat exchangers"
+              },
+              {
+                "icon": "🔧",
+                "title": "Installation Warranty",
+                "subtitle": "{warrantyYears}-Year Labor Guarantee",
+                "description": "Complete installation workmanship warranty covering all labor and installation components"
+              },
+              {
+                "icon": "🚨",
+                "title": "24/7 Emergency Service",
+                "subtitle": "Always Available",
+                "description": "Priority emergency service for warranty customers with same-day response guarantee"
+              }
+            ]
+          }
+        },
+        {
+          "id": "block_11",
+          "type": "service_list",
+          "position": 3,
+          "content": {
+            "title": "What's Included in Your {warrantyYears}-Year Protection Plan",
+            "items": [
+              "✅ All major equipment components covered",
+              "✅ Installation workmanship guarantee",
+              "✅ Annual preventive maintenance visits",
+              "✅ Priority scheduling for service calls",
+              "✅ 24/7 emergency service hotline",
+              "✅ Refrigerant leak protection",
+              "✅ Thermostat and control system coverage",
+              "✅ Transferable warranty (increases home value)"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tab_5",
+      "title": "Project Specifications",
+      "icon": "📋",
+      "enabled": true,
+      "order": 5,
+      "blocks": [
+        {
+          "id": "block_12",
+          "type": "hero",
+          "position": 1,
+          "content": {
+            "title": "Technical Specifications",
+            "subtitle": "Detailed scope of work and equipment specifications",
+            "icon": "📋"
+          }
+        },
+        {
+          "id": "block_13",
+          "type": "scope_list",
+          "position": 2,
+          "content": {
+            "title": "Scope of Work",
+            "items": [
+              "🔹 Complete HVAC system design and installation",
+              "🔹 Ductwork modification and optimization",
+              "🔹 Electrical connections and safety shutoffs",
+              "🔹 Thermostat and control system setup",
+              "🔹 System commissioning and performance testing",
+              "🔹 Indoor air quality assessment and improvement"
+            ]
+          }
+        },
+        {
+          "id": "block_14",
+          "type": "specifications",
+          "position": 3,
+          "content": {
+            "specs": [
+              {
+                "title": "Equipment Specifications",
+                "items": [
+                  "• High-efficiency condensing unit",
+                  "• Variable speed air handler",
+                  "• MERV 13 filtration system",
+                  "• Smart thermostat with WiFi"
+                ]
+              },
+              {
+                "title": "Project Timeline",
+                "items": [
+                  "• Assessment: 1 day",
+                  "• Installation: 2-3 days",
+                  "• Testing & commissioning: 1 day",
+                  "• Total project duration: 4-5 days"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "block_15",
+          "type": "text_section",
+          "position": 4,
+          "content": {
+            "title": "Permits & Code Compliance",
+            "content": "All work will be performed in accordance with local building codes and manufacturer specifications. We handle all permit applications and coordinate required inspections to ensure your new HVAC system meets all safety and efficiency standards."
+          }
+        }
+      ]
+    }
+  ],
+  "createdAt": "2025-05-27T20:30:00.000Z",
+  "updatedAt": "2025-05-27T20:30:00.000Z",
+  "createdBy": "system"
+}
