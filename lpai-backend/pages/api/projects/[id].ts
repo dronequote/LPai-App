@@ -1,4 +1,4 @@
-// pages/api/projects/[id].ts
+// pages/api/projects/[id].ts - UPDATED to use location-specific custom field IDs
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
@@ -199,7 +199,25 @@ async function updateProjectWithSmartSync(db: any, id: string, locationId: strin
         return res.status(400).json({ error: 'No API key found for location' });
       }
 
-      // Build GHL request - EXACT format
+      // ✅ NEW: Get related quote data for custom fields
+      let quoteData = null;
+      try {
+        if (updateData.quoteId || existingProject.quoteId) {
+          const quoteId = updateData.quoteId || existingProject.quoteId;
+          quoteData = await db.collection('quotes').findOne({
+            _id: new ObjectId(quoteId),
+            locationId: locationId
+          });
+          console.log('📋 [GHL Update] Found quote data for custom fields:', quoteData?.quoteNumber);
+        }
+      } catch (err) {
+        console.warn('⚠️ [GHL Update] Could not fetch quote data:', err);
+      }
+
+      // ✅ UPDATED: Build custom fields with location-specific IDs
+      const customFields = await buildCustomFields(db, locationId, updateData, existingProject, quoteData);
+
+      // Build GHL request - EXACT format with custom fields
       const options = {
         method: 'PUT',
         url: `https://services.leadconnectorhq.com/opportunities/${existingProject.ghlOpportunityId}`,
@@ -210,8 +228,8 @@ async function updateProjectWithSmartSync(db: any, id: string, locationId: strin
           Accept: 'application/json'
         },
         data: {
-          name: updateData.title,
-          customFields: [{}]
+          name: updateData.title || existingProject.title,
+          customFields: customFields // ✅ Real custom fields with IDs and values
         }
       };
 
@@ -224,6 +242,7 @@ async function updateProjectWithSmartSync(db: any, id: string, locationId: strin
       try {
         const { data } = await axios.request(options);
         console.log('✅ GHL SUCCESS:', data);
+        console.log('✅ Custom fields updated in GHL opportunity');
         
         // GHL succeeded, now update MongoDB
       } catch (ghlError: any) {
@@ -272,12 +291,142 @@ async function updateProjectWithSmartSync(db: any, id: string, locationId: strin
     return res.status(200).json({
       success: true,
       project: result.value,
-      ghlSynced: !!existingProject.ghlOpportunityId
+      ghlSynced: !!existingProject.ghlOpportunityId,
+      customFieldsUpdated: !!existingProject.ghlOpportunityId
     });
 
   } catch (error) {
     console.error('❌ [API] Error updating project:', error);
     return res.status(500).json({ error: 'Failed to update project' });
+  }
+}
+
+// ✅ UPDATED: Build custom fields with location-specific IDs
+async function buildCustomFields(
+  db: any,
+  locationId: string,
+  updateData: any, 
+  existingProject: any, 
+  quoteData: any
+) {
+  // ✅ NEW: Fetch custom field IDs from location
+  const location = await db.collection('locations').findOne({ locationId });
+  const customFieldIds = location?.ghlCustomFields;
+  
+  if (!customFieldIds) {
+    console.warn('⚠️ No custom field IDs configured for location:', locationId);
+    return [];
+  }
+  
+  const customFields = [];
+  
+  // ✅ Project Title (always update if provided)
+  if ((updateData.title || existingProject.title) && customFieldIds.project_title) {
+    customFields.push({
+      id: customFieldIds.project_title,
+      fieldValue: updateData.title || existingProject.title
+    });
+  }
+  
+  // ✅ Quote Number (from quote data if available)
+  if (quoteData?.quoteNumber && customFieldIds.quote_number) {
+    customFields.push({
+      id: customFieldIds.quote_number,
+      fieldValue: quoteData.quoteNumber
+    });
+  }
+  
+  // ✅ Signed Date (only if provided - used when contract is signed)
+  if (updateData.signedDate && customFieldIds.signed_date) {
+    customFields.push({
+      id: customFieldIds.signed_date,
+      fieldValue: updateData.signedDate
+    });
+  }
+  
+  console.log('🔧 [Custom Fields] Built custom fields for location', locationId, ':', customFields);
+  return customFields;
+}
+
+// ✅ UPDATED: Helper function to use location-specific field IDs
+export async function updateOpportunityCustomFields(
+  db: any, 
+  projectId: string, 
+  locationId: string, 
+  customFieldUpdates: { [key: string]: string }
+) {
+  try {
+    console.log('🔄 [Opportunity Update] Starting custom field update for project:', projectId);
+    
+    // Get project with GHL opportunity ID
+    const project = await db.collection('projects').findOne({
+      _id: new ObjectId(projectId),
+      locationId: locationId,
+      ghlOpportunityId: { $exists: true, $ne: null }
+    });
+
+    if (!project?.ghlOpportunityId) {
+      console.warn('⚠️ [Opportunity Update] No GHL opportunity ID found');
+      return { success: false, reason: 'No GHL opportunity ID' };
+    }
+
+    // Get API key AND custom field IDs from location
+    const locationDoc = await db.collection('locations').findOne({ locationId });
+    const apiKey = locationDoc?.apiKey;
+    const customFieldIds = locationDoc?.ghlCustomFields;
+    
+    if (!apiKey) {
+      console.error('❌ [Opportunity Update] No API key found');
+      return { success: false, reason: 'No API key' };
+    }
+    
+    if (!customFieldIds) {
+      console.error('❌ [Opportunity Update] No custom field IDs configured');
+      return { success: false, reason: 'No custom field IDs configured' };
+    }
+
+    // Build custom fields array from updates using location-specific IDs
+    const customFields = Object.entries(customFieldUpdates)
+      .map(([key, value]) => ({
+        id: customFieldIds[key],
+        fieldValue: value
+      }))
+      .filter(field => field.id); // Only include valid field IDs
+
+    if (customFields.length === 0) {
+      console.warn('⚠️ [Opportunity Update] No valid custom fields to update');
+      return { success: false, reason: 'No valid custom fields' };
+    }
+
+    // Update GHL opportunity
+    const response = await axios.put(
+      `https://services.leadconnectorhq.com/opportunities/${project.ghlOpportunityId}`,
+      {
+        name: project.title, // Keep existing name
+        customFields: customFields
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          Version: '2021-07-28',
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    console.log('✅ [Opportunity Update] Custom fields updated successfully');
+    return { 
+      success: true, 
+      opportunityId: project.ghlOpportunityId,
+      fieldsUpdated: customFields.length
+    };
+
+  } catch (error) {
+    console.error('❌ [Opportunity Update] Failed to update custom fields:', error);
+    return { 
+      success: false, 
+      error: error.response?.data || error.message 
+    };
   }
 }
 

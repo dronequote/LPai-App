@@ -134,8 +134,8 @@ export interface ProjectTimelineEntry {
   userId: string;
   metadata?: { [key: string]: any };
 }
-// Add these to your existing packages/types/index.ts file:
 
+// 🆕 UPDATED: Enhanced Quote interface with signature and publication features
 export interface Quote {
   _id: string;
   quoteNumber: string; // Auto-generated: "Q-2024-001"
@@ -157,10 +157,45 @@ export interface Quote {
   discountPercentage?: number;
   total: number;
   
-  // Status & Lifecycle
-  status: 'draft' | 'sent' | 'viewed' | 'accepted' | 'declined' | 'expired' | 'revised';
+  // Status & Lifecycle - ENHANCED for signature workflow
+  status: 'draft' | 'published' | 'viewed' | 'signed' | 'recalled' | 'expired' | 'revised';
   version: number; // For revisions
   parentQuoteId?: string; // If this is a revision
+  
+  // 🆕 NEW: Publication & Web Link Fields
+  publishedAt?: string; // ISO date when published
+  publishedBy?: string; // userId who published
+  viewedAt?: string; // First time customer viewed
+  lastViewedAt?: string; // Most recent customer view
+  webLinkToken?: string; // Secure token for public access
+  webLinkExpiry?: string; // Auto-expire date
+  
+  // 🆕 NEW: Signature Tracking
+  signatures?: {
+    consultant?: {
+      signature: string; // base64 signature image
+      signedAt: string; // ISO date
+      signedBy: string; // userId
+      deviceInfo?: string; // iPad info, browser, etc.
+    };
+    customer?: {
+      signature: string; // base64 signature image
+      signedAt: string; // ISO date
+      signedBy: string; // customer name
+      ipAddress?: string; // for remote signing
+      deviceInfo?: string; // browser/device info
+    };
+  };
+  
+  // 🆕 NEW: File Storage
+  signedPdfUrl?: string; // GridFS file reference
+  originalPdfUrl?: string; // unsigned PDF for reference
+  
+  // 🆕 NEW: Activity Tracking
+  activityFeed?: QuoteActivity[];
+  
+  // 🆕 NEW: Email Integration
+  emailsSent?: QuoteEmail[];
   
   // Terms & Conditions
   validUntil?: string;
@@ -168,9 +203,8 @@ export interface Quote {
   paymentTerms?: string;
   notes?: string;
   
-  // Timestamps & Tracking
+  // Legacy signature fields (keeping for backward compatibility)
   sentAt?: string;
-  viewedAt?: string;
   respondedAt?: string;
   signatureImageUrl?: string;
   signedAt?: string;
@@ -188,6 +222,37 @@ export interface Quote {
   project?: Project;
   contactName?: string;
   projectTitle?: string;
+}
+
+// 🆕 NEW: Activity tracking interface
+export interface QuoteActivity {
+  id: string;
+  action: 'published' | 'viewed' | 'signed' | 'recalled' | 'emailed' | 'pdf_generated' | 'link_copied' | 'revised';
+  timestamp: string; // ISO date
+  userId?: string; // Who performed the action (null for customer actions)
+  metadata?: {
+    emailRecipient?: string;
+    ipAddress?: string;
+    deviceInfo?: string;
+    errorMessage?: string;
+    templateId?: string;
+    [key: string]: any;
+  };
+}
+
+// 🆕 NEW: Email tracking interface  
+export interface QuoteEmail {
+  id: string;
+  type: 'quote_link' | 'quote_pdf' | 'signed_pdf' | 'quote_both';
+  sentAt: string; // ISO date
+  sentBy: string; // userId
+  recipient: string; // email address
+  subject: string;
+  bodyPreview: string; // First 100 chars of email body
+  ghlMessageId?: string; // GHL message tracking ID
+  templateId?: string; // GHL template used
+  status: 'sent' | 'delivered' | 'opened' | 'failed';
+  failureReason?: string;
 }
 
 export interface QuoteSection {

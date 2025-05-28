@@ -1,0 +1,9 @@
+Perfect! Here's my implementation plan:
+🎯 My Recommended Approach:
+1. Location Schema Update
+Store custom field IDs per location for flexibility:
+javascriptghlCustomFields: {
+  project_title: "5vGSLPNOrfJSJBHC7YLc",
+  quote_number: "gDo1JS2d3eI7dJcg1RVO", 
+  signed_date: "FuGXZI7qrwI5x2hRPGWF"
+}

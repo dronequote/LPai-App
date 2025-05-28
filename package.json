@@ -34,6 +34,7 @@
     "jwt-decode": "^4.0.0",
     "mongodb": "^6.16.0",
     "nodemailer": "^7.0.3",
+    "pdf-lib": "^1.17.1",
     "react": "19.0.0",
     "react-hook-form": "^7.56.3",
     "react-native": "0.79.2",
@@ -45,7 +46,9 @@
     "react-native-reanimated": "~3.17.4",
     "react-native-safe-area-context": "5.4.0",
     "react-native-screens": "~4.10.0",
+    "react-native-signature-canvas": "^4.7.4",
     "react-native-vector-icons": "^10.2.0",
+    "react-native-webview": "^13.13.5",
     "yup": "^1.6.1"
   },
   "devDependencies": {
