@@ -252,15 +252,27 @@ export default function SignatureScreen() {
         day: '2-digit'
       });
 
-      console.log('[SignatureScreen] Updating opportunity custom fields...');
-      
-      // Update project with signed date (triggers opportunity update)
-      const updateResponse = await api.patch(`/api/projects/${quote.projectId}`, {
+      console.log('[SignatureScreen] Making PATCH request to:', `/api/projects/${quote.projectId}`);
+      console.log('[SignatureScreen] With locationId from query:', user.locationId);
+      console.log('[SignatureScreen] With body data:', {
         locationId: user.locationId,
         signedDate: signedDate,
-        status: 'won', // Update project status
+        status: 'won',
         notes: `Contract signed on ${signedDate} via iPad app. Signatures captured from consultant and customer.`
       });
+      
+      // Update project with signed date (triggers opportunity update)
+      const updateResponse = await api.patch(
+        `/api/projects/${quote.projectId}?locationId=${user.locationId}`, // Add locationId to query string
+        {
+          locationId: user.locationId, // Also in body for backward compatibility
+          signedDate: signedDate,
+          status: 'won', // Update project status
+          notes: `Contract signed on ${signedDate} via iPad app. Signatures captured from consultant and customer.`
+        }
+      );
+
+      console.log('[SignatureScreen] PATCH response:', updateResponse.data);
 
       if (updateResponse.data.success) {
         setOpportunityUpdated(true);
@@ -276,6 +288,7 @@ export default function SignatureScreen() {
 
     } catch (error) {
       console.error('[SignatureScreen] Failed to update opportunity:', error);
+      console.error('[SignatureScreen] Error response:', error.response?.data);
       setOpportunityError(error.message);
       // Don't throw - email can still work even if opportunity update fails
     } finally {
@@ -289,7 +302,7 @@ export default function SignatureScreen() {
     
     try {
       // Just update the notes field directly, not using $push
-      await api.patch(`/api/projects/${quote.projectId}`, {
+      await api.patch(`/api/projects/${quote.projectId}?locationId=${user.locationId}`, {
         locationId: user.locationId,
         notes: noteText,  // Simple string update
         updatedAt: new Date()

@@ -7,11 +7,19 @@ import axios from 'axios';
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const { id, locationId } = req.query;
 
+  console.log('🚀🚀🚀 [API] /api/projects/[id] HANDLER CALLED 🚀🚀🚀');
+  console.log('Method:', req.method);
+  console.log('Project ID:', id);
+  console.log('Location ID (query):', locationId);
+  console.log('Body:', JSON.stringify(req.body, null, 2));
+
   // 🔒 SECURITY: Validate required parameters
   if (!id || typeof id !== 'string') {
+    console.error('❌ Missing or invalid project ID');
     return res.status(400).json({ error: 'Missing or invalid project ID' });
   }
   if (!locationId || typeof locationId !== 'string') {
+    console.error('❌ Missing locationId - required for security');
     return res.status(400).json({ error: 'Missing locationId - required for security' });
   }
 
@@ -24,6 +32,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return await getEnhancedProject(db, id, locationId, res);
       
       case 'PATCH':
+        console.log('📝 [API] Routing to updateProjectWithSmartSync...');
         return await updateProjectWithSmartSync(db, id, locationId, req.body, res);
       
       case 'DELETE':
@@ -169,15 +178,23 @@ async function getEnhancedProject(db: any, id: string, locationId: string, res: 
 
 // ✏️ UPDATE Project - GHL First, MongoDB Second
 async function updateProjectWithSmartSync(db: any, id: string, locationId: string, updateData: any, res: NextApiResponse) {
+  console.log('🚀🚀🚀 [API] PATCH updateProjectWithSmartSync STARTED 🚀🚀🚀');
+  console.log('Project ID:', id);
+  console.log('Location ID:', locationId);
+  console.log('Update Data:', JSON.stringify(updateData, null, 2));
+  
   try {
     console.log(`✏️ [API] Updating project ${id} for location ${locationId}`);
+    console.log('📝 [API] Update data received:', updateData);
 
     // Validate ObjectId format
     if (!ObjectId.isValid(id)) {
+      console.error('❌ Invalid project ID format:', id);
       return res.status(400).json({ error: 'Invalid project ID format' });
     }
 
     // 🔒 Get existing project
+    console.log('🔍 [API] Looking for project in MongoDB...');
     const existingProject = await db.collection('projects').findOne({
       _id: new ObjectId(id),
       locationId: locationId,
@@ -185,17 +202,33 @@ async function updateProjectWithSmartSync(db: any, id: string, locationId: strin
     });
 
     if (!existingProject) {
+      console.error('❌ Project not found or access denied');
       return res.status(404).json({ error: 'Project not found or access denied' });
     }
 
+    console.log('📋 [API] Existing project found:', {
+      id: existingProject._id,
+      title: existingProject.title,
+      ghlOpportunityId: existingProject.ghlOpportunityId,
+      quoteId: existingProject.quoteId
+    });
+
     // 🔄 GHL UPDATE FIRST - Only if we have GHL opportunity ID
     if (existingProject.ghlOpportunityId && existingProject.locationId) {
+      console.log('🔄 [API] Project has GHL opportunity ID, attempting GHL update...');
       
       // Get API key
       const locationDoc = await db.collection('locations').findOne({ locationId: existingProject.locationId });
       const apiKey = locationDoc?.apiKey;
       
+      console.log('🔐 [API] Location document:', {
+        hasApiKey: !!apiKey,
+        hasGhlCustomFields: !!locationDoc?.ghlCustomFields,
+        ghlCustomFields: locationDoc?.ghlCustomFields
+      });
+      
       if (!apiKey) {
+        console.error('❌ No API key found for location');
         return res.status(400).json({ error: 'No API key found for location' });
       }
 
@@ -204,21 +237,36 @@ async function updateProjectWithSmartSync(db: any, id: string, locationId: strin
       try {
         if (updateData.quoteId || existingProject.quoteId) {
           const quoteId = updateData.quoteId || existingProject.quoteId;
+          console.log('📄 [API] Looking for quote:', quoteId);
           quoteData = await db.collection('quotes').findOne({
             _id: new ObjectId(quoteId),
             locationId: locationId
           });
-          console.log('📋 [GHL Update] Found quote data for custom fields:', quoteData?.quoteNumber);
+          console.log('📋 [GHL Update] Found quote data for custom fields:', {
+            quoteNumber: quoteData?.quoteNumber,
+            quoteId: quoteData?._id,
+            total: quoteData?.total
+          });
         }
       } catch (err) {
         console.warn('⚠️ [GHL Update] Could not fetch quote data:', err);
       }
 
       // ✅ UPDATED: Build custom fields with location-specific IDs
+      console.log('🔧 [API] Building custom fields...');
       const customFields = await buildCustomFields(db, locationId, updateData, existingProject, quoteData);
 
       // Build GHL request - EXACT format with custom fields
-      const options = {
+      const ghlPayload = {
+        name: updateData.title || existingProject.title,
+        status: updateData.status || 'won', // Default to 'won' for signed contracts
+        monetaryValue: quoteData?.total || existingProject.monetaryValue || 0, // Use quote total
+        customFields: customFields
+      };
+
+      // Log the exact axios config we're about to send
+      console.log('🚀 [GHL API] EXACT AXIOS CONFIG:');
+      const axiosConfig = {
         method: 'PUT',
         url: `https://services.leadconnectorhq.com/opportunities/${existingProject.ghlOpportunityId}`,
         headers: {
@@ -227,34 +275,41 @@ async function updateProjectWithSmartSync(db: any, id: string, locationId: strin
           'Content-Type': 'application/json',
           Accept: 'application/json'
         },
-        data: {
-          name: updateData.title || existingProject.title,
-          customFields: customFields // ✅ Real custom fields with IDs and values
-        }
+        data: ghlPayload
       };
 
-      // 🚀 Log what we're sending
-      console.log('🚀 SENDING TO GHL:');
-      console.log('URL:', options.url);
-      console.log('HEADERS:', { ...options.headers, Authorization: `Bearer ${apiKey?.slice(0, 8)}...${apiKey?.slice(-4)}` });
-      console.log('DATA:', JSON.stringify(options.data, null, 2));
+      console.log('const axios = require("axios").default;');
+      console.log('const options =', JSON.stringify(axiosConfig, null, 2));
+      console.log('// ACTUAL REQUEST BEING SENT ^^^^^');
+      console.log('// Quote Total:', quoteData?.total);
+      console.log('// Status:', ghlPayload.status);
 
       try {
-        const { data } = await axios.request(options);
+        console.log('🌐 [API] Making axios request to GHL...');
+        const { data } = await axios.request(axiosConfig);
         console.log('✅ GHL SUCCESS:', data);
         console.log('✅ Custom fields updated in GHL opportunity');
         
         // GHL succeeded, now update MongoDB
       } catch (ghlError: any) {
-        console.error('❌ GHL FAILED:', ghlError.response?.status, ghlError.response?.data);
+        console.error('❌ GHL FAILED:', ghlError.response?.status);
+        console.error('❌ GHL ERROR RESPONSE:', JSON.stringify(ghlError.response?.data, null, 2));
+        console.error('❌ REQUEST DATA WAS:', JSON.stringify(axiosConfig.data, null, 2));
+        
         return res.status(400).json({ 
           error: 'Failed to update GHL opportunity',
-          ghlError: ghlError.response?.data || ghlError.message
+          ghlStatus: ghlError.response?.status,
+          ghlError: ghlError.response?.data || ghlError.message,
+          requestData: axiosConfig.data,
+          requestUrl: axiosConfig.url
         });
       }
+    } else {
+      console.log('ℹ️ [API] No GHL opportunity ID, skipping GHL update');
     }
 
     // 💾 MongoDB UPDATE - Only happens if GHL succeeded or no GHL ID
+    console.log('💾 [API] Updating MongoDB...');
     const {
       _id,
       locationId: _,
@@ -276,13 +331,13 @@ async function updateProjectWithSmartSync(db: any, id: string, locationId: strin
     const result = await db.collection('projects').findOneAndUpdate(
       { 
         _id: new ObjectId(id),
-        locationId: locationId 
+        locationId: existingProject.locationId  // Use the project's actual locationId
       },
       { $set: finalUpdateData },
       { returnDocument: 'after' }
     );
-
     if (!result.value) {
+      console.error('❌ Project not found during MongoDB update');
       return res.status(404).json({ error: 'Project not found during update' });
     }
 
@@ -301,7 +356,7 @@ async function updateProjectWithSmartSync(db: any, id: string, locationId: strin
   }
 }
 
-// ✅ UPDATED: Build custom fields with location-specific IDs
+// ✅ UPDATED: Build custom fields with location-specific IDs and KEYS
 async function buildCustomFields(
   db: any,
   locationId: string,
@@ -312,6 +367,13 @@ async function buildCustomFields(
   // ✅ NEW: Fetch custom field IDs from location
   const location = await db.collection('locations').findOne({ locationId });
   const customFieldIds = location?.ghlCustomFields;
+  
+  console.log('🔧 [Custom Fields] Location custom field IDs:', customFieldIds);
+  console.log('🔧 [Custom Fields] Update data:', {
+    title: updateData.title,
+    signedDate: updateData.signedDate,
+    hasQuoteData: !!quoteData
+  });
   
   if (!customFieldIds) {
     console.warn('⚠️ No custom field IDs configured for location:', locationId);
@@ -324,7 +386,8 @@ async function buildCustomFields(
   if ((updateData.title || existingProject.title) && customFieldIds.project_title) {
     customFields.push({
       id: customFieldIds.project_title,
-      fieldValue: updateData.title || existingProject.title
+      key: "project_title",
+      field_value: updateData.title || existingProject.title  // ✅ CHANGED to field_value
     });
   }
   
@@ -332,7 +395,8 @@ async function buildCustomFields(
   if (quoteData?.quoteNumber && customFieldIds.quote_number) {
     customFields.push({
       id: customFieldIds.quote_number,
-      fieldValue: quoteData.quoteNumber
+      key: "quote_number",
+      field_value: quoteData.quoteNumber  // ✅ CHANGED to field_value
     });
   }
   
@@ -340,11 +404,12 @@ async function buildCustomFields(
   if (updateData.signedDate && customFieldIds.signed_date) {
     customFields.push({
       id: customFieldIds.signed_date,
-      fieldValue: updateData.signedDate
+      key: "signed_date",
+      field_value: updateData.signedDate  // ✅ CHANGED to field_value
     });
   }
   
-  console.log('🔧 [Custom Fields] Built custom fields for location', locationId, ':', customFields);
+  console.log('🔧 [Custom Fields] Built custom fields for location', locationId, ':', JSON.stringify(customFields, null, 2));
   return customFields;
 }
 
@@ -389,7 +454,8 @@ export async function updateOpportunityCustomFields(
     const customFields = Object.entries(customFieldUpdates)
       .map(([key, value]) => ({
         id: customFieldIds[key],
-        fieldValue: value
+        key: key,
+        field_value: value  // ✅ CHANGED to field_value
       }))
       .filter(field => field.id); // Only include valid field IDs
 
