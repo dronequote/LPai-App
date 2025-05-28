@@ -20,9 +20,9 @@ import ProjectDetailScreen from '../screens/ProjectDetailScreen';
 import QuoteBuilderScreen from '../screens/QuoteBuilderScreen';
 import QuoteEditorScreen from '../screens/QuoteEditorScreen';
 import QuotePresentationScreen from '../screens/QuotePresentationScreen';
+import SignatureScreen from '../screens/SignatureScreen';
 import { Contact, Project, Quote } from '../../packages/types/dist';
 
-// Template type for quote presentation - matches actual template structure
 interface QuoteTemplate {
   _id: string;
   name: string;
@@ -87,9 +87,13 @@ export type RootStackParamList = {
     quote?: Quote;
   };
   QuotePresentation: {
-    quoteId?: string;        // ✅ New clean approach
+    quoteId?: string;
     template: QuoteTemplate;
-    quote?: Quote;           // Keep for backward compatibility
+    quote?: Quote;
+  };
+  SignatureScreen: {
+    quote: Quote;
+    template: QuoteTemplate;
   };
 };
 
@@ -116,12 +120,13 @@ export default function StackNavigator() {
       <Stack.Screen name="Profile" component={ProfileScreen} />
       <Stack.Screen name="Notifications" component={NotificationScreen} />
       <Stack.Screen name="AddContactScreen" component={AddContactScreen} />
-      <Stack.Screen name="ContactDetailScreen" component={ContactDetailScreen} /> 
+      <Stack.Screen name="ContactDetailScreen" component={ContactDetailScreen} />
       <Stack.Screen name="AppointmentDetail" component={AppointmentDetail} />
       <Stack.Screen name="ProjectDetailScreen" component={ProjectDetailScreen} />
       <Stack.Screen name="QuoteBuilder" component={QuoteBuilderScreen} />
       <Stack.Screen name="QuoteEditor" component={QuoteEditorScreen} />
       <Stack.Screen name="QuotePresentation" component={QuotePresentationScreen} />
+      <Stack.Screen name="SignatureScreen" component={SignatureScreen} />
     </Stack.Navigator>
   );
 }
