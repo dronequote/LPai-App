@@ -38,7 +38,13 @@ async function getLocation(req: NextApiRequest, res: NextApiResponse, locationId
       branding: location.branding || null,
       pipelines: location.pipelines || [],
       calendars: location.calendars || [],
-      termsAndConditions: location.termsAndConditions || '', // ✅ NEW: From DB directly
+      termsAndConditions: location.termsAndConditions || '',
+      emailTemplates: location.emailTemplates || {
+        contractSigned: null,
+        quoteSent: null,
+        invoiceSent: null
+      },
+      companyInfo: location.companyInfo || {} // If you store company data here
     });
   } catch (err) {
     console.error('❌ Failed to fetch location by locationId:', err);
@@ -48,7 +54,13 @@ async function getLocation(req: NextApiRequest, res: NextApiResponse, locationId
 
 async function updateLocation(req: NextApiRequest, res: NextApiResponse, locationId: string) {
   try {
-    const { termsAndConditions, branding, ...otherUpdates } = req.body;
+    const { 
+      termsAndConditions, 
+      branding, 
+      emailTemplates,
+      companyInfo,
+      ...otherUpdates 
+    } = req.body;
     
     const client = await clientPromise;
     const db = client.db('lpai');
@@ -59,6 +71,15 @@ async function updateLocation(req: NextApiRequest, res: NextApiResponse, locatio
     
     if (termsAndConditions !== undefined) updateData.termsAndConditions = termsAndConditions;
     if (branding !== undefined) updateData.branding = branding;
+    if (emailTemplates !== undefined) updateData.emailTemplates = emailTemplates;
+    if (companyInfo !== undefined) updateData.companyInfo = companyInfo;
+    
+    // Handle any other updates
+    Object.keys(otherUpdates).forEach(key => {
+      if (otherUpdates[key] !== undefined) {
+        updateData[key] = otherUpdates[key];
+      }
+    });
     
     const result = await db.collection('locations').updateOne(
       { locationId },

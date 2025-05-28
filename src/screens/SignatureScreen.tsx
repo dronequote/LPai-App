@@ -258,7 +258,7 @@ export default function SignatureScreen() {
       const updateResponse = await api.patch(`/api/projects/${quote.projectId}`, {
         locationId: user.locationId,
         signedDate: signedDate,
-        status: 'Job Complete', // Update project status
+        status: 'won', // Update project status
         notes: `Contract signed on ${signedDate} via iPad app. Signatures captured from consultant and customer.`
       });
 
