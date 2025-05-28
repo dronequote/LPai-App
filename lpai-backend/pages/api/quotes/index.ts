@@ -98,7 +98,11 @@ async function createQuote(db: any, body: any, res: NextApiResponse) {
       termsAndConditions = '',
       paymentTerms = '',
       notes = '',
-      validUntil
+      validUntil,
+      // ADD DEPOSIT FIELDS
+      depositType = 'percentage',
+      depositValue = 0,
+      depositAmount = 0
     } = body;
     
     // Validate required fields
@@ -179,6 +183,14 @@ async function createQuote(db: any, body: any, res: NextApiResponse) {
     const taxAmount = taxableAmount * taxRate;
     const total = taxableAmount + taxAmount;
     
+    // ADD: Calculate deposit amount if not provided
+    let calculatedDepositAmount = depositAmount;
+    if (depositType === 'percentage' && depositValue > 0) {
+      calculatedDepositAmount = (total * depositValue) / 100;
+    } else if (depositType === 'fixed' && depositValue > 0) {
+      calculatedDepositAmount = depositValue;
+    }
+    
     const newQuote = {
       quoteNumber,
       projectId,
@@ -194,6 +206,10 @@ async function createQuote(db: any, body: any, res: NextApiResponse) {
       discountAmount: discountTotal,
       discountPercentage: discountPercentage || 0,
       total,
+      // ADD DEPOSIT FIELDS
+      depositType,
+      depositValue,
+      depositAmount: calculatedDepositAmount,
       status: 'draft' as const,
       version: 1,
       validUntil: validUntil ? new Date(validUntil) : undefined,

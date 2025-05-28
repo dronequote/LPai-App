@@ -54,6 +54,11 @@ export default function SignatureScreen() {
   const [opportunityUpdated, setOpportunityUpdated] = useState(false);
   const [opportunityError, setOpportunityError] = useState(null);
 
+  // Payment state
+  const [showPaymentOptions, setShowPaymentOptions] = useState(false);
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState(null);
+  const [savingPaymentPreference, setSavingPaymentPreference] = useState(false);
+
   // Load company data on mount
   useEffect(() => {
     loadCompanyData();
@@ -428,7 +433,30 @@ export default function SignatureScreen() {
       </View>
     );
   };
-
+// Add this function before renderCompleteStep
+const handlePaymentMethodSelect = async (method) => {
+  setSelectedPaymentMethod(method);
+  setSavingPaymentPreference(true);
+  
+  try {
+    // Save payment preference to project
+    const response = await api.patch(
+      `/projects/${quote.projectId}?locationId=${user.locationId}`,
+      {
+        paymentPreference: method,
+        depositExpected: quote.depositAmount > 0,
+        depositAmount: quote.depositAmount || 0
+      }
+    );
+    
+    console.log('Payment preference saved:', method);
+  } catch (error) {
+    console.error('Failed to save payment preference:', error);
+    Alert.alert('Error', 'Failed to save payment preference');
+  } finally {
+    setSavingPaymentPreference(false);
+  }
+};
   // ✅ UPDATED: Complete step with opportunity and email status
   const renderCompleteStep = () => (
     <ScrollView style={styles.stepContent} showsVerticalScrollIndicator={false}>
@@ -516,6 +544,71 @@ export default function SignatureScreen() {
             }
           </Text>
         </View>
+            
+        // Add this BEFORE the "Continue to Project" button in renderCompleteStep
+
+{/* Payment Preference Section - Only show if there's a deposit */}
+{quote?.depositAmount > 0 && !showPaymentOptions && (
+  <TouchableOpacity 
+    style={[
+      styles.continueButton, 
+      { 
+        backgroundColor: '#4CAF50',
+        marginBottom: 10 
+      }
+    ]}
+    onPress={() => setShowPaymentOptions(true)}
+  >
+    <Text style={styles.continueButtonText}>
+      Select Payment Method (${quote.depositAmount} Deposit)
+    </Text>
+  </TouchableOpacity>
+)}
+
+{/* Payment Options */}
+{showPaymentOptions && (
+  <View style={styles.paymentOptionsContainer}>
+    <Text style={styles.paymentOptionsTitle}>
+      How would you like to pay the ${quote.depositAmount} deposit?
+    </Text>
+    
+    <TouchableOpacity 
+      style={[
+        styles.paymentOption,
+        selectedPaymentMethod === 'card' && styles.selectedPaymentOption
+      ]}
+      onPress={() => handlePaymentMethodSelect('card')}
+      disabled={savingPaymentPreference}
+    >
+      <Ionicons name="card-outline" size={24} color="#2E86AB" />
+      <Text style={styles.paymentOptionText}>Pay with Card</Text>
+    </TouchableOpacity>
+    
+    <TouchableOpacity 
+      style={[
+        styles.paymentOption,
+        selectedPaymentMethod === 'check' && styles.selectedPaymentOption
+      ]}
+      onPress={() => handlePaymentMethodSelect('check')}
+      disabled={savingPaymentPreference}
+    >
+      <Ionicons name="document-text-outline" size={24} color="#2E86AB" />
+      <Text style={styles.paymentOptionText}>Pay by Check</Text>
+    </TouchableOpacity>
+    
+    <TouchableOpacity 
+      style={[
+        styles.paymentOption,
+        selectedPaymentMethod === 'cash' && styles.selectedPaymentOption
+      ]}
+      onPress={() => handlePaymentMethodSelect('cash')}
+      disabled={savingPaymentPreference}
+    >
+      <Ionicons name="cash-outline" size={24} color="#2E86AB" />
+      <Text style={styles.paymentOptionText}>Pay with Cash</Text>
+    </TouchableOpacity>
+  </View>
+)}
 
         <TouchableOpacity 
           style={[styles.continueButton, { backgroundColor: template?.styling?.primaryColor || '#2E86AB' }]}
@@ -811,4 +904,34 @@ const styles = StyleSheet.create({
     fontSize: FONT.input,
     fontWeight: '600',
   },
+  paymentOptionsContainer: {
+  marginVertical: 20,
+  padding: 20,
+  backgroundColor: '#f5f5f5',
+  borderRadius: 10,
+},
+paymentOptionsTitle: {
+  fontSize: 16,
+  fontWeight: 'bold',
+  marginBottom: 15,
+  textAlign: 'center',
+},
+paymentOption: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  padding: 15,
+  backgroundColor: 'white',
+  borderRadius: 8,
+  marginBottom: 10,
+  borderWidth: 1,
+  borderColor: '#ddd',
+},
+selectedPaymentOption: {
+  borderColor: '#2E86AB',
+  backgroundColor: '#f0f8ff',
+},
+paymentOptionText: {
+  marginLeft: 10,
+  fontSize: 16,
+},
 });

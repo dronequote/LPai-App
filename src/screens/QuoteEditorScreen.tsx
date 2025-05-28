@@ -56,6 +56,10 @@ export default function QuoteEditorScreen() {
   const [paymentTerms, setPaymentTerms] = useState('50% deposit required to begin work.');
   const [notes, setNotes] = useState('');
 
+  // ADD DEPOSIT FIELDS
+  const [depositType, setDepositType] = useState<'percentage' | 'fixed'>('percentage');
+  const [depositValue, setDepositValue] = useState(0); // Either % or fixed amount
+
   // UI State
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [editingSection, setEditingSection] = useState<string | null>(null);
@@ -75,7 +79,7 @@ export default function QuoteEditorScreen() {
       // Load libraries - TODO: Create /api/libraries endpoint
       // if (user?.locationId) {
       //   const librariesRes = await api.get('/api/libraries', {
-      //     params: { locationId: user.locationId }
+      //     params: { locationId: user.locationId },
       //   });
       //   setLibraries(librariesRes.data || []);
       // }
@@ -118,6 +122,10 @@ export default function QuoteEditorScreen() {
         setPaymentTerms(existingQuote.paymentTerms || '');
         setNotes(existingQuote.notes || '');
         
+        // ADD: Load deposit fields
+        setDepositType(existingQuote.depositType || 'percentage');
+        setDepositValue(existingQuote.depositValue || 0);
+        
         // Expand all sections by default when editing
         const sectionIds = new Set(existingQuote.sections?.map(s => s.id) || []);
         setExpandedSections(sectionIds);
@@ -135,7 +143,7 @@ export default function QuoteEditorScreen() {
     }
   };
 
-  // Calculate totals
+  // Calculate totals - FIXED: Removed depositAmount from state updates
   const calculateTotals = useCallback(() => {
     const subtotal = sections.reduce((sum, section) => sum + section.subtotal, 0);
     const discountAmount = subtotal * (discountPercentage / 100);
@@ -143,13 +151,25 @@ export default function QuoteEditorScreen() {
     const taxAmount = taxableAmount * taxRate;
     const total = taxableAmount + taxAmount;
     
+    // Calculate deposit amount
+    let calculatedDeposit = 0;
+    if (depositType === 'percentage' && depositValue > 0) {
+      calculatedDeposit = (total * depositValue) / 100;
+    } else if (depositType === 'fixed' && depositValue > 0) {
+      calculatedDeposit = depositValue;
+    }
+    
     return {
       subtotal,
       discountAmount,
       taxAmount,
       total,
+      depositAmount: calculatedDeposit,
     };
-  }, [sections, taxRate, discountPercentage]);
+  }, [sections, taxRate, discountPercentage, depositType, depositValue]);
+
+  // Get totals without triggering re-renders
+  const totals = calculateTotals();
 
   // Add new section
   const addSection = () => {
@@ -291,6 +311,7 @@ export default function QuoteEditorScreen() {
 
   // Build quote data object
   const buildQuoteData = () => {
+    const calculatedTotals = calculateTotals();
     return {
       title: title.trim(),
       description: description.trim(),
@@ -300,6 +321,9 @@ export default function QuoteEditorScreen() {
       termsAndConditions: termsAndConditions.trim(),
       paymentTerms: paymentTerms.trim(),
       notes: notes.trim(),
+      depositType,
+      depositValue,
+      depositAmount: calculatedTotals.depositAmount,
       projectId: project?._id || existingQuote?.projectId,
       contactId: project?.contactId || existingQuote?.contactId,
       locationId: user?.locationId,
@@ -493,6 +517,9 @@ export default function QuoteEditorScreen() {
         notes: freshQuoteData.notes || '',
         contact: freshQuoteData.contact,
         project: freshQuoteData.project,
+        depositType: freshQuoteData.depositType,
+        depositValue: freshQuoteData.depositValue,
+        depositAmount: freshQuoteData.depositAmount,
       };
 
       console.log('[QuoteEditor] Quote prepared for navigation:', {
@@ -502,7 +529,8 @@ export default function QuoteEditorScreen() {
         sectionsType: typeof quoteForNavigation.sections,
         sectionsValue: JSON.stringify(quoteForNavigation.sections),
         customerName: quoteForNavigation.customerName,
-        termsAndConditions: quoteForNavigation.termsAndConditions
+        termsAndConditions: quoteForNavigation.termsAndConditions,
+        depositAmount: quoteForNavigation.depositAmount
       });
 
       // Navigate to presentation with sanitized data
@@ -524,8 +552,6 @@ export default function QuoteEditorScreen() {
     // For now, let's add a simple custom item
     addLineItem(sectionId);
   };
-
-  const totals = calculateTotals();
 
   if (loading) {
     return (
@@ -718,6 +744,56 @@ export default function QuoteEditorScreen() {
                 <Text style={styles.totalLabel}>Total</Text>
                 <Text style={styles.totalValue}>${totals.total.toLocaleString()}</Text>
               </View>
+            </View>
+          </View>
+
+          {/* ADD DEPOSIT SECTION */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Deposit</Text>
+            
+            <View style={styles.depositCard}>
+              <Text style={styles.label}>Deposit Type</Text>
+              <View style={styles.toggleContainer}>
+                <TouchableOpacity
+                  style={[styles.toggle, depositType === 'percentage' && styles.activeToggle]}
+                  onPress={() => setDepositType('percentage')}
+                >
+                  <Text style={[styles.toggleText, depositType === 'percentage' && styles.activeToggleText]}>
+                    Percentage %
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.toggle, depositType === 'fixed' && styles.activeToggle]}
+                  onPress={() => setDepositType('fixed')}
+                >
+                  <Text style={[styles.toggleText, depositType === 'fixed' && styles.activeToggleText]}>
+                    Fixed Amount $
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>
+                  {depositType === 'percentage' ? 'Deposit Percentage' : 'Deposit Amount'}
+                </Text>
+                <TextInput
+                  style={styles.input}
+                  value={depositValue.toString()}
+                  onChangeText={(text) => setDepositValue(parseFloat(text) || 0)}
+                  keyboardType="numeric"
+                  placeholder={depositType === 'percentage' ? "50" : "500"}
+                  placeholderTextColor={COLORS.textGray}
+                />
+              </View>
+
+              {depositValue > 0 && (
+                <View style={styles.depositPreview}>
+                  <Text style={styles.depositPreviewLabel}>Deposit Due:</Text>
+                  <Text style={styles.depositPreviewValue}>
+                    ${totals.depositAmount.toFixed(2)}
+                  </Text>
+                </View>
+              )}
             </View>
           </View>
 
@@ -1169,6 +1245,59 @@ const styles = StyleSheet.create({
     color: COLORS.textDark,
   },
   totalValue: {
+    fontSize: FONT.sectionTitle,
+    fontWeight: '700',
+    color: COLORS.accent,
+  },
+  
+  // ADD DEPOSIT STYLES
+  depositCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: RADIUS.card,
+    padding: 16,
+    ...SHADOW.card,
+  },
+  toggleContainer: {
+    flexDirection: 'row',
+    marginBottom: 16,
+    borderRadius: RADIUS.input,
+    overflow: 'hidden',
+  },
+  toggle: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+    backgroundColor: COLORS.background,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  activeToggle: {
+    backgroundColor: COLORS.accent,
+    borderColor: COLORS.accent,
+  },
+  toggleText: {
+    fontSize: FONT.input,
+    color: COLORS.textDark,
+    fontWeight: '500',
+  },
+  activeToggleText: {
+    color: '#fff',
+  },
+  depositPreview: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+  },
+  depositPreviewLabel: {
+    fontSize: FONT.input,
+    fontWeight: '600',
+    color: COLORS.textDark,
+  },
+  depositPreviewValue: {
     fontSize: FONT.sectionTitle,
     fontWeight: '700',
     color: COLORS.accent,

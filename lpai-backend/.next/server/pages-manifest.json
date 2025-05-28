@@ -2,6 +2,12 @@
   "/_app": "pages/_app.js",
   "/_error": "pages/_error.js",
   "/_document": "pages/_document.js",
-  "/api/contacts": "pages/api/contacts.js",
-  "/api/projects/[id]": "pages/api/projects/[id].js"
+  "/api/locations/byLocation": "pages/api/locations/byLocation.js",
+  "/api/templates/[locationId]": "pages/api/templates/[locationId].js",
+  "/api/quotes/[id]": "pages/api/quotes/[id].js",
+  "/api/quotes": "pages/api/quotes.js",
+  "/api/quotes/[id]/sign": "pages/api/quotes/[id]/sign.js",
+  "/api/quotes/[id]/pdf": "pages/api/quotes/[id]/pdf.js",
+  "/api/projects/[id]": "pages/api/projects/[id].js",
+  "/api/emails/send-contract": "pages/api/emails/send-contract.js"
 }

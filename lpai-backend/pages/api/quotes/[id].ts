@@ -1,6 +1,6 @@
 // pages/api/quotes/[id].ts
 import type { NextApiRequest, NextApiResponse } from 'next';
-import clientPromise from '../../../src/lib/mongodb';
+import clientPromise from '../../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -138,7 +138,11 @@ async function updateQuote(db: any, id: string, body: any, res: NextApiResponse)
           discountPercentage,
           termsAndConditions,
           paymentTerms,
-          notes 
+          notes,
+          // ADD DEPOSIT FIELDS
+          depositType,
+          depositValue,
+          depositAmount
         } = body;
         
         // Recalculate totals if sections provided
@@ -163,12 +167,22 @@ async function updateQuote(db: any, id: string, body: any, res: NextApiResponse)
           const taxAmount = taxableAmount * (taxRate || 0);
           const total = taxableAmount + taxAmount;
           
+          // ADD: Calculate deposit amount
+          let calculatedDepositAmount = depositAmount || 0;
+          if (depositType === 'percentage' && depositValue > 0) {
+            calculatedDepositAmount = (total * depositValue) / 100;
+          } else if (depositType === 'fixed' && depositValue > 0) {
+            calculatedDepositAmount = depositValue;
+          }
+          
           updateData = {
             sections: sectionsWithTotals,
             subtotal,
             taxAmount,
             discountAmount: discountTotal,
             total,
+            // ADD deposit amount to update
+            depositAmount: calculatedDepositAmount,
           };
         }
         
@@ -180,6 +194,10 @@ async function updateQuote(db: any, id: string, body: any, res: NextApiResponse)
         if (termsAndConditions !== undefined) updateData.termsAndConditions = termsAndConditions;
         if (paymentTerms !== undefined) updateData.paymentTerms = paymentTerms;
         if (notes !== undefined) updateData.notes = notes;
+        
+        // ADD: Update deposit fields
+        if (depositType !== undefined) updateData.depositType = depositType;
+        if (depositValue !== undefined) updateData.depositValue = parseFloat(depositValue);
         
         updateData.updatedAt = new Date().toISOString();
         
