@@ -2,9 +2,6 @@
   "/_app": "pages/_app.js",
   "/_error": "pages/_error.js",
   "/_document": "pages/_document.js",
-  "/api/locations/byLocation": "pages/api/locations/byLocation.js",
-  "/api/quotes/[id]/sign": "pages/api/quotes/[id]/sign.js",
-  "/api/quotes/[id]/pdf": "pages/api/quotes/[id]/pdf.js",
-  "/api/emails/send-contract": "pages/api/emails/send-contract.js",
+  "/api/contacts": "pages/api/contacts.js",
   "/api/projects/[id]": "pages/api/projects/[id].js"
 }
