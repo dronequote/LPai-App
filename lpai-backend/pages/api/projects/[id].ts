@@ -349,29 +349,37 @@ async function updateProjectWithSmartSync(db: any, id: string, locationId: strin
       updatedAt: new Date()
     };
 
-    // ✅ FIX: Remove locationId from the filter to prevent 404
-    const result = await db.collection('projects').findOneAndUpdate(
-      { 
-        _id: new ObjectId(id)
-        // Removed locationId from here since we already verified it exists
-      },
-      { $set: finalUpdateData },
-      { returnDocument: 'after' }
-    );
+    console.log('💾 [API] About to update MongoDB with:', JSON.stringify(finalUpdateData, null, 2));
+console.log('💾 [API] Updating document with _id:', id);
+
+const updateResult = await db.collection('projects').updateOne(
+  { 
+    _id: new ObjectId(id)
+  },
+  { $set: finalUpdateData }
+);
+
+console.log('💾 [API] Update result:', updateResult);
+
+if (updateResult.matchedCount === 0) {
+  console.error('❌ Project not found during MongoDB update');
+  return res.status(404).json({ error: 'Project not found during update' });
+}
+
+// If we need the updated document, fetch it separately
+const updatedProject = await db.collection('projects').findOne({
+  _id: new ObjectId(id)
+});
+
+console.log('✅ MongoDB update successful');
+
+return res.status(200).json({
+  success: true,
+  project: updatedProject,
+  ghlSynced: !!existingProject.ghlOpportunityId,
+  customFieldsUpdated: !!existingProject.ghlOpportunityId
+});
     
-    if (!result.value) {
-      console.error('❌ Project not found during MongoDB update');
-      return res.status(404).json({ error: 'Project not found during update' });
-    }
-
-    console.log('✅ MongoDB update successful');
-
-    return res.status(200).json({
-      success: true,
-      project: result.value,
-      ghlSynced: !!existingProject.ghlOpportunityId,
-      customFieldsUpdated: !!existingProject.ghlOpportunityId
-    });
 
   } catch (error) {
     console.error('❌ [API] Error updating project:', error);
