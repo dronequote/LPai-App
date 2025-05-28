@@ -122,7 +122,7 @@ async function getEnhancedProject(db: any, id: string, locationId: string, res: 
             { time: { $gt: now } }
           ],
           status: { $ne: 'cancelled' }
-        }).sort({ $or: [{ start: 1 }, { time: 1 }] }).limit(3).toArray();
+        }).sort({ start: 1 }).limit(3).toArray();
       } catch (err) {
         console.warn('⚠️ Failed to fetch appointments:', err);
       }
@@ -235,18 +235,39 @@ async function updateProjectWithSmartSync(db: any, id: string, locationId: strin
       // ✅ NEW: Get related quote data for custom fields
       let quoteData = null;
       try {
+        // First try by quoteId if it exists
         if (updateData.quoteId || existingProject.quoteId) {
           const quoteId = updateData.quoteId || existingProject.quoteId;
-          console.log('📄 [API] Looking for quote:', quoteId);
+          console.log('📄 [API] Looking for quote by quoteId:', quoteId);
           quoteData = await db.collection('quotes').findOne({
             _id: new ObjectId(quoteId),
             locationId: locationId
           });
-          console.log('📋 [GHL Update] Found quote data for custom fields:', {
-            quoteNumber: quoteData?.quoteNumber,
-            quoteId: quoteData?._id,
-            total: quoteData?.total
+        }
+        
+        // ✅ FIX: If no quote found by quoteId, look up by projectId
+        if (!quoteData && existingProject._id) {
+          console.log('📄 [API] No quote found by quoteId, looking up by projectId:', existingProject._id.toString());
+          quoteData = await db.collection('quotes').findOne({
+            projectId: existingProject._id.toString(),
+            locationId: locationId,
+            status: { $ne: 'deleted' }
+          }, {
+            sort: { createdAt: -1 } // Get the most recent quote
           });
+          
+          if (quoteData) {
+            console.log('✅ [API] Found quote by projectId:', {
+              quoteNumber: quoteData.quoteNumber,
+              quoteId: quoteData._id,
+              total: quoteData.total,
+              status: quoteData.status
+            });
+          }
+        }
+        
+        if (!quoteData) {
+          console.warn('⚠️ [API] No quote found for project');
         }
       } catch (err) {
         console.warn('⚠️ [GHL Update] Could not fetch quote data:', err);
@@ -260,7 +281,7 @@ async function updateProjectWithSmartSync(db: any, id: string, locationId: strin
       const ghlPayload = {
         name: updateData.title || existingProject.title,
         status: updateData.status || 'won', // Default to 'won' for signed contracts
-        monetaryValue: quoteData?.total || existingProject.monetaryValue || 0, // Use quote total
+        monetaryValue: quoteData?.total || existingProject.monetaryValue || 0, // ✅ Use quote total
         customFields: customFields
       };
 
@@ -328,14 +349,16 @@ async function updateProjectWithSmartSync(db: any, id: string, locationId: strin
       updatedAt: new Date()
     };
 
+    // ✅ FIX: Remove locationId from the filter to prevent 404
     const result = await db.collection('projects').findOneAndUpdate(
       { 
-        _id: new ObjectId(id),
-        locationId: existingProject.locationId  // Use the project's actual locationId
+        _id: new ObjectId(id)
+        // Removed locationId from here since we already verified it exists
       },
       { $set: finalUpdateData },
       { returnDocument: 'after' }
     );
+    
     if (!result.value) {
       console.error('❌ Project not found during MongoDB update');
       return res.status(404).json({ error: 'Project not found during update' });
@@ -356,7 +379,7 @@ async function updateProjectWithSmartSync(db: any, id: string, locationId: strin
   }
 }
 
-// ✅ UPDATED: Build custom fields with location-specific IDs and KEYS
+// ✅ Build custom fields with location-specific IDs and KEYS
 async function buildCustomFields(
   db: any,
   locationId: string,
@@ -372,7 +395,9 @@ async function buildCustomFields(
   console.log('🔧 [Custom Fields] Update data:', {
     title: updateData.title,
     signedDate: updateData.signedDate,
-    hasQuoteData: !!quoteData
+    hasQuoteData: !!quoteData,
+    quoteTotal: quoteData?.total,
+    quoteNumber: quoteData?.quoteNumber
   });
   
   if (!customFieldIds) {
@@ -387,7 +412,7 @@ async function buildCustomFields(
     customFields.push({
       id: customFieldIds.project_title,
       key: "project_title",
-      field_value: updateData.title || existingProject.title  // ✅ CHANGED to field_value
+      field_value: updateData.title || existingProject.title
     });
   }
   
@@ -396,7 +421,7 @@ async function buildCustomFields(
     customFields.push({
       id: customFieldIds.quote_number,
       key: "quote_number",
-      field_value: quoteData.quoteNumber  // ✅ CHANGED to field_value
+      field_value: quoteData.quoteNumber
     });
   }
   
@@ -405,7 +430,7 @@ async function buildCustomFields(
     customFields.push({
       id: customFieldIds.signed_date,
       key: "signed_date",
-      field_value: updateData.signedDate  // ✅ CHANGED to field_value
+      field_value: updateData.signedDate
     });
   }
   
@@ -413,7 +438,7 @@ async function buildCustomFields(
   return customFields;
 }
 
-// ✅ UPDATED: Helper function to use location-specific field IDs
+// ✅ Helper function to use location-specific field IDs
 export async function updateOpportunityCustomFields(
   db: any, 
   projectId: string, 

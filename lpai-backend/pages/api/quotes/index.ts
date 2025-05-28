@@ -207,6 +207,20 @@ async function createQuote(db: any, body: any, res: NextApiResponse) {
     const result = await db.collection('quotes').insertOne(newQuote);
     const createdQuote = { ...newQuote, _id: result.insertedId };
     
+    // ✅ NEW: Update the project with the quote ID
+    if (projectId) {
+      try {
+        await db.collection('projects').updateOne(
+          { _id: new ObjectId(projectId) },
+          { $set: { quoteId: result.insertedId.toString() } }
+        );
+        console.log(`[QUOTES API] Updated project ${projectId} with quote ID ${result.insertedId}`);
+      } catch (err) {
+        console.warn(`[QUOTES API] Failed to update project with quote ID:`, err);
+        // Don't fail the quote creation if this update fails
+      }
+    }
+    
     console.log(`[QUOTES API] Created quote ${quoteNumber} for project ${projectId}`);
     return res.status(201).json(createdQuote);
     
