@@ -2,6 +2,32 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
 import axios from 'axios';
 
+// Helper function to format phone to E.164
+function formatPhoneToE164(phone: string): string {
+  if (!phone) return '';
+  
+  // Remove all non-digits
+  const cleaned = phone.replace(/\D/g, '');
+  
+  // If already has country code (11+ digits starting with 1)
+  if (cleaned.length === 11 && cleaned.startsWith('1')) {
+    return '+' + cleaned;
+  }
+  
+  // If 10 digits, assume US
+  if (cleaned.length === 10) {
+    return '+1' + cleaned;
+  }
+  
+  // If already formatted with +
+  if (phone.startsWith('+')) {
+    return phone;
+  }
+  
+  // Default to adding +1
+  return '+1' + cleaned;
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const client = await clientPromise;
   const db = client.db('lpai');
@@ -49,11 +75,15 @@ async function handleCreateContact(req: NextApiRequest, res: NextApiResponse, db
 
   try {
     const now = new Date();
+    
+    // Format phone number to E.164
+    const formattedPhone = formatPhoneToE164(phone);
+    
     const newContact = {
       firstName,
       lastName,
       email,
-      phone,
+      phone: formattedPhone, // Use formatted phone
       notes,
       address,
       locationId,
@@ -86,7 +116,7 @@ async function handleCreateContact(req: NextApiRequest, res: NextApiResponse, db
       firstName,
       lastName,
       email,
-      phone,
+      phone: formattedPhone, // Use formatted phone for GHL
       address1: address,
       locationId,
       // notes, // Uncomment if using mapped custom field for notes

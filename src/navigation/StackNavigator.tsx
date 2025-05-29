@@ -21,6 +21,7 @@ import QuoteBuilderScreen from '../screens/QuoteBuilderScreen';
 import QuoteEditorScreen from '../screens/QuoteEditorScreen';
 import QuotePresentationScreen from '../screens/QuotePresentationScreen';
 import SignatureScreen from '../screens/SignatureScreen';
+import PaymentWebView from '../screens/PaymentWebView';
 import { Contact, Project, Quote } from '../../packages/types/dist';
 
 interface QuoteTemplate {
@@ -95,6 +96,13 @@ export type RootStackParamList = {
     quote: Quote;
     template: QuoteTemplate;
   };
+  PaymentWebView: {
+    paymentUrl: string;
+    paymentId: string;
+    amount: number;
+    onSuccess?: () => void;
+    onCancel?: () => void;
+  };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -127,6 +135,7 @@ export default function StackNavigator() {
       <Stack.Screen name="QuoteEditor" component={QuoteEditorScreen} />
       <Stack.Screen name="QuotePresentation" component={QuotePresentationScreen} />
       <Stack.Screen name="SignatureScreen" component={SignatureScreen} />
+      <Stack.Screen name="PaymentWebView" component={PaymentWebView} />
     </Stack.Navigator>
   );
 }

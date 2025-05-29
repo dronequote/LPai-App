@@ -17,9 +17,15 @@ import { useAuth } from '../contexts/AuthContext';
 import api from '../lib/api';
 import emailService from '../services/emailService';
 import SignatureCanvas from '../components/SignatureCanvas';
+import PhotoCaptureModal from '../components/PhotoCaptureModal'; // ADD THIS IMPORT
 import { COLORS, FONT, RADIUS, SHADOW } from '../styles/theme';
+import { StackNavigationProp } from '@react-navigation/stack';
+import { RootStackParamList } from '../navigation/StackNavigator';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+// Add type for navigation
+type SignatureScreenNavigationProp = StackNavigationProp<RootStackParamList, 'SignatureScreen'>;
 
 const STEPS = [
   { id: 1, title: 'Review', icon: 'document-text' },
@@ -30,7 +36,7 @@ const STEPS = [
 
 export default function SignatureScreen() {
   const route = useRoute();
-  const navigation = useNavigation();
+  const navigation = useNavigation<SignatureScreenNavigationProp>();
   const { user } = useAuth();
   
   const { quote, template } = route.params || {};
@@ -59,6 +65,11 @@ export default function SignatureScreen() {
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState(null);
   const [savingPaymentPreference, setSavingPaymentPreference] = useState(false);
 
+  // Add state for photo modal
+  const [showPhotoModal, setShowPhotoModal] = useState(false);
+  const [manualPaymentId, setManualPaymentId] = useState(null);
+  const [manualInvoiceId, setManualInvoiceId] = useState(null);
+  
   // Load company data on mount
   useEffect(() => {
     loadCompanyData();
@@ -326,6 +337,125 @@ export default function SignatureScreen() {
     }
   };
 
+  // Add card payment handler
+  const handleCardPayment = async () => {
+    try {
+      setLoading(true);
+      
+      // Create payment link via API
+      const response = await api.post('/api/payments/create-link', {
+        projectId: quote.projectId || quote.project?._id,
+        quoteId: quote._id,
+        contactId: quote.contactId || quote.contact?._id,
+        locationId: user.locationId,
+        amount: quote.depositAmount,
+        description: `Deposit for ${quote.quoteNumber}`,
+        type: 'deposit',
+        userId: user._id
+      });
+      
+      if (response.data.success && response.data.paymentUrl) {
+        // Navigate to payment WebView
+        navigation.navigate('PaymentWebView', {
+          paymentUrl: response.data.paymentUrl,
+          paymentId: response.data.paymentId,
+          amount: response.data.amount,
+          onSuccess: () => {
+            // Payment completed successfully
+            if (quote.project) {
+              navigation.navigate('ProjectDetailScreen', { 
+                project: quote.project 
+              });
+            } else {
+              navigation.navigate('Projects');
+            }
+          },
+          onCancel: () => {
+            // Payment was cancelled
+            Alert.alert('Payment Cancelled', 'The payment was not completed.');
+          }
+        });
+      } else {
+        throw new Error('Failed to create payment link');
+      }
+      
+    } catch (error) {
+      console.error('[SignatureScreen] Failed to create payment link:', error);
+      Alert.alert('Error', 'Failed to create payment link. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle payment method selection
+  const handlePaymentMethodSelect = async (method: string) => {
+    setSelectedPaymentMethod(method);
+    setSavingPaymentPreference(true);
+    
+    try {
+      // Save payment preference to project
+      const projectId = quote.projectId || quote.project?._id;
+      
+      if (projectId) {
+        await api.patch(
+          `/api/projects/${projectId}?locationId=${user.locationId}`,
+          {
+            paymentPreference: method,
+            depositExpected: quote.depositAmount > 0,
+            depositAmount: quote.depositAmount || 0
+          }
+        );
+      }
+      
+      console.log('Payment preference saved:', method);
+      
+      if (method === 'card') {
+        // Existing card payment flow
+        await handleCardPayment();
+      } else if (method === 'check' || method === 'cash') {
+        // Create invoice (or get existing one)
+        const response = await api.post('/api/payments/create-link', {
+          projectId: quote.projectId || quote.project?._id,
+          quoteId: quote._id,
+          contactId: quote.contactId || quote.contact?._id,
+          locationId: user.locationId,
+          amount: quote.depositAmount,
+          description: `Deposit for ${quote.quoteNumber}`,
+          type: 'deposit',
+          userId: user._id
+        });
+        
+        if (response.data.success) {
+          // Handle both new and existing invoices
+          console.log('Invoice response:', response.data);
+          
+          // Extract the GHL invoice ID from the URL if not provided directly
+          let ghlInvoiceId = response.data.ghlInvoiceId;
+          if (!ghlInvoiceId && response.data.paymentUrl) {
+            // Extract from URL: https://updates.leadprospecting.ai/invoice/[ID]
+            const match = response.data.paymentUrl.match(/\/invoice\/([a-f0-9]+)$/);
+            if (match) {
+              ghlInvoiceId = match[1];
+            }
+          }
+          
+          // Store invoice info for photo capture
+          setManualPaymentId(response.data.paymentId);
+          setManualInvoiceId(ghlInvoiceId);
+          setShowPhotoModal(true);
+        } else {
+          throw new Error(response.data.error || 'Failed to create invoice');
+        }
+      }
+      
+    } catch (error) {
+      console.error('Failed to process payment:', error);
+      Alert.alert('Error', error.message || 'Failed to process payment selection');
+    } finally {
+      setSavingPaymentPreference(false);
+    }
+  };
+
   const renderProgressIndicator = () => (
     <View style={styles.progressContainer}>
       {STEPS.map((step, index) => (
@@ -433,30 +563,7 @@ export default function SignatureScreen() {
       </View>
     );
   };
-// Add this function before renderCompleteStep
-const handlePaymentMethodSelect = async (method) => {
-  setSelectedPaymentMethod(method);
-  setSavingPaymentPreference(true);
-  
-  try {
-    // Save payment preference to project
-    const response = await api.patch(
-      `/projects/${quote.projectId}?locationId=${user.locationId}`,
-      {
-        paymentPreference: method,
-        depositExpected: quote.depositAmount > 0,
-        depositAmount: quote.depositAmount || 0
-      }
-    );
-    
-    console.log('Payment preference saved:', method);
-  } catch (error) {
-    console.error('Failed to save payment preference:', error);
-    Alert.alert('Error', 'Failed to save payment preference');
-  } finally {
-    setSavingPaymentPreference(false);
-  }
-};
+
   // ✅ UPDATED: Complete step with opportunity and email status
   const renderCompleteStep = () => (
     <ScrollView style={styles.stepContent} showsVerticalScrollIndicator={false}>
@@ -494,7 +601,7 @@ const handlePaymentMethodSelect = async (method) => {
             ) : opportunityUpdated ? (
               <>
                 <Ionicons name="checkmark-circle-outline" size={24} color="#27ae60" />
-                <Text style={styles.completedText}>GHL opportunity synchronized</Text>
+                <Text style={styles.completedText}>Project Updating</Text>
               </>
             ) : opportunityError ? (
               <>
@@ -535,87 +642,126 @@ const handlePaymentMethodSelect = async (method) => {
           </View>
         </View>
 
-        <View style={styles.nextSteps}>
-          <Text style={styles.nextStepsTitle}>What's Next?</Text>
-          <Text style={styles.nextStepsText}>
-            {emailSent 
-              ? `Your customer will receive a copy of the signed contract via email. ${opportunityUpdated ? 'The project details have been synchronized with your CRM. ' : ''}You can now begin work on ${quote?.projectTitle || 'the project'}.`
-              : `The signed contract is ready and will be emailed to your customer. ${opportunityUpdated ? 'Project details have been updated in your CRM. ' : ''}You can now begin work on ${quote?.projectTitle || 'the project'}.`
-            }
-          </Text>
-        </View>
-            
-        // Add this BEFORE the "Continue to Project" button in renderCompleteStep
+        {/* Conditionally show either What's Next or Payment Card/Options */}
+        {quote?.depositAmount > 0 ? (
+          // Has deposit requirement
+          <>
+            {!showPaymentOptions && !selectedPaymentMethod ? (
+              // Show payment required card
+              <TouchableOpacity 
+                style={styles.paymentRequiredCard}
+                onPress={() => setShowPaymentOptions(true)}
+                activeOpacity={0.9}
+              >
+                <View style={styles.paymentCardHeader}>
+                  <View style={styles.paymentCardMain}>
+                    <Text style={styles.paymentCardAmount}>${quote.depositAmount.toFixed(2)} Deposit Required</Text>
+                    <Text style={styles.paymentCardSubtext}>Select payment method to continue</Text>
+                  </View>
+                  <Ionicons name="card-outline" size={32} color={template?.styling?.primaryColor || '#2E86AB'} />
+                </View>
+              </TouchableOpacity>
+            ) : showPaymentOptions ? (
+              // Show payment options
+              <View style={styles.paymentOptionsContainer}>
+                <Text style={styles.paymentOptionsTitle}>
+                  How would you like to collect the ${quote.depositAmount.toFixed(2)} deposit?
+                </Text>
+                
+                <TouchableOpacity 
+                  style={[
+                    styles.paymentOption,
+                    selectedPaymentMethod === 'card' && styles.selectedPaymentOption
+                  ]}
+                  onPress={() => handlePaymentMethodSelect('card')}
+                  disabled={savingPaymentPreference}
+                >
+                  <Ionicons name="card-outline" size={24} color="#2E86AB" />
+                  <Text style={styles.paymentOptionText}>Pay with Card</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  style={[
+                    styles.paymentOption,
+                    selectedPaymentMethod === 'check' && styles.selectedPaymentOption
+                  ]}
+                  onPress={() => handlePaymentMethodSelect('check')}
+                  disabled={savingPaymentPreference}
+                >
+                  <Ionicons name="document-text-outline" size={24} color="#2E86AB" />
+                  <Text style={styles.paymentOptionText}>Pay by Check</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  style={[
+                    styles.paymentOption,
+                    selectedPaymentMethod === 'cash' && styles.selectedPaymentOption
+                  ]}
+                  onPress={() => handlePaymentMethodSelect('cash')}
+                  disabled={savingPaymentPreference}
+                >
+                  <Ionicons name="cash-outline" size={24} color="#2E86AB" />
+                  <Text style={styles.paymentOptionText}>Pay with Cash</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              // Payment method selected, show What's Next
+              <View style={styles.nextSteps}>
+                <Text style={styles.nextStepsTitle}>What's Next?</Text>
+                <Text style={styles.nextStepsText}>
+                  {emailSent 
+                    ? `Your customer will receive a copy of the signed contract via email. ${opportunityUpdated ? 'The project details have been synchronized with your CRM. ' : ''}You can now begin work on ${quote?.projectTitle || 'the project'}.`
+                    : `The signed contract is ready and will be emailed to your customer. ${opportunityUpdated ? 'Project details have been updated in your CRM. ' : ''}You can now begin work on ${quote?.projectTitle || 'the project'}.`
+                  }
+                </Text>
+              </View>
+            )}
+          </>
+        ) : (
+          // No deposit required - show What's Next
+          <View style={styles.nextSteps}>
+            <Text style={styles.nextStepsTitle}>What's Next?</Text>
+            <Text style={styles.nextStepsText}>
+              {emailSent 
+                ? `Your customer will receive a copy of the signed contract via email. ${opportunityUpdated ? 'The project details have been synchronized with your CRM. ' : ''}You can now begin work on ${quote?.projectTitle || 'the project'}.`
+                : `The signed contract is ready and will be emailed to your customer. ${opportunityUpdated ? 'Project details have been updated in your CRM. ' : ''}You can now begin work on ${quote?.projectTitle || 'the project'}.`
+              }
+            </Text>
+          </View>
+        )}
 
-{/* Payment Preference Section - Only show if there's a deposit */}
-{quote?.depositAmount > 0 && !showPaymentOptions && (
-  <TouchableOpacity 
-    style={[
-      styles.continueButton, 
-      { 
-        backgroundColor: '#4CAF50',
-        marginBottom: 10 
-      }
-    ]}
-    onPress={() => setShowPaymentOptions(true)}
-  >
-    <Text style={styles.continueButtonText}>
-      Select Payment Method (${quote.depositAmount} Deposit)
-    </Text>
-  </TouchableOpacity>
-)}
+        {/* Continue button - show when no deposit required OR payment method selected */}
+        {(!quote?.depositAmount || selectedPaymentMethod) && (
+          <TouchableOpacity 
+            style={[styles.continueButton, { backgroundColor: template?.styling?.primaryColor || '#2E86AB' }]}
+            onPress={handleContinue}
+          >
+            <Text style={styles.continueButtonText}>Continue to Project</Text>
+          </TouchableOpacity>
+        )}
 
-{/* Payment Options */}
-{showPaymentOptions && (
-  <View style={styles.paymentOptionsContainer}>
-    <Text style={styles.paymentOptionsTitle}>
-      How would you like to pay the ${quote.depositAmount} deposit?
-    </Text>
-    
-    <TouchableOpacity 
-      style={[
-        styles.paymentOption,
-        selectedPaymentMethod === 'card' && styles.selectedPaymentOption
-      ]}
-      onPress={() => handlePaymentMethodSelect('card')}
-      disabled={savingPaymentPreference}
-    >
-      <Ionicons name="card-outline" size={24} color="#2E86AB" />
-      <Text style={styles.paymentOptionText}>Pay with Card</Text>
-    </TouchableOpacity>
-    
-    <TouchableOpacity 
-      style={[
-        styles.paymentOption,
-        selectedPaymentMethod === 'check' && styles.selectedPaymentOption
-      ]}
-      onPress={() => handlePaymentMethodSelect('check')}
-      disabled={savingPaymentPreference}
-    >
-      <Ionicons name="document-text-outline" size={24} color="#2E86AB" />
-      <Text style={styles.paymentOptionText}>Pay by Check</Text>
-    </TouchableOpacity>
-    
-    <TouchableOpacity 
-      style={[
-        styles.paymentOption,
-        selectedPaymentMethod === 'cash' && styles.selectedPaymentOption
-      ]}
-      onPress={() => handlePaymentMethodSelect('cash')}
-      disabled={savingPaymentPreference}
-    >
-      <Ionicons name="cash-outline" size={24} color="#2E86AB" />
-      <Text style={styles.paymentOptionText}>Pay with Cash</Text>
-    </TouchableOpacity>
-  </View>
-)}
-
-        <TouchableOpacity 
-          style={[styles.continueButton, { backgroundColor: template?.styling?.primaryColor || '#2E86AB' }]}
-          onPress={handleContinue}
-        >
-          <Text style={styles.continueButtonText}>Continue to Project</Text>
-        </TouchableOpacity>
+        {/* ADD THE PHOTO CAPTURE MODAL HERE */}
+        {showPhotoModal && (
+          <PhotoCaptureModal
+            visible={showPhotoModal}
+            onClose={() => setShowPhotoModal(false)}
+            paymentId={manualPaymentId}
+            invoiceId={manualInvoiceId}
+            paymentMethod={selectedPaymentMethod}
+            amount={quote.depositAmount}
+            locationId={user.locationId}
+            onSuccess={() => {
+              setShowPhotoModal(false);
+              if (quote.project) {
+                navigation.navigate('ProjectDetailScreen', { 
+                  project: quote.project 
+                });
+              } else {
+                navigation.navigate('Projects');
+              }
+            }}
+          />
+        )}
       </View>
     </ScrollView>
   );
@@ -905,33 +1051,63 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   paymentOptionsContainer: {
-  marginVertical: 20,
-  padding: 20,
-  backgroundColor: '#f5f5f5',
-  borderRadius: 10,
-},
-paymentOptionsTitle: {
-  fontSize: 16,
-  fontWeight: 'bold',
-  marginBottom: 15,
-  textAlign: 'center',
-},
-paymentOption: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  padding: 15,
-  backgroundColor: 'white',
-  borderRadius: 8,
-  marginBottom: 10,
-  borderWidth: 1,
-  borderColor: '#ddd',
-},
-selectedPaymentOption: {
-  borderColor: '#2E86AB',
-  backgroundColor: '#f0f8ff',
-},
-paymentOptionText: {
-  marginLeft: 10,
-  fontSize: 16,
-},
+    marginVertical: 20,
+    padding: 20,
+    backgroundColor: '#f5f5f5',
+    borderRadius: 10,
+  },
+  paymentOptionsTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 15,
+    textAlign: 'center',
+  },
+  paymentOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 15,
+    backgroundColor: 'white',
+    borderRadius: 8,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  selectedPaymentOption: {
+    borderColor: '#2E86AB',
+    backgroundColor: '#f0f8ff',
+  },
+  paymentOptionText: {
+    marginLeft: 10,
+    fontSize: 16,
+  },
+  // Add these to the styles object:
+  paymentRequiredCard: {
+    backgroundColor: '#fff',
+    borderRadius: RADIUS.card,
+    padding: 20,
+    marginBottom: 30,
+    width: '100%',
+    ...SHADOW.card,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  paymentCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  paymentCardMain: {
+    flex: 1,
+    paddingRight: 16,
+  },
+  paymentCardAmount: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1f2937',
+    marginBottom: 4,
+  },
+  paymentCardSubtext: {
+    fontSize: FONT.input,
+    color: '#6b7280',
+  },
 });

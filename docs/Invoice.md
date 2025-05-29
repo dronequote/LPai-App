@@ -1,3 +1,133 @@
+Payment & Invoicing System Scaffold
+1. Payment Flow from Signature Screen (Priority 1)
+After signatures are complete and deposit is required:
+SignatureScreen (Complete Step)
+    ↓
+Payment Method Selection (Card/Check/Cash)
+    ↓
+Card → GHL Payment Link (WebView)
+Check/Cash → Photo Capture → Manual Verification
+    ↓
+Payment Record Created (MongoDB + GHL)
+    ↓
+Continue to Project
+2. API Endpoints Needed
+typescript// Payment endpoints
+POST   /api/payments/create-link       // Create GHL payment link
+POST   /api/payments/create            // Record payment in MongoDB
+PATCH  /api/payments/[id]/verify       // Verify check/cash payment
+POST   /api/payments/upload-proof      // Upload photo for manual payments
+
+// Invoice endpoints  
+POST   /api/invoices/create           // Create invoice
+GET    /api/invoices/[id]             // Get invoice details
+POST   /api/invoices/[id]/send        // Send invoice via email
+GET    /api/invoices/by-project       // List invoices for a project
+3. Database Schema
+typescript// payments collection
+{
+  _id: ObjectId,
+  projectId: ObjectId,
+  quoteId: ObjectId,
+  invoiceId?: ObjectId,  // Optional, for invoice payments
+  locationId: String,
+  contactId: ObjectId,
+  
+  amount: Number,
+  type: "deposit" | "progress" | "final",
+  method: "card" | "check" | "cash",
+  
+  status: "pending" | "completed" | "failed" | "verified",
+  
+  // For card payments
+  ghlPaymentLinkId?: String,
+  ghlPaymentLinkUrl?: String,
+  ghlTransactionId?: String,
+  
+  // For manual payments
+  proofPhotoUrl?: String,      // GridFS reference
+  verifiedBy?: ObjectId,       // User who verified
+  verifiedAt?: Date,
+  checkNumber?: String,
+  
+  createdAt: Date,
+  createdBy: ObjectId,
+  completedAt?: Date
+}
+
+// invoices collection
+{
+  _id: ObjectId,
+  invoiceNumber: String,        // INV-2025-001
+  
+  projectId: ObjectId,
+  quoteId?: ObjectId,
+  contactId: ObjectId,
+  locationId: String,
+  
+  type: "deposit" | "progress" | "final" | "custom",
+  
+  lineItems: [{
+    description: String,
+    amount: Number,
+    quantity: Number,
+    total: Number
+  }],
+  
+  subtotal: Number,
+  taxRate: Number,
+  taxAmount: Number,
+  total: Number,
+  
+  // Payment tracking
+  amountPaid: Number,
+  balance: Number,
+  payments: [ObjectId],  // References to payment records
+  
+  status: "draft" | "sent" | "viewed" | "partial" | "paid" | "overdue",
+  
+  // Dates
+  issueDate: Date,
+  dueDate: Date,
+  sentAt?: Date,
+  viewedAt?: Date,
+  paidAt?: Date,
+  
+  // PDF storage
+  pdfFileId?: ObjectId,
+  pdfUrl?: String,
+  
+  // GHL sync
+  ghlInvoiceId?: String,
+  
+  createdAt: Date,
+  createdBy: ObjectId,
+  updatedAt: Date
+}
+4. Implementation Order
+Phase 1: Deposit Payment (Current Focus)
+
+Update SignatureScreen to handle payment selection
+Create /api/payments/create-link for GHL payment links
+Add PaymentWebView component for card payments
+Add PhotoCapture for check/cash
+Create /api/payments/create to record payments
+
+Phase 2: Invoice Creation from Projects
+
+Create InvoiceCreationModal component
+Implement /api/invoices/create
+Add invoice list to ProjectDetailScreen
+Create invoice PDF generation
+
+Phase 3: Invoice Delivery & Tracking
+
+Email invoice with payment link
+Track invoice views and payments
+Update project/quote status
+
+Would you like me to start with implementing the payment flow from the SignatureScreen? I can create the first API endpoint for creating GHL payment links.
+
 1. Update Signature Screen - Add Payment Preference Step
 After the success checkmarks, add a payment preference section:
 javascript// In SignatureScreen.tsx, update the renderCompleteStep function:
