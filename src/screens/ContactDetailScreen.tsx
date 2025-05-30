@@ -22,7 +22,7 @@ import CompactAppointmentCard from '../components/CompactAppointmentCard';
 import ProjectCard from '../components/ProjectCard';
 import CreateAppointmentModal from '../components/CreateAppointmentModal';
 import AddProjectForm from '../components/AddProjectForm';
-import type { Contact, Project, Appointment } from '@lpai/types';
+import type { Contact, Project, Appointment } from '@lp-ai/types';
 
 type ContactDetailRouteParams = {
   contact: Contact;

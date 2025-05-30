@@ -17,7 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../lib/api';
 import { COLORS, FONT, RADIUS, SHADOW } from '../styles/theme';
-import type { Project, Quote, Contact } from '@lpai/types';
+import type { Project, Quote, Contact } from '@lp-ai/types';
 
 type QuoteBuilderScreenProps = {
   navigation: any;
