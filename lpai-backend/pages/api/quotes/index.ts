@@ -3,6 +3,12 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
 
+// Helper for environment-aware logging
+const isDev = process.env.NODE_ENV === 'development';
+const log = (...args: any[]) => {
+  if (isDev) console.log(...args);
+};
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const client = await clientPromise;
   const db = client.db('lpai');
@@ -34,7 +40,7 @@ async function getQuotes(db: any, query: any, res: NextApiResponse) {
     if (status) filter.status = status;
     if (userId) filter.userId = userId;
     
-    console.log(`[QUOTES API] Fetching quotes with filter:`, filter);
+    log(`[QUOTES API] Fetching quotes with filter:`, filter);
     
     const quotes = await db.collection('quotes')
       .find(filter)
@@ -63,7 +69,7 @@ async function getQuotes(db: any, query: any, res: NextApiResponse) {
             projectTitle: project?.title || 'Unknown Project',
           };
         } catch (err) {
-          console.warn(`[QUOTES API] Failed to enrich quote ${quote._id}:`, err);
+          log(`[QUOTES API] Failed to enrich quote ${quote._id}:`, err);
           return {
             ...quote,
             contactName: 'Unknown Contact',
@@ -73,7 +79,7 @@ async function getQuotes(db: any, query: any, res: NextApiResponse) {
       })
     );
     
-    console.log(`[QUOTES API] Found ${enrichedQuotes.length} quotes`);
+    log(`[QUOTES API] Found ${enrichedQuotes.length} quotes`);
     return res.status(200).json(enrichedQuotes);
     
   } catch (error) {
@@ -210,12 +216,32 @@ async function createQuote(db: any, body: any, res: NextApiResponse) {
       depositType,
       depositValue,
       depositAmount: calculatedDepositAmount,
+      // Initialize payment summary
+      paymentSummary: {
+        totalRequired: total,
+        depositRequired: calculatedDepositAmount,
+        depositPaid: 0,
+        totalPaid: 0,
+        balance: total,
+        paymentIds: [],
+        lastPaymentAt: null
+      },
       status: 'draft' as const,
       version: 1,
       validUntil: validUntil ? new Date(validUntil) : undefined,
       termsAndConditions,
       paymentTerms,
       notes,
+      activityFeed: [{
+        action: 'created',
+        timestamp: new Date().toISOString(),
+        userId,
+        metadata: {
+          quoteNumber,
+          total,
+          depositAmount: calculatedDepositAmount
+        }
+      }],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -223,21 +249,43 @@ async function createQuote(db: any, body: any, res: NextApiResponse) {
     const result = await db.collection('quotes').insertOne(newQuote);
     const createdQuote = { ...newQuote, _id: result.insertedId };
     
-    // ✅ NEW: Update the project with the quote ID
+    // ✅ NEW: Update the project with the quote ID and timeline
     if (projectId) {
       try {
         await db.collection('projects').updateOne(
           { _id: new ObjectId(projectId) },
-          { $set: { quoteId: result.insertedId.toString() } }
+          { 
+            $set: { 
+              quoteId: result.insertedId.toString(),
+              activeQuoteId: result.insertedId.toString(),
+              hasQuote: true,
+              updatedAt: new Date()
+            },
+            $push: {
+              timeline: {
+                id: new ObjectId().toString(),
+                event: 'quote_created',
+                description: `Quote ${quoteNumber} created for $${total.toFixed(2)}`,
+                timestamp: new Date().toISOString(),
+                userId,
+                metadata: {
+                  quoteId: result.insertedId.toString(),
+                  quoteNumber,
+                  total,
+                  depositAmount: calculatedDepositAmount
+                }
+              }
+            }
+          }
         );
-        console.log(`[QUOTES API] Updated project ${projectId} with quote ID ${result.insertedId}`);
+        log(`[QUOTES API] Updated project ${projectId} with quote ID ${result.insertedId}`);
       } catch (err) {
-        console.warn(`[QUOTES API] Failed to update project with quote ID:`, err);
+        console.error(`[QUOTES API] Failed to update project with quote ID:`, err);
         // Don't fail the quote creation if this update fails
       }
     }
     
-    console.log(`[QUOTES API] Created quote ${quoteNumber} for project ${projectId}`);
+    log(`[QUOTES API] Created quote ${quoteNumber} for project ${projectId}`);
     return res.status(201).json(createdQuote);
     
   } catch (error) {

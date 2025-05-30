@@ -1,20 +1,28 @@
 // /src/styles/theme.js
 
 export const COLORS = {
-  background: '#F8F9FB',
+  background: '#F5F5F5',
   card: '#fff',
-  accent: '#00B3E6',
-  accentMuted: '#E6F7FB',
-  textDark: '#1A1F36',
-  textGray: '#AAB2BD',
-  textLight: '#B1B5BC',
-  textRed: '#D7263D',
-  calendarSelected: '#00B3E6',
-  border: '#EEE',
-  inputBg: '#F8F9FB',
+  accent: '#1E88E5',        // Professional blue
+  accentDark: '#1565C0',    // Darker blue
+  accentMuted: '#E3F2FD',   // Light blue background
+  textDark: '#212121',      // Almost black for better contrast
+  textGray: '#757575',      // Medium gray
+  textLight: '#9E9E9E',     // Light gray
+  textRed: '#E53935',       // Error/danger red
+  calendarSelected: '#1E88E5', // Match accent
+  border: '#E0E0E0',
+  inputBg: '#F5F5F5',
   shadow: '#000',
-  error: '#D7263D', // (same as textRed)
-  // Add more as needed...
+  error: '#E53935',         // Red
+  success: '#43A047',       // Green
+  warning: '#FB8C00',       // Orange
+  
+  // Action button colors - professional palette
+  actionPhoto: '#1E88E5',    // Blue
+  actionQuote: '#43A047',    // Green
+  actionPayment: '#7B1FA2',  // Purple
+  actionSchedule: '#FB8C00', // Orange
 };
 
 export const FONT = {

@@ -4,6 +4,12 @@ import clientPromise from '../../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
 import crypto from 'crypto';
 
+// Helper for environment-aware logging
+const isDev = process.env.NODE_ENV === 'development';
+const log = (...args: any[]) => {
+  if (isDev) console.log(...args);
+};
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -67,9 +73,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       webLinkToken: originalQuote.webLinkToken, // SAME WEB LINK!
       webLinkExpiry: originalQuote.webLinkExpiry,
       
-      // Clear signature data
+      // Clear signature data and payment data for new revision
       signatures: null,
       signedPdfUrl: null,
+      paymentSummary: {
+        totalRequired: revisionData?.total || originalQuote.total || 0,
+        depositRequired: revisionData?.depositAmount || originalQuote.depositAmount || 0,
+        depositPaid: 0,
+        totalPaid: 0,
+        balance: revisionData?.total || originalQuote.total || 0,
+        paymentIds: [],
+        lastPaymentAt: null
+      },
       
       // Update with revision data if provided
       ...revisionData,
@@ -126,12 +141,48 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     );
 
+    // Update project timeline if project exists
+    if (originalQuote.projectId) {
+      try {
+        await db.collection('projects').updateOne(
+          { _id: new ObjectId(originalQuote.projectId) },
+          {
+            $push: {
+              timeline: {
+                id: new ObjectId().toString(),
+                event: 'quote_revised',
+                description: `Quote revised to version ${nextVersion} (${revisionQuoteNumber})`,
+                timestamp: now,
+                userId: userId,
+                metadata: {
+                  originalQuoteId: id,
+                  originalQuoteNumber: originalQuote.quoteNumber,
+                  revisionQuoteId: insertResult.insertedId.toString(),
+                  revisionQuoteNumber: revisionQuoteNumber,
+                  version: nextVersion
+                }
+              }
+            },
+            $set: {
+              activeQuoteId: insertResult.insertedId.toString(), // Track active quote
+              updatedAt: new Date()
+            }
+          }
+        );
+
+        log(`[API] Updated project ${originalQuote.projectId} with quote revision`);
+      } catch (projectError) {
+        console.error('[API] Failed to update project after creating quote revision:', projectError);
+        // Don't fail the revision process if project update fails
+      }
+    }
+
     // Fetch the created revision
     const createdRevision = await quotesCollection.findOne({
       _id: insertResult.insertedId
     });
 
-    console.log(`[API] Quote revision ${revisionQuoteNumber} created from ${originalQuote.quoteNumber} by user ${userId}`);
+    log(`[API] Quote revision ${revisionQuoteNumber} created from ${originalQuote.quoteNumber} by user ${userId}`);
 
     // TODO: If notifyCustomer is true, trigger email notification
     // This would integrate with your GHL email system

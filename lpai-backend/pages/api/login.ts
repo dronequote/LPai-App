@@ -1,3 +1,4 @@
+// pages/api/login.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '@/lib/mongodb';
 import jwt from 'jsonwebtoken';
@@ -48,20 +49,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
 
-    // --- FULL USER OBJECT returned to frontend (including role) ---
+    // --- FULL USER OBJECT returned to frontend (including preferences!) ---
     const loginResponse = {
       token,
       userId: user.ghlUserId,
       locationId: user.locationId,
       name: user.name,
       permissions: user.permissions || [],
-      role: user.role || 'user',  // <-- CRITICAL LINE!
+      role: user.role || 'user',
       _id: user._id,
       email: user.email,
+      preferences: user.preferences || {}, // ADD THIS LINE!
     };
 
-    // Debug log (remove in production if you like)
-    console.log('[LOGIN RESPONSE]', loginResponse);
+    // Debug log
+    console.log('[LOGIN RESPONSE]', {
+      ...loginResponse,
+      hasPreferences: !!user.preferences,
+      navigatorOrder: user.preferences?.navigatorOrder,
+    });
 
     return res.status(200).json(loginResponse);
 

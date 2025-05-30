@@ -4,6 +4,12 @@ import clientPromise from '../../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
 import crypto from 'crypto';
 
+// Helper for environment-aware logging
+const isDev = process.env.NODE_ENV === 'development';
+const log = (...args: any[]) => {
+  if (isDev) console.log(...args);
+};
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'PATCH') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -62,6 +68,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     };
 
+    // Initialize payment summary if it doesn't exist
+    const paymentSummaryUpdate = !quote.paymentSummary ? {
+      paymentSummary: {
+        totalRequired: quote.total || 0,
+        depositRequired: quote.depositAmount || 0,
+        depositPaid: 0,
+        totalPaid: 0,
+        balance: quote.total || 0,
+        paymentIds: [],
+        lastPaymentAt: null
+      }
+    } : {};
+
     // Update the quote
     const updateResult = await quotesCollection.updateOne(
       { _id: new ObjectId(id) },
@@ -72,7 +91,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           publishedBy: userId,
           webLinkToken: webLinkToken,
           webLinkExpiry: webLinkExpiry.toISOString(),
-          updatedAt: now
+          updatedAt: now,
+          ...paymentSummaryUpdate
         },
         $push: {
           activityFeed: activityEntry
@@ -84,12 +104,47 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(404).json({ error: 'Quote not found' });
     }
 
+    // Update project timeline if project exists
+    if (quote.projectId) {
+      try {
+        await db.collection('projects').updateOne(
+          { _id: new ObjectId(quote.projectId) },
+          {
+            $push: {
+              timeline: {
+                id: new ObjectId().toString(),
+                event: 'quote_published',
+                description: `Quote ${quote.quoteNumber} published and sent to customer`,
+                timestamp: now,
+                userId: userId,
+                metadata: {
+                  quoteId: id,
+                  quoteNumber: quote.quoteNumber,
+                  webLinkToken: webLinkToken
+                }
+              }
+            },
+            $set: {
+              status: 'quoted',
+              quoteSentAt: now,
+              updatedAt: new Date()
+            }
+          }
+        );
+
+        log(`[API] Updated project ${quote.projectId} with quote published status`);
+      } catch (projectError) {
+        console.error('[API] Failed to update project after publishing quote:', projectError);
+        // Don't fail the publish process if project update fails
+      }
+    }
+
     // Fetch the updated quote
     const updatedQuote = await quotesCollection.findOne({
       _id: new ObjectId(id)
     });
 
-    console.log(`[API] Quote ${quote.quoteNumber} published successfully by user ${userId}`);
+    log(`[API] Quote ${quote.quoteNumber} published successfully by user ${userId}`);
 
     return res.status(200).json({
       success: true,

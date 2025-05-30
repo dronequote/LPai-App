@@ -66,7 +66,7 @@ const actions = [
   { label: 'Projects', icon: 'folder-open-outline', screen: 'Projects' },
   { label: 'Quote Builder', icon: 'construct-outline', screen: 'QuoteBuilder' },
   { label: 'Conversations', icon: 'chatbox-ellipses-outline', screen: 'Conversations' },
-  { label: 'Job Completion', icon: 'checkmark-done-circle-outline', screen: 'JobCompletion' },
+  { label: 'MockDashboard', icon: 'checkmark-done-circle-outline', screen: 'MockDashboard' },
 ];
 
 // --- QUICK ADD OPTIONS ---

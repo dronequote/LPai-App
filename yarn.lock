@@ -5332,6 +5332,17 @@ __metadata:
   languageName: node
   linkType: hard
 
+"expo-linear-gradient@npm:^14.1.4":
+  version: 14.1.4
+  resolution: "expo-linear-gradient@npm:14.1.4"
+  peerDependencies:
+    expo: "*"
+    react: "*"
+    react-native: "*"
+  checksum: 10c0/0ac54e02d5f054d0b8baf32ebfc7af5057f9b6ee2da2c36e3f2bf566b85860a29078a431dc4148bd0f35152008501209fbadb5ced83453ec6a513b949aaf1a6d
+  languageName: node
+  linkType: hard
+
 "expo-linking@npm:~7.1.4":
   version: 7.1.5
   resolution: "expo-linking@npm:7.1.5"
@@ -5342,6 +5353,15 @@ __metadata:
     react: "*"
     react-native: "*"
   checksum: 10c0/ed976f27aab12063702b5e4fca56c564133f01f8efa7e9980b7aa8de17ad987cf8cb7ee9117015672193e9400b785ec289a7553c734cddc807b17495d4551b98
+  languageName: node
+  linkType: hard
+
+"expo-location@npm:~18.1.5":
+  version: 18.1.5
+  resolution: "expo-location@npm:18.1.5"
+  peerDependencies:
+    expo: "*"
+  checksum: 10c0/e054495dd7d30f1b75475dac151f0a7fda60fcd6d8068c41b0cacc0958a62c0270d1f671d6e62a268fc4c5196cbf9195913d9a5d55acb98812e444ca83a46adb
   languageName: node
   linkType: hard
 
@@ -7209,6 +7229,7 @@ __metadata:
     "@react-native-async-storage/async-storage": "npm:^2.1.2"
     "@react-native-community/datetimepicker": "npm:^8.3.0"
     "@react-native-picker/picker": "npm:^2.11.0"
+    "@react-navigation/bottom-tabs": "npm:^7.3.13"
     "@react-navigation/native": "npm:^7.1.9"
     "@react-navigation/native-stack": "npm:^7.3.13"
     "@types/jsonwebtoken": "npm:^9.0.9"
@@ -7221,6 +7242,8 @@ __metadata:
     expo-dev-client: "npm:~5.1.8"
     expo-document-picker: "npm:^13.1.5"
     expo-image-picker: "npm:^16.1.4"
+    expo-linear-gradient: "npm:^14.1.4"
+    expo-location: "npm:~18.1.5"
     expo-status-bar: "npm:~2.2.3"
     expo-web-browser: "npm:~14.1.6"
     jsonwebtoken: "npm:^9.0.2"

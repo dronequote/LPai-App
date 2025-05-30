@@ -6,7 +6,8 @@ import StackNavigator from './src/navigation/StackNavigator';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AuthProvider } from './src/contexts/AuthContext';
 import { Provider as PaperProvider } from 'react-native-paper';
-import { CalendarProvider } from './src/contexts/CalendarContext'; // <-- Add this line
+import { CalendarProvider } from './src/contexts/CalendarContext'; 
+
 
 export default function App() {
   return (

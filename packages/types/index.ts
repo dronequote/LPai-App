@@ -60,6 +60,42 @@ export interface User {
   role: string;
   locationId: string;
   permissions: string[];
+  
+  // Add preferences field
+  preferences?: UserPreferences;
+}
+
+// Add this new interface for preferences
+export interface UserPreferences {
+  // Dashboard customization
+  dashboardType?: 'service' | 'sales' | 'operations' | 'custom';
+  
+  // Navigation customization
+  navigatorOrder?: string[]; // Array of navigation item IDs ['home', 'quotes', 'projects']
+  hiddenNavItems?: string[]; // Items user has explicitly hidden
+  showHomeLabel?: boolean; // Whether to show "Home" label under icon
+  
+  // Widget preferences (for future custom dashboards)
+  customDashboard?: {
+    layout: DashboardWidget[];
+  };
+  
+  // Other preferences
+  theme?: 'light' | 'dark' | 'system';
+  notifications?: {
+    push?: boolean;
+    email?: boolean;
+    sms?: boolean;
+  };
+}
+
+// For custom dashboard widgets (future feature)
+export interface DashboardWidget {
+  id: string;
+  type: string;
+  size: 'full' | 'half' | 'quarter';
+  position: number;
+  config?: Record<string, any>;
 }
 
 export interface Calendar {

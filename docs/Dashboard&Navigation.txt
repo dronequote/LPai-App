@@ -1,0 +1,507 @@
+# LPai App Dashboard & Navigation System Documentation
+
+## Overview
+Transform the LPai app from deep navigation trees to a flexible, role-based dashboard system with customizable navigation that adapts to different user workflows.
+
+## Core Concepts
+
+### 1. Dashboard Types
+Pre-built, optimized dashboards for different roles:
+
+#### **Service Tech Dashboard** (Default)
+- **Purpose**: Field technicians doing service calls and repairs
+- **Focus**: Today's schedule, quick actions, pending tasks
+- **Key Metrics**: Jobs today, payments to collect, photos needed
+
+#### **Sales Dashboard**
+- **Purpose**: Estimators and sales reps
+- **Focus**: Pipeline management, quote tracking, follow-ups
+- **Key Metrics**: Quotes sent, signatures needed, conversion rate
+
+#### **Operations Dashboard**
+- **Purpose**: Managers and business owners
+- **Focus**: Team overview, revenue tracking, business metrics
+- **Key Metrics**: Daily revenue, team locations, job status
+
+#### **Custom Dashboard** (Future)
+- **Purpose**: Power users who want to build their own layout
+- **Focus**: Mix and match widgets from other dashboards
+- **Key Metrics**: User-defined
+
+### 2. Navigation Structure
+
+#### **Static Footer Navigation**
+- Always visible at bottom of screen
+- 5 slots total with (+) integrated into the nav bar
+- No floating button - cleaner UI
+
+#### **Default Footer Layout**
+[Calendar] [Contacts] [+] [Projects] [More]
+
+#### **Available Footer Options**
+- Calendar
+- Contacts
+- Projects
+- Quote Builder
+- Conversations
+- More (always last, not moveable)
+
+### 3. User Preferences Schema
+
+user.preferences = {
+  // Dashboard Selection
+  dashboardType: 'service' | 'sales' | 'operations' | 'custom',
+  
+  // Footer Customization
+  footerOrder: {
+    slot1: 'calendar',
+    slot2: 'contacts',
+    slot3: 'projects',
+    slot4: 'more' // Always 'more'
+  },
+  
+  // Custom Dashboard Config (Future)
+  customDashboard: {
+    layout: [
+      {
+        id: 'widget-id',
+        type: 'todaySchedule',
+        size: 'full' | 'half' | 'quarter',
+        position: 0,
+        config: {} // Widget-specific settings
+      }
+    ]
+  }
+}
+
+## Implementation Plan
+
+### Step 1: Build Service Tech Dashboard (First)
+- Keep existing navigation for now
+- Build the new dashboard as a complete component
+- Test with a few users
+- Perfect the widget system
+
+### Step 2: Add Sales Dashboard (Second)
+- Reuse widgets from Service Tech where applicable
+- Add pipeline-specific widgets
+- Now we have 2 dashboards to test switching between
+
+### Step 3: Add Dashboard Switching
+- Only after we have 2+ dashboards built
+- Add the preference in user settings
+- Test the switching mechanism
+
+### Step 4: Add Navigation Customization
+- After dashboard switching works well
+- Let users reorder their footer items
+- Keep it simple - just drag to reorder
+
+### Step 5: Custom Dashboards (Future)
+- Only after all the above is solid
+- Let power users build their own
+
+## Implementation Guide
+
+### Phase 1: Foundation (Current Priority)
+
+#### 1.1 Update User Settings
+Add dashboard preference to user settings screen:
+Settings > Preferences > Dashboard Type
+- Service Tech (Default) ✓
+- Sales
+- Operations
+- Custom (Coming Soon - disabled)
+
+#### 1.2 Create Dashboard Components
+Build as modular widgets that can be reused:
+
+**Widget Structure:**
+// components/dashboard/widgets/TodayScheduleWidget.tsx
+export const TodayScheduleWidget = ({ size = 'full', data }) => {
+  // Self-contained widget component
+  // Can adapt to different sizes
+  // Handles own data display
+}
+
+**Widget Registry:**
+// components/dashboard/widgetRegistry.ts
+export const AVAILABLE_WIDGETS = {
+  todaySchedule: {
+    component: TodayScheduleWidget,
+    name: 'Today\'s Schedule',
+    sizes: ['full', 'half'],
+    roles: ['service', 'sales'],
+    dataRequired: ['appointments']
+  },
+  quickActions: {
+    component: QuickActionsWidget,
+    name: 'Quick Actions',
+    sizes: ['full'],
+    roles: ['service'],
+    dataRequired: []
+  },
+  // ... more widgets
+}
+
+#### 1.3 Dashboard Container
+Single HomeScreen that renders based on user preference:
+
+// screens/HomeScreen.tsx
+const HomeScreen = () => {
+  const { user } = useAuth();
+  const dashboardType = user?.preferences?.dashboardType || 'service';
+  
+  // Render appropriate dashboard
+  switch(dashboardType) {
+    case 'service':
+      return <ServiceDashboard />;
+    case 'sales':
+      return <SalesDashboard />;
+    case 'operations':
+      return <OperationsDashboard />;
+    default:
+      return <ServiceDashboard />;
+  }
+}
+
+### Phase 2: Enhanced Navigation
+
+#### 2.1 Reorderable Footer
+Add footer customization to settings:
+Settings > Navigation > Footer Order
+[Drag to reorder items]
+
+#### 2.2 Context-Aware Center Button (+)
+The (+) button changes based on current screen:
+- On Dashboard: Quick action menu
+- On Projects: New project
+- On Contacts: New contact
+- On Calendar: New appointment
+
+### Phase 3: Custom Dashboards (Future)
+
+#### 3.1 Dashboard Builder
+- Drag and drop interface
+- Widget picker
+- Size/position controls
+- Save/load templates
+
+#### 3.2 Widget Development Guidelines
+When creating new widgets:
+1. Must be self-contained
+2. Support multiple sizes (full, half, quarter)
+3. Handle loading/error states
+4. Responsive to screen size
+5. Efficient data fetching
+
+## Dashboard Specifications
+
+### Service Tech Dashboard Layout
+┌─────────────────────────────┐
+│ Header (Name, Search)       │
+├─────────────────────────────┤
+│ Today's Schedule Widget     │
+│ - Next appointment card     │
+│ - Quick nav/start buttons   │
+├─────────────────────────────┤
+│ Quick Actions Widget        │
+│ [Photo] [Quote] [Payment]   │
+├─────────────────────────────┤
+│ Pending Tasks Widget        │
+│ • Collect payment - Smith   │
+│ • Get signature - Jones     │
+│ • Complete job - Wilson     │
+└─────────────────────────────┘
+
+### Sales Dashboard Layout
+┌─────────────────────────────┐
+│ Header (Name, Search)       │
+├─────────────────────────────┤
+│ Pipeline Overview Widget    │
+│ Leads → Quotes → Signed     │
+├─────────────────────────────┤
+│ Action Required Widget      │
+│ - 3 quotes expiring         │
+│ - 2 awaiting signature      │
+├─────────────────────────────┤
+│ Recent Activity Feed        │
+│ • Martinez viewed quote     │
+│ • Johnson paid deposit      │
+└─────────────────────────────┘
+
+### Operations Dashboard Layout
+┌─────────────────────────────┐
+│ Header (Name, Search)       │
+├─────────────────────────────┤
+│ Metrics Row Widget          │
+│ Revenue | Jobs | Leads      │
+├─────────────────────────────┤
+│ Team Status Widget          │
+│ - Map view or list view     │
+├─────────────────────────────┤
+│ Alerts & Notifications      │
+│ ⚠️ Critical items needing   │
+│    attention                │
+└─────────────────────────────┘
+
+## Best Practices
+
+### 1. Widget Development
+- Keep widgets under 200 lines
+- Use React.memo for performance
+- Implement skeleton loaders
+- Handle empty states gracefully
+- Support dark mode
+
+### 2. Data Management
+- Fetch data at dashboard level, pass to widgets
+- Use React Query or similar for caching
+- Implement pull-to-refresh
+- Background refresh for critical data
+
+### 3. Performance
+- Lazy load widgets below the fold
+- Limit dashboard to 10 widgets max
+- Cache dashboard configuration
+- Optimize images and assets
+
+### 4. User Experience
+- Smooth transitions between dashboards
+- Consistent spacing and styling
+- Clear loading states
+- Helpful empty states with CTAs
+
+## Migration Strategy
+
+1. **Phase 1**: Implement basic dashboard switching (keep current UI)
+2. **Phase 2**: Build new dashboard layouts alongside existing screens
+3. **Phase 3**: Migrate users to new system with option to switch back
+4. **Phase 4**: Deprecate old navigation system
+5. **Phase 5**: Enable custom dashboards
+
+## Future Enhancements
+
+- Dashboard templates marketplace
+- Team-shared dashboards
+- Role-based widget permissions
+- Analytics on widget usage
+- A/B testing different layouts
+- Voice-activated quick actions
+- Apple Watch companion widgets
+
+## Success Metrics
+
+- Time to complete common tasks (should decrease by 50%)
+- Number of taps to reach key features (target: max 2)
+- User adoption rate of different dashboards
+- Widget interaction analytics
+- Support ticket reduction
+
+---
+
+This system will transform LPai from a traditional nested navigation app to a modern, efficient dashboard-based system that adapts to each user's workflow while maintaining simplicity and speed.
+
+🎯 LPai Dashboard & Smart Notifications - Consolidated Plan
+Data Structure (Using Your Existing Schema)
+typescript// Your existing structure - we'll enhance, not replace
+const appointment = {
+  _id: string,
+  userId: string,        // The service tech
+  contactId: string,     // The customer
+  locationId: string,    // The tenant/company
+  start: string,         // When to arrive
+  title: string,         // "Shower leak repair"
+  // NEW FIELDS TO ADD:
+  estimatedDuration?: number,  // How long job takes
+  travelTime?: number,         // Calculated drive time
+  departureTime?: string,      // When to leave
+  notificationsSent?: string[], // Track what we sent
+}
+📱 Enhanced Service Tech Dashboard
+Phone Layout (Using Your Existing Data):
+┌─────────────────────────────┐
+│  Good {timeOfDay}, {user.name}! │
+│  {appointments.length} jobs • ${totalEstimate} │
+├─────────────────────────────┤
+│  DEPARTURE TIMER            │
+│  Leave in: 15 minutes 🚗    │
+│  {nextAppointment.contact.firstName} │
+│  {nextAppointment.title}    │
+│  [Navigate] [I'm Late]      │
+├─────────────────────────────┤
+│  QUICK ACTIONS              │
+│  📸 Photo  📝 Quote  💰 Pay  │
+├─────────────────────────────┤
+│  TODAY'S SCHEDULE           │
+│  {appointments.map(...)}     │
+└─────────────────────────────┘
+🔔 Smart Notification System
+1. Calculate Departure Times (Backend API)
+typescript// New endpoint: /api/appointments/departure-times
+export default async function handler(req, res) {
+  const { locationId, userId } = req.query;
+  
+  // Get today's appointments
+  const appointments = await db.collection('appointments').find({
+    locationId,
+    userId,
+    start: { $gte: startOfDay, $lte: endOfDay }
+  }).sort({ start: 1 }).toArray();
+  
+  // Get job type averages for this location
+  const jobAverages = await db.collection('jobTypeAverages').findOne({
+    locationId
+  });
+  
+  // Calculate smart times
+  for (const apt of appointments) {
+    // Extract job type from title (e.g., "shower repair", "toilet install")
+    const jobType = extractJobType(apt.title);
+    const avgDuration = jobAverages?.[jobType] || 60; // Default 1 hour
+    
+    // Get travel time (using Mapbox API)
+    const travelTime = await calculateTravelTime(
+      previousApt?.address || location.address, // From location
+      apt.contact.address // To location
+    );
+    
+    apt.estimatedDuration = avgDuration;
+    apt.travelTime = travelTime;
+    apt.departureTime = new Date(apt.start - (travelTime + 15) * 60000); // 15 min buffer
+  }
+  
+  return res.json(appointments);
+}
+2. Smart Job Type Learning
+typescript// Track completion times by job type
+const jobTypeAverages = {
+  _id: ObjectId,
+  locationId: string,
+  averages: {
+    "leak_repair": 45,        // minutes
+    "toilet_install": 90,
+    "drain_cleaning": 30,
+    "water_heater": 180,
+    "emergency": 60,
+    // Auto-learns new types
+  },
+  lastUpdated: Date
+}
+3. Notification Flow
+typescript// Frontend notification handler
+const useDepartureNotifications = () => {
+  useEffect(() => {
+    // Check every minute
+    const interval = setInterval(async () => {
+      const nextApt = appointments.find(a => new Date(a.start) > new Date());
+      if (!nextApt) return;
+      
+      const now = new Date();
+      const departure = new Date(nextApt.departureTime);
+      const minutesUntilLeave = (departure - now) / 60000;
+      
+      if (minutesUntilLeave === 30 && !nextApt.notificationsSent?.includes('30min')) {
+        showNotification({
+          title: "Leave in 30 minutes",
+          body: `For ${nextApt.contact.firstName} - ${nextApt.title}`,
+          actions: ['Dismiss', 'View Details']
+        });
+        
+        // Mark as sent
+        await api.patch(`/api/appointments/${nextApt._id}`, {
+          $push: { notificationsSent: '30min' }
+        });
+      }
+      
+      if (minutesUntilLeave <= 0 && !nextApt.notificationsSent?.includes('now')) {
+        showNotification({
+          title: "Time to leave now! 🚗",
+          body: `${nextApt.travelTime} min drive to ${nextApt.contact.firstName}`,
+          actions: ['Navigate', "I'm Late", 'Reschedule']
+        });
+      }
+    }, 60000);
+    
+    return () => clearInterval(interval);
+  }, [appointments]);
+};
+🎨 Consolidated Widget System
+Base Widget Architecture:
+typescript// Modular widgets using your existing data
+const DashboardWidget = ({ type, data }) => {
+  const components = {
+    departure: DepartureTimerWidget,
+    schedule: ScheduleWidget,
+    quickActions: QuickActionsWidget,
+    stats: StatsWidget,
+    route: RouteWidget
+  };
+  
+  const Component = components[type];
+  return <Component {...data} />;
+};
+
+// Widget uses your existing hooks
+const DepartureTimerWidget = () => {
+  const { appointments } = useAppointments(); // Your existing hook
+  const nextApt = appointments[0];
+  // ... render logic
+};
+📍 Customer Tracking Feature
+When tech clicks "Navigate":
+typescript// Backend: /api/tracking/start
+const startTracking = async (req, res) => {
+  const { appointmentId, userId } = req.body;
+  
+  // Generate tracking token
+  const trackingToken = generateToken();
+  
+  // Update appointment
+  await db.collection('appointments').updateOne(
+    { _id: ObjectId(appointmentId) },
+    { 
+      $set: { 
+        trackingToken,
+        trackingStarted: new Date()
+      }
+    }
+  );
+  
+  // Send SMS via GHL
+  await sendSMS({
+    to: appointment.contact.phone,
+    message: `Your technician is on the way! Track them here: ${BASE_URL}/track/${trackingToken}`
+  });
+};
+🚀 Implementation Priority:
+Week 1: Core Dashboard
+
+Build widget system on top of existing HomeScreen
+Add departure time calculations to appointments
+Create DepartureTimerWidget
+
+Week 2: Notifications
+
+Implement push notifications
+Add "I'm Late" quick actions
+Customer SMS notifications
+
+Week 3: Tracking
+
+Customer tracking page
+Background location updates
+Privacy controls
+
+Week 4: Learning System
+
+Job type detection
+Average time tracking
+Smart scheduling suggestions
+
+Key Points:
+
+Uses your existing userId, contactId, locationId
+Enhances current MongoDB schema (no breaking changes)
+Leverages your existing GHL sync
+Progressive enhancement of current app
