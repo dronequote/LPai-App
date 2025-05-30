@@ -1,5 +1,13 @@
 // /api/invoices/create.ts
+import type { NextApiRequest, NextApiResponse } from 'next';
+import clientPromise from '../../../src/lib/mongodb';
+import { ObjectId } from 'mongodb';
+import axios from 'axios';
+
+// @ts-ignore
 export default async function handler(req, res) {
+    const client = await clientPromise;
+    const db = client.db('lpai');
   const { projectId, locationId, title, amount, type, amountType, amountValue } = req.body;
   
   const invoice = {
@@ -23,8 +31,12 @@ export default async function handler(req, res) {
 }
 
 // /api/payments/create-link.ts
-export default async function handler(req, res) {
+// @ts-ignore
+export async function createPaymentLinkHandler(req, res) {    
+    const client = await clientPromise;
+    const db = client.db('lpai');
   const { invoiceId, amount, description, contactId, opportunityId } = req.body;
+  const { locationId } = req.query;
   
   // Get GHL API key
   const location = await db.collection('locations').findOne({ locationId });
@@ -39,7 +51,7 @@ export default async function handler(req, res) {
     },
     {
       headers: {
-        Authorization: `Bearer ${location.apiKey}`,
+        Authorization: `Bearer ${location?.apiKey}`,
         Version: '2021-07-28'
       }
     }
@@ -59,7 +71,7 @@ export default async function handler(req, res) {
     },
     {
       headers: {
-        Authorization: `Bearer ${location.apiKey}`,
+        Authorization: `Bearer ${location?.apiKey}`,
         Version: '2021-07-28'
       }
     }
@@ -80,4 +92,12 @@ export default async function handler(req, res) {
     success: true, 
     url: paymentLink.data.url 
   });
+}
+
+function generateInvoiceNumber() {
+    const date = new Date();
+    const year = date.getFullYear();
+    const random = Math.floor(1000 + Math.random() * 9000);
+
+    return `INV-${year}-${random}`;
 }

@@ -134,7 +134,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         await logEmailActivity(db, req.body.quoteId, {
           action: 'contract_email_failed',
           success: false,
-          error: error.message,
+          error: (error as any).message,
           attemptedAt: new Date().toISOString()
         });
       } catch (logError) {
@@ -144,7 +144,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     
     return res.status(500).json({ 
       error: 'Failed to send contract email',
-      details: error.message 
+      details: (error as any).message,
     });
   }
 }
@@ -165,7 +165,7 @@ async function getEmailTemplate(db: any, locationId: string, templateName: strin
     'Invoice Sent': 'invoiceSent'
   };
   
-  const templateField = templateFieldMap[templateName];
+  const templateField = templateFieldMap[templateName as keyof typeof templateFieldMap];
   const customTemplateId = location?.emailTemplates?.[templateField];
   
   // If location has a custom template ID, fetch it
