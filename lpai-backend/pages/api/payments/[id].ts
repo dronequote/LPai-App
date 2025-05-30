@@ -104,62 +104,134 @@ async function updatePayment(db: any, id: string, body: any, res: NextApiRespons
     if (status === 'completed' && existingPayment.status !== 'completed') {
       console.log('[Payment API] Payment completed, updating related records...');
       
-      // Update project timeline
+      // Update project timeline and payment status
       if (existingPayment.projectId) {
-        await db.collection('projects').updateOne(
-          { _id: new ObjectId(existingPayment.projectId) },
-          {
-            $push: {
-              timeline: {
-                id: new ObjectId().toString(),
-                event: 'payment_completed',
-                description: `${existingPayment.type} payment of $${existingPayment.amount} completed`,
-                timestamp: new Date().toISOString(),
-                userId: 'system',
-                metadata: {
-                  paymentId: id,
-                  amount: existingPayment.amount,
-                  type: existingPayment.type,
-                  method: existingPayment.method
-                }
-              }
-            }
-          }
-        );
-      }
-      
-      // Update quote activity
-      if (existingPayment.quoteId) {
-        await db.collection('quotes').updateOne(
-          { _id: new ObjectId(existingPayment.quoteId) },
-          {
-            $push: {
-              activityFeed: {
-                id: new ObjectId().toString(),
-                action: 'payment_completed',
-                timestamp: new Date().toISOString(),
-                metadata: {
-                  paymentId: id,
-                  amount: existingPayment.amount,
-                  type: existingPayment.type,
-                  method: existingPayment.method
-                }
-              }
-            }
-          }
-        );
+        const isDeposit = existingPayment.type === 'deposit';
         
-        // If this was a deposit payment, update quote status
-        if (existingPayment.type === 'deposit') {
-          await db.collection('quotes').updateOne(
-            { _id: new ObjectId(existingPayment.quoteId) },
-            { 
-              $set: { 
-                status: 'paid',
-                paidAt: new Date().toISOString()
-              } 
+        // Get current project to check payment status
+        const project = await db.collection('projects').findOne({
+          _id: new ObjectId(existingPayment.projectId)
+        });
+        
+        if (project) {
+          const projectUpdateData: any = {
+            updatedAt: new Date()
+          };
+          
+          // If this is a deposit payment
+          if (isDeposit) {
+            projectUpdateData.depositPaid = true;
+            projectUpdateData.depositPaidAt = new Date();
+            projectUpdateData.depositAmount = existingPayment.amount;
+            
+            // Update status if needed
+            if (project.status === 'won') {
+              projectUpdateData.status = 'in_progress';
+            }
+          }
+          
+          await db.collection('projects').updateOne(
+            { _id: new ObjectId(existingPayment.projectId) },
+            {
+              $set: projectUpdateData,
+              $push: {
+                timeline: {
+                  id: new ObjectId().toString(),
+                  event: isDeposit ? 'deposit_payment_completed' : 'payment_completed',
+                  description: `${existingPayment.type} payment of $${existingPayment.amount} completed`,
+                  timestamp: new Date().toISOString(),
+                  userId: 'system',
+                  metadata: {
+                    paymentId: id,
+                    amount: existingPayment.amount,
+                    type: existingPayment.type,
+                    method: existingPayment.method
+                  }
+                }
+              }
             }
           );
+          
+          console.log(`[Payment API] Updated project ${existingPayment.projectId} with payment completion`);
+        }
+      }
+      
+      // Update quote activity and payment summary
+      if (existingPayment.quoteId) {
+        // Get the quote to check current payment status
+        const quote = await db.collection('quotes').findOne({
+          _id: new ObjectId(existingPayment.quoteId)
+        });
+        
+        if (quote) {
+          const isDeposit = existingPayment.type === 'deposit';
+          const currentPaid = quote.paymentSummary?.totalPaid || 0;
+          const newTotalPaid = currentPaid + existingPayment.amount;
+          const balance = quote.total - newTotalPaid;
+          
+          // Initialize payment summary if it doesn't exist
+          const paymentSummary = quote.paymentSummary || {
+            totalRequired: quote.total,
+            depositRequired: quote.depositAmount || 0,
+            depositPaid: 0,
+            totalPaid: 0,
+            balance: quote.total,
+            paymentIds: []
+          };
+          
+          const updateData: any = {
+            paymentSummary: {
+              ...paymentSummary,
+              totalPaid: newTotalPaid,
+              balance: balance,
+              lastPaymentAt: new Date()
+            },
+            updatedAt: new Date()
+          };
+          
+          // If this is a deposit payment
+          if (isDeposit) {
+            updateData.paymentSummary.depositPaid = existingPayment.amount;
+            updateData.paymentSummary.depositPaidAt = new Date();
+            updateData.status = 'deposit_paid';
+          }
+          
+          // If fully paid
+          if (balance <= 0) {
+            updateData.status = 'paid';
+            updateData.paidAt = new Date();
+          }
+          
+          // Add payment ID to the array if not already there
+          if (!updateData.paymentSummary.paymentIds) {
+            updateData.paymentSummary.paymentIds = [];
+          }
+          if (!updateData.paymentSummary.paymentIds.includes(id)) {
+            updateData.paymentSummary.paymentIds.push(new ObjectId(id));
+          }
+          
+          await db.collection('quotes').updateOne(
+            { _id: new ObjectId(existingPayment.quoteId) },
+            {
+              $set: updateData,
+              $push: {
+                activityFeed: {
+                  id: new ObjectId().toString(),
+                  action: isDeposit ? 'deposit_payment_completed' : 'payment_completed',
+                  timestamp: new Date().toISOString(),
+                  metadata: {
+                    paymentId: id,
+                    amount: existingPayment.amount,
+                    type: existingPayment.type,
+                    method: existingPayment.method,
+                    balance: balance
+                  }
+                }
+              }
+            }
+          );
+          
+          console.log(`[Payment API] Updated quote ${existingPayment.quoteId} with payment completion`);
         }
       }
       
@@ -195,6 +267,8 @@ async function updatePayment(db: any, id: string, body: any, res: NextApiRespons
               }
             }
           );
+          
+          console.log(`[Payment API] Updated invoice ${existingPayment.invoiceId} with payment`);
         }
       }
     }

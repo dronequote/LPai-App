@@ -75,44 +75,45 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
+    
     // ========== ADD SAFETY CHECK HERE ==========
     // Check if a payment/invoice already exists for this quote
     if (quoteId) {
-    const existingPayment = await db.collection('payments').findOne({
+      const existingPayment = await db.collection('payments').findOne({
         quoteId: new ObjectId(quoteId),
         type: type,
         status: { $ne: 'failed' } // Ignore failed payments
-    });
-    
-        if (existingPayment) {
+      });
+      
+      if (existingPayment) {
         console.log('[Payment Link API] Payment already exists for this quote:', existingPayment._id);
         
         // Return the existing payment info
         return res.status(200).json({
-            success: true,
-            paymentId: existingPayment._id,
-            paymentUrl: existingPayment.ghlInvoiceUrl,
-            ghlInvoiceId: existingPayment.ghlInvoiceId, // ADD THIS
-            amount: existingPayment.amount,
-            invoiceNumber: existingPayment.ghlInvoiceNumber,
-            message: 'Using existing invoice',
-            existing: true
+          success: true,
+          paymentId: existingPayment._id,
+          paymentUrl: existingPayment.ghlInvoiceUrl,
+          ghlInvoiceId: existingPayment.ghlInvoiceId, // ADD THIS
+          amount: existingPayment.amount,
+          invoiceNumber: existingPayment.ghlInvoiceNumber,
+          message: 'Using existing invoice',
+          existing: true
         });
-        }
+      }
     }
 
     // Also check by project + type to prevent duplicates even without quoteId
     const recentPayment = await db.collection('payments').findOne({
-    projectId: new ObjectId(projectId),
-    type: type,
-    status: { $ne: 'failed' },
-    createdAt: { $gte: new Date(Date.now() - 5 * 60 * 1000) } // Within last 5 minutes
+      projectId: new ObjectId(projectId),
+      type: type,
+      status: { $ne: 'failed' },
+      createdAt: { $gte: new Date(Date.now() - 5 * 60 * 1000) } // Within last 5 minutes
     });
 
     if (recentPayment) {
-    console.log('[Payment Link API] Recent payment found for this project:', recentPayment._id);
-    
-    return res.status(200).json({
+      console.log('[Payment Link API] Recent payment found for this project:', recentPayment._id);
+      
+      return res.status(200).json({
         success: true,
         paymentId: recentPayment._id,
         paymentUrl: recentPayment.ghlInvoiceUrl,
@@ -120,7 +121,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         invoiceNumber: recentPayment.ghlInvoiceNumber,
         message: 'Using recent invoice',
         existing: true
-    });
+      });
     }
     // ========== END OF SAFETY CHECK ==========
 
@@ -329,28 +330,57 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     
     console.log('[Payment Link API] Payment record created:', paymentRecord._id);
 
-    // Log activity
+    // Update quote activity and initialize payment summary
     if (quoteId) {
-      await db.collection('quotes').updateOne(
-        { _id: new ObjectId(quoteId) },
-        {
-          $push: {
-            activityFeed: {
-              id: new ObjectId().toString(),
-              action: 'invoice_created',
-              timestamp: new Date().toISOString(),
-              userId,
-              metadata: {
-                paymentId: paymentRecord._id.toString(),
-                invoiceId: invoice._id,
-                invoiceNumber: invoice.invoiceNumber,
-                amount: Math.round(amount * 100) / 100,
-                type
+      // Get the quote to initialize payment summary if needed
+      const quote = await db.collection('quotes').findOne({
+        _id: new ObjectId(quoteId)
+      });
+      
+      if (quote) {
+        // Initialize payment summary if it doesn't exist
+        if (!quote.paymentSummary) {
+          await db.collection('quotes').updateOne(
+            { _id: new ObjectId(quoteId) },
+            {
+              $set: {
+                'paymentSummary': {
+                  totalRequired: quote.total,
+                  depositRequired: quote.depositAmount || 0,
+                  depositPaid: 0,
+                  totalPaid: 0,
+                  balance: quote.total,
+                  paymentIds: [],
+                  lastPaymentAt: null
+                }
+              }
+            }
+          );
+          console.log('[Payment Link API] Initialized payment summary on quote');
+        }
+        
+        // Add activity
+        await db.collection('quotes').updateOne(
+          { _id: new ObjectId(quoteId) },
+          {
+            $push: {
+              activityFeed: {
+                id: new ObjectId().toString(),
+                action: 'invoice_created',
+                timestamp: new Date().toISOString(),
+                userId,
+                metadata: {
+                  paymentId: paymentRecord._id.toString(),
+                  invoiceId: invoice._id,
+                  invoiceNumber: invoice.invoiceNumber,
+                  amount: Math.round(amount * 100) / 100,
+                  type
+                }
               }
             }
           }
-        }
-      );
+        );
+      }
     }
 
     // Add to project timeline

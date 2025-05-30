@@ -40,6 +40,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).json({ error: 'User missing GHL ID' });
     }
 
+    // Get the payment record to get project and quote info
+    const paymentRecord = await db.collection('payments').findOne({
+      ghlInvoiceId: invoiceId,
+      locationId
+    });
+
+    if (!paymentRecord) {
+      return res.status(404).json({ error: 'Payment record not found for this invoice' });
+    }
+
     // Record payment in GHL
     const paymentPayload = {
       altId: locationId,
@@ -86,6 +96,139 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
       }
     );
+
+    // Now update the quote if there's a quoteId
+    if (paymentRecord.quoteId) {
+      const quote = await db.collection('quotes').findOne({
+        _id: new ObjectId(paymentRecord.quoteId)
+      });
+      
+      if (quote) {
+        const isDeposit = paymentRecord.type === 'deposit';
+        const currentPaid = quote.paymentSummary?.totalPaid || 0;
+        const newTotalPaid = currentPaid + paymentRecord.amount;
+        const balance = quote.total - newTotalPaid;
+        
+        // Initialize payment summary if it doesn't exist
+        const paymentSummary = quote.paymentSummary || {
+          totalRequired: quote.total,
+          depositRequired: quote.depositAmount || 0,
+          depositPaid: 0,
+          totalPaid: 0,
+          balance: quote.total,
+          paymentIds: []
+        };
+        
+        const updateData: any = {
+          paymentSummary: {
+            ...paymentSummary,
+            totalPaid: newTotalPaid,
+            balance: balance,
+            lastPaymentAt: new Date()
+          },
+          updatedAt: new Date()
+        };
+        
+        // If this is a deposit payment
+        if (isDeposit) {
+          updateData.paymentSummary.depositPaid = paymentRecord.amount;
+          updateData.paymentSummary.depositPaidAt = new Date();
+          updateData.status = 'deposit_paid';
+        }
+        
+        // If fully paid
+        if (balance <= 0) {
+          updateData.status = 'paid';
+          updateData.paidAt = new Date();
+        }
+        
+        // Add payment ID to the array if not already there
+        if (!updateData.paymentSummary.paymentIds) {
+          updateData.paymentSummary.paymentIds = [];
+        }
+        if (!updateData.paymentSummary.paymentIds.includes(paymentRecord._id.toString())) {
+          updateData.paymentSummary.paymentIds.push(paymentRecord._id);
+        }
+        
+        await db.collection('quotes').updateOne(
+          { _id: new ObjectId(paymentRecord.quoteId) },
+          {
+            $set: updateData,
+            $push: {
+              activityFeed: {
+                id: new ObjectId().toString(),
+                action: isDeposit ? 'deposit_payment_completed' : 'payment_completed',
+                timestamp: new Date().toISOString(),
+                userId,
+                metadata: {
+                  paymentId: paymentRecord._id.toString(),
+                  amount: paymentRecord.amount,
+                  type: paymentRecord.type,
+                  method: mode,
+                  checkNumber: mode === 'cheque' ? checkNumber : undefined,
+                  balance: balance
+                }
+              }
+            }
+          }
+        );
+        
+        console.log(`[Record Payment API] Updated quote ${paymentRecord.quoteId} with manual payment completion`);
+      }
+    }
+
+    // Update the project if there's a projectId
+    if (paymentRecord.projectId) {
+      const isDeposit = paymentRecord.type === 'deposit';
+      
+      // Get current project to check payment status
+      const project = await db.collection('projects').findOne({
+        _id: new ObjectId(paymentRecord.projectId)
+      });
+      
+      if (project) {
+        const projectUpdateData: any = {
+          updatedAt: new Date()
+        };
+        
+        // If this is a deposit payment
+        if (isDeposit) {
+          projectUpdateData.depositPaid = true;
+          projectUpdateData.depositPaidAt = new Date();
+          projectUpdateData.depositAmount = paymentRecord.amount;
+          
+          // Update status if needed
+          if (project.status === 'won') {
+            projectUpdateData.status = 'in_progress';
+          }
+        }
+        
+        await db.collection('projects').updateOne(
+          { _id: new ObjectId(paymentRecord.projectId) },
+          {
+            $set: projectUpdateData,
+            $push: {
+              timeline: {
+                id: new ObjectId().toString(),
+                event: isDeposit ? 'deposit_payment_completed' : 'payment_completed',
+                description: `${paymentRecord.type} payment of $${paymentRecord.amount} completed (${mode})`,
+                timestamp: new Date().toISOString(),
+                userId,
+                metadata: {
+                  paymentId: paymentRecord._id.toString(),
+                  amount: paymentRecord.amount,
+                  type: paymentRecord.type,
+                  method: mode,
+                  checkNumber: mode === 'cheque' ? checkNumber : undefined
+                }
+              }
+            }
+          }
+        );
+        
+        console.log(`[Record Payment API] Updated project ${paymentRecord.projectId} with manual payment completion`);
+      }
+    }
 
     return res.status(200).json({
       success: true,

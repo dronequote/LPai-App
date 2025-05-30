@@ -3,6 +3,12 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
 
+// Helper for environment-aware logging
+const isDev = process.env.NODE_ENV === 'development';
+const log = (...args: any[]) => {
+  if (isDev) console.log(...args);
+};
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const { id } = req.query;
   
@@ -63,11 +69,11 @@ async function getQuote(db: any, id: string, query: any, res: NextApiResponse) {
         projectTitle: project?.title || 'Unknown Project',
       };
       
-      console.log(`[QUOTE DETAIL API] Fetched quote ${quote.quoteNumber}`);
+      log(`[QUOTE DETAIL API] Fetched quote ${quote.quoteNumber}`);
       return res.status(200).json(enrichedQuote);
       
     } catch (err) {
-      console.warn(`[QUOTE DETAIL API] Failed to enrich quote ${id}:`, err);
+      log(`[QUOTE DETAIL API] Failed to enrich quote ${id}:`, err);
       return res.status(200).json({
         ...quote,
         contactName: 'Unknown Contact',
@@ -84,7 +90,7 @@ async function getQuote(db: any, id: string, query: any, res: NextApiResponse) {
 // ✏️ PATCH: Update quote
 async function updateQuote(db: any, id: string, body: any, res: NextApiResponse) {
   try {
-    const { locationId, action } = body;
+    const { locationId, action, userId } = body;
     
     if (!locationId) {
       return res.status(400).json({ error: 'Missing locationId' });
@@ -94,7 +100,19 @@ async function updateQuote(db: any, id: string, body: any, res: NextApiResponse)
       return res.status(400).json({ error: 'Invalid quote ID format' });
     }
     
+    // Get existing quote first
+    const existingQuote = await db.collection('quotes').findOne({
+      _id: new ObjectId(id),
+      locationId
+    });
+    
+    if (!existingQuote) {
+      return res.status(404).json({ error: 'Quote not found' });
+    }
+    
     let updateData: any = {};
+    let activityEntry: any = null;
+    let projectUpdate: any = null;
     
     switch (action) {
       case 'update_status':
@@ -114,6 +132,11 @@ async function updateQuote(db: any, id: string, body: any, res: NextApiResponse)
           updateData.sentAt = new Date().toISOString();
         } else if (status === 'viewed') {
           updateData.viewedAt = new Date().toISOString();
+          updateData.lastViewedAt = new Date().toISOString();
+          projectUpdate = {
+            quoteViewedAt: new Date(),
+            status: 'quote_viewed'
+          };
         } else if (status === 'accepted') {
           updateData.respondedAt = new Date().toISOString();
           if (signatureImageUrl) {
@@ -123,9 +146,23 @@ async function updateQuote(db: any, id: string, body: any, res: NextApiResponse)
           }
         } else if (status === 'declined') {
           updateData.respondedAt = new Date().toISOString();
+          projectUpdate = {
+            status: 'quote_declined',
+            quoteDeclinedAt: new Date()
+          };
         }
         
-        console.log(`[QUOTE DETAIL API] Updating quote ${id} status to: ${status}`);
+        activityEntry = {
+          action: `status_changed_to_${status}`,
+          timestamp: new Date().toISOString(),
+          userId: userId || 'system',
+          metadata: { 
+            previousStatus: existingQuote.status,
+            newStatus: status 
+          }
+        };
+        
+        log(`[QUOTE DETAIL API] Updating quote ${id} status to: ${status}`);
         break;
         
       case 'update_content':
@@ -184,6 +221,13 @@ async function updateQuote(db: any, id: string, body: any, res: NextApiResponse)
             // ADD deposit amount to update
             depositAmount: calculatedDepositAmount,
           };
+          
+          // Update payment summary with new totals
+          if (existingQuote.paymentSummary) {
+            updateData['paymentSummary.totalRequired'] = total;
+            updateData['paymentSummary.depositRequired'] = calculatedDepositAmount;
+            updateData['paymentSummary.balance'] = total - (existingQuote.paymentSummary.totalPaid || 0);
+          }
         }
         
         // Update other fields if provided
@@ -201,66 +245,75 @@ async function updateQuote(db: any, id: string, body: any, res: NextApiResponse)
         
         updateData.updatedAt = new Date().toISOString();
         
-        console.log(`[QUOTE DETAIL API] Updating quote ${id} content`);
+        activityEntry = {
+          action: 'content_updated',
+          timestamp: new Date().toISOString(),
+          userId: userId || 'system',
+          metadata: { 
+            fieldsUpdated: Object.keys(updateData).filter(k => k !== 'updatedAt')
+          }
+        };
+        
+        log(`[QUOTE DETAIL API] Updating quote ${id} content`);
         break;
         
       case 'create_revision':
-        // Create a new quote as revision
-        const originalQuote = await db.collection('quotes').findOne({
-          _id: new ObjectId(id),
-          locationId
+        // This is now handled by the separate create-revision endpoint
+        return res.status(400).json({ 
+          error: 'Use /api/quotes/[id]/create-revision endpoint for creating revisions' 
         });
-        
-        if (!originalQuote) {
-          return res.status(404).json({ error: 'Original quote not found' });
-        }
-        
-        // Generate new quote number for revision
-        const currentYear = new Date().getFullYear();
-        const quoteCount = await db.collection('quotes').countDocuments({ 
-          locationId,
-          createdAt: { 
-            $gte: new Date(`${currentYear}-01-01`),
-            $lt: new Date(`${currentYear + 1}-01-01`)
-          }
-        });
-        
-        const newQuoteNumber = `Q-${currentYear}-${String(quoteCount + 1).padStart(3, '0')}`;
-        
-        const revision = {
-          ...originalQuote,
-          _id: undefined, // Let MongoDB generate new ID
-          quoteNumber: newQuoteNumber,
-          version: (originalQuote.version || 1) + 1,
-          parentQuoteId: originalQuote._id.toString(),
-          status: 'draft',
-          sentAt: undefined,
-          viewedAt: undefined,
-          respondedAt: undefined,
-          signatureImageUrl: undefined,
-          signedAt: undefined,
-          signedBy: undefined,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        
-        const revisionResult = await db.collection('quotes').insertOne(revision);
-        const createdRevision = { ...revision, _id: revisionResult.insertedId };
-        
-        console.log(`[QUOTE DETAIL API] Created revision ${newQuoteNumber} from quote ${originalQuote.quoteNumber}`);
-        return res.status(201).json(createdRevision);
         
       default:
         return res.status(400).json({ error: 'Invalid action' });
     }
     
+    // Add activity entry if exists
+    const updateQuery: any = { $set: updateData };
+    if (activityEntry) {
+      updateQuery.$push = { activityFeed: activityEntry };
+    }
+    
     const result = await db.collection('quotes').updateOne(
       { _id: new ObjectId(id), locationId },
-      { $set: updateData }
+      updateQuery
     );
     
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: 'Quote not found' });
+    }
+    
+    // Update project if needed
+    if (projectUpdate && existingQuote.projectId) {
+      try {
+        await db.collection('projects').updateOne(
+          { _id: new ObjectId(existingQuote.projectId) },
+          {
+            $set: {
+              ...projectUpdate,
+              updatedAt: new Date()
+            },
+            $push: {
+              timeline: {
+                id: new ObjectId().toString(),
+                event: `quote_${action}`,
+                description: activityEntry?.metadata?.newStatus 
+                  ? `Quote status changed to ${activityEntry.metadata.newStatus}`
+                  : 'Quote updated',
+                timestamp: new Date().toISOString(),
+                userId: userId || 'system',
+                metadata: {
+                  quoteId: id,
+                  quoteNumber: existingQuote.quoteNumber,
+                  ...activityEntry?.metadata
+                }
+              }
+            }
+          }
+        );
+        log(`[QUOTE DETAIL API] Updated project ${existingQuote.projectId} after quote update`);
+      } catch (projectError) {
+        console.error('[QUOTE DETAIL API] Failed to update project:', projectError);
+      }
     }
     
     return res.status(200).json({ success: true });
@@ -274,7 +327,7 @@ async function updateQuote(db: any, id: string, body: any, res: NextApiResponse)
 // 🗑️ DELETE: Soft delete quote
 async function deleteQuote(db: any, id: string, query: any, res: NextApiResponse) {
   try {
-    const { locationId } = query;
+    const { locationId, userId } = query;
     
     if (!locationId) {
       return res.status(400).json({ error: 'Missing locationId' });
@@ -284,6 +337,16 @@ async function deleteQuote(db: any, id: string, query: any, res: NextApiResponse
       return res.status(400).json({ error: 'Invalid quote ID format' });
     }
     
+    // Get quote first to update project
+    const quote = await db.collection('quotes').findOne({
+      _id: new ObjectId(id),
+      locationId
+    });
+    
+    if (!quote) {
+      return res.status(404).json({ error: 'Quote not found' });
+    }
+    
     const result = await db.collection('quotes').updateOne(
       { _id: new ObjectId(id), locationId },
       { 
@@ -291,6 +354,14 @@ async function deleteQuote(db: any, id: string, query: any, res: NextApiResponse
           status: 'deleted',
           deletedAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
+        },
+        $push: {
+          activityFeed: {
+            action: 'deleted',
+            timestamp: new Date().toISOString(),
+            userId: userId || 'system',
+            metadata: {}
+          }
         }
       }
     );
@@ -299,7 +370,42 @@ async function deleteQuote(db: any, id: string, query: any, res: NextApiResponse
       return res.status(404).json({ error: 'Quote not found' });
     }
     
-    console.log(`[QUOTE DETAIL API] Soft deleted quote ${id}`);
+    // Update project if exists
+    if (quote.projectId) {
+      try {
+        await db.collection('projects').updateOne(
+          { _id: new ObjectId(quote.projectId) },
+          {
+            $unset: { 
+              quoteId: "", 
+              activeQuoteId: "" 
+            },
+            $set: {
+              hasQuote: false,
+              updatedAt: new Date()
+            },
+            $push: {
+              timeline: {
+                id: new ObjectId().toString(),
+                event: 'quote_deleted',
+                description: `Quote ${quote.quoteNumber} was deleted`,
+                timestamp: new Date().toISOString(),
+                userId: userId || 'system',
+                metadata: {
+                  quoteId: id,
+                  quoteNumber: quote.quoteNumber
+                }
+              }
+            }
+          }
+        );
+        log(`[QUOTE DETAIL API] Updated project after quote deletion`);
+      } catch (projectError) {
+        console.error('[QUOTE DETAIL API] Failed to update project after deletion:', projectError);
+      }
+    }
+    
+    log(`[QUOTE DETAIL API] Soft deleted quote ${id}`);
     return res.status(200).json({ success: true });
     
   } catch (error) {

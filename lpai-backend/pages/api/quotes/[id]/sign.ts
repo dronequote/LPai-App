@@ -3,6 +3,12 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
 
+// Helper for environment-aware logging
+const isDev = process.env.NODE_ENV === 'development';
+const log = (...args: any[]) => {
+  if (isDev) console.log(...args);
+};
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', ['POST']);
@@ -43,8 +49,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(404).json({ error: 'Quote not found' });
     }
 
-    console.log(`✅ [SIGN API] Adding ${signatureType} signature to quote ${quote.quoteNumber}`);
-    console.log(`✅ [SIGN API] Current signatures state:`, quote.signatures);
+    log(`✅ [SIGN API] Adding ${signatureType} signature to quote ${quote.quoteNumber}`);
+    log(`✅ [SIGN API] Current signatures state:`, quote.signatures);
 
     // Prepare signature data
     const signatureData = {
@@ -95,7 +101,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       };
     }
 
-    console.log(`✅ [SIGN API] Update data:`, JSON.stringify(updateData, null, 2));
+    log(`✅ [SIGN API] Update data:`, JSON.stringify(updateData, null, 2));
 
     // Update quote with signature
     const result = await db.collection('quotes').updateOne(
@@ -107,7 +113,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(404).json({ error: 'Quote not found or update failed' });
     }
 
-    console.log(`✅ [SIGN API] Update result:`, result);
+    log(`✅ [SIGN API] Update result:`, result);
 
     // Get updated quote to check if both signatures are complete
     const updatedQuote = await db.collection('quotes').findOne({
@@ -120,7 +126,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const hasCustomerSignature = !!signatures.customer;
     const fullySignedCompleted = hasConsultantSignature && hasCustomerSignature;
 
-    console.log(`✅ [SIGN API] Signatures status:`, {
+    log(`✅ [SIGN API] Signatures status:`, {
       hasConsultantSignature,
       hasCustomerSignature,
       fullySignedCompleted
@@ -148,10 +154,56 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
       );
 
-      console.log(`🎉 [SIGN API] Quote ${quote.quoteNumber} is now fully signed!`);
+      log(`🎉 [SIGN API] Quote ${quote.quoteNumber} is now fully signed!`);
+
+      // Update project status when quote is fully signed
+      if (quote.projectId) {
+        try {
+          // Get the project to update
+          const project = await db.collection('projects').findOne({
+            _id: new ObjectId(quote.projectId),
+            locationId
+          });
+
+          if (project) {
+            const projectUpdateData: any = {
+              status: 'won',
+              contractSigned: true,
+              contractSignedAt: new Date(),
+              updatedAt: new Date()
+            };
+
+            await db.collection('projects').updateOne(
+              { _id: new ObjectId(quote.projectId) },
+              {
+                $set: projectUpdateData,
+                $push: {
+                  timeline: {
+                    id: new ObjectId().toString(),
+                    event: 'contract_signed',
+                    description: `Contract signed by both consultant and customer`,
+                    timestamp: new Date().toISOString(),
+                    userId: signatureType === 'consultant' ? signedBy : null,
+                    metadata: {
+                      quoteId: id,
+                      quoteNumber: quote.quoteNumber,
+                      signedAt: new Date().toISOString()
+                    }
+                  }
+                }
+              }
+            );
+
+            log(`✅ [SIGN API] Updated project ${quote.projectId} status to 'won' after contract signing`);
+          }
+        } catch (projectError) {
+          console.error('[SIGN API] Failed to update project after signing:', projectError);
+          // Don't fail the signature process if project update fails
+        }
+      }
     }
 
-    console.log(`✅ [SIGN API] Successfully added ${signatureType} signature`);
+    log(`✅ [SIGN API] Successfully added ${signatureType} signature`);
     
     // Return success response
     return res.status(200).json({

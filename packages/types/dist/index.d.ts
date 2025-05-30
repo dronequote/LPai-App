@@ -51,6 +51,29 @@ export interface User {
     role: string;
     locationId: string;
     permissions: string[];
+    preferences?: UserPreferences;
+}
+export interface UserPreferences {
+    dashboardType?: 'service' | 'sales' | 'operations' | 'custom';
+    navigatorOrder?: string[];
+    hiddenNavItems?: string[];
+    showHomeLabel?: boolean;
+    customDashboard?: {
+        layout: DashboardWidget[];
+    };
+    theme?: 'light' | 'dark' | 'system';
+    notifications?: {
+        push?: boolean;
+        email?: boolean;
+        sms?: boolean;
+    };
+}
+export interface DashboardWidget {
+    id: string;
+    type: string;
+    size: 'full' | 'half' | 'quarter';
+    position: number;
+    config?: Record<string, any>;
 }
 export interface Calendar {
     id: string;

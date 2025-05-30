@@ -1,0 +1,84 @@
+Data Hierarchy & Updates
+1. Project = Master Timeline
+The project should track ALL major milestones across its lifecycle:
+
+Quote created
+Quote signed
+Deposit paid
+Work started
+Progress payments
+Work completed
+Final payment
+
+2. Quote = Contract/Financial Record
+The quote tracks its own specific status:
+
+Draft → Published → Signed → Deposit_Paid → Paid
+
+3. Best Update Strategy
+When events happen, update BOTH:
+javascript// When quote is signed
+await db.collection('quotes').updateOne(
+  { _id: quoteId },
+  { $set: { status: 'signed' }, $push: { activityFeed: {...} } }
+);
+
+await db.collection('projects').updateOne(
+  { _id: projectId },
+  { 
+    $set: { 
+      status: 'won',
+      contractSigned: true,
+      contractSignedAt: new Date()
+    },
+    $push: { 
+      timeline: {
+        event: 'quote_signed',
+        quoteId: quoteId,
+        timestamp: new Date()
+      }
+    }
+  }
+);
+For Your Filtering Needs:
+Quote Builder Screen
+Filter quotes by:
+
+status: 'draft' - Working quotes
+status: 'published' - Awaiting signature
+status: 'signed' - Awaiting deposit
+status: 'deposit_paid' - Active projects
+
+Projects Screen
+Filter projects by:
+
+status: 'won' && depositPaid: false - Need deposit
+status: 'won' && depositPaid: true - Ready to start
+status: 'in_progress' - Active work
+status: 'completed' - Finished
+
+The Smart Approach:
+
+Add to Project Schema:
+
+javascript{
+  // Financial tracking
+  contractSigned: Boolean,
+  contractSignedAt: Date,
+  depositPaid: Boolean,
+  depositPaidAt: Date,
+  finalPaymentReceived: Boolean,
+  
+  // Status progression
+  status: 'lead' | 'quoted' | 'won' | 'in_progress' | 'completed' | 'closed'
+}
+
+Update Both Collections when key events happen
+Query the appropriate collection based on the screen:
+
+Quote Builder → Query quotes collection
+Projects → Query projects collection
+
+Wireframes
+
+shit, don't write code til we confirm lol, so this is the quote builder screen. what your talking about is more for projects right? should we rewrite the flow of everything? Now we have all the tools so they can be accessed from everywhere. This is being built for in home service companies. So they will have appointments for typically in home service calls, some companies will have mostly projects that last 1-2 weeks. We could have multiple flows that they can pick from, i want this app to be fast and efficient though. I dont want it cluttered with info. can you help me brainstorm for best flow and if we should restructure? lol i know it's a bad time to do this once we have done all this work
