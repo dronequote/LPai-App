@@ -2,9 +2,6 @@
   "/_app": "pages/_app.js",
   "/_error": "pages/_error.js",
   "/_document": "pages/_document.js",
-  "/api/appointments": "pages/api/appointments.js",
-  "/api/contacts/[id]": "pages/api/contacts/[id].js",
-  "/api/login": "pages/api/login.js",
-  "/api/locations/byLocation": "pages/api/locations/byLocation.js",
-  "/api/projects": "pages/api/projects.js"
+  "/api/webhooks/ghl/unified": "pages/api/webhooks/ghl/unified.js",
+  "/api/cron/process-webhooks": "pages/api/cron/process-webhooks.js"
 }

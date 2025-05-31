@@ -1,0 +1,34 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/process-webhooks",
+      "schedule": "* * * * *"
+    }
+  ],
+"functions": {
+    "pages/api/cron/process-webhooks.ts": {
+      "maxDuration": 60
+    },
+    "pages/api/webhooks/ghl/native.ts": {
+      "maxDuration": 30
+    },
+    "pages/api/oauth/callback.ts": {
+      "maxDuration": 30
+    }
+  },
+  "headers": [
+    {
+      "source": "/api/webhooks/ghl/native",
+      "headers": [
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        },
+        {
+          "key": "Access-Control-Allow-Methods",
+          "value": "POST, OPTIONS"
+        }
+      ]
+    }
+  ]
+}

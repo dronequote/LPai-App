@@ -1,0 +1,11 @@
+{
+  "triggerData": {
+    "name": "Contact Created"
+  },
+  "contact": {
+    "id": "test123",
+    "firstName": "Test",
+    "lastName": "WebhookUser",
+    "email": "test@example.com"
+  }
+}
