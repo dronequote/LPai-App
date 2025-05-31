@@ -9,7 +9,9 @@
     "start": "next start",
     "lint": "next lint",
     "seed": "ts-node --project tsconfig.scripts.json scripts/seedUser.ts",
-    "seed:contacts": "ts-node scripts/seedContacts.ts"
+    "seed:contacts": "ts-node scripts/seedContacts.ts",
+    "setup-indexes": "node scripts/setup-indexes.js"
+
   },
   "dependencies": {
     "@faker-js/faker": "^9.8.0",
