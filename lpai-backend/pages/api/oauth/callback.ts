@@ -45,51 +45,118 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       expires_in, 
       locationId: tokenLocationId,
       userId,
-      companyId: tokenCompanyId 
+      companyId: tokenCompanyId,
+      userType,
+      approvedLocations
     } = tokenResponse.data;
 
     const finalLocationId = tokenLocationId || locationId;
+    const finalCompanyId = tokenCompanyId || companyId;
 
-    // Check if location exists, create if not
-    const existingLocation = await db.collection('locations').findOne({
-      locationId: finalLocationId
-    });
-
-    if (!existingLocation) {
-      console.log('[OAuth Callback] Creating new location record');
-      await db.collection('locations').insertOne({
-        locationId: finalLocationId,
-        companyId: tokenCompanyId || companyId,
-        name: 'New Location', // Will be updated by webhook
-        createdAt: new Date(),
-        updatedAt: new Date()
-      });
-    }
-
-    // Update location with OAuth tokens
-    const updateResult = await db.collection('locations').updateOne(
-      { locationId: finalLocationId },
-      {
-        $set: {
-          ghlOAuth: {
-            accessToken: access_token,
-            refreshToken: refresh_token,
-            expiresAt: new Date(Date.now() + (expires_in * 1000)),
-            tokenType: 'Bearer',
-            installedAt: new Date(),
-            installedBy: userId
+    // Handle based on userType
+    if (userType === 'Company' && !tokenLocationId) {
+      // Company-level install
+      console.log('[OAuth Callback] Company-level install detected');
+      
+      // Store company-level tokens
+      await db.collection('locations').updateOne(
+        { companyId: finalCompanyId, locationId: null },
+        {
+          $set: {
+            companyId: finalCompanyId,
+            ghlOAuth: {
+              accessToken: access_token,
+              refreshToken: refresh_token,
+              expiresAt: new Date(Date.now() + (expires_in * 1000)),
+              tokenType: 'Bearer',
+              userType: 'Company',
+              installedAt: new Date(),
+              installedBy: userId,
+              approvedLocations: approvedLocations || []
+            },
+            isCompanyLevel: true,
+            updatedAt: new Date()
           },
-          companyId: tokenCompanyId || companyId,
-          updatedAt: new Date()
+          $setOnInsert: {
+            locationId: null,
+            name: 'Company-Level OAuth',
+            createdAt: new Date()
+          }
+        },
+        { upsert: true }
+      );
+      
+      console.log('[OAuth Callback] Company tokens stored');
+      
+      // If we have approved locations, create/update records for them
+      if (approvedLocations && approvedLocations.length > 0) {
+        console.log('[OAuth Callback] Processing approved locations:', approvedLocations);
+        
+        for (const locId of approvedLocations) {
+          await db.collection('locations').updateOne(
+            { locationId: locId },
+            {
+              $set: {
+                companyId: finalCompanyId,
+                hasCompanyOAuth: true,
+                approvedViaCompany: true,
+                updatedAt: new Date()
+              },
+              $setOnInsert: {
+                name: `Location ${locId}`,
+                createdAt: new Date()
+              }
+            },
+            { upsert: true }
+          );
         }
       }
-    );
+      
+    } else if (tokenLocationId) {
+      // Location-level install
+      console.log('[OAuth Callback] Location-level install for:', tokenLocationId);
+      
+      // Check if location exists, create if not
+      const existingLocation = await db.collection('locations').findOne({
+        locationId: tokenLocationId
+      });
 
-    console.log('[OAuth Callback] Tokens stored for location:', finalLocationId);
-    console.log('[OAuth Callback] Update result:', updateResult);
+      if (!existingLocation) {
+        console.log('[OAuth Callback] Creating new location record');
+        await db.collection('locations').insertOne({
+          locationId: tokenLocationId,
+          companyId: finalCompanyId,
+          name: 'New Location', // Will be updated by webhook
+          createdAt: new Date(),
+          updatedAt: new Date()
+        });
+      }
 
-    // For now, return a simple success page
-    // Later you can redirect to a nice success page
+      // Update location with OAuth tokens
+      const updateResult = await db.collection('locations').updateOne(
+        { locationId: tokenLocationId },
+        {
+          $set: {
+            ghlOAuth: {
+              accessToken: access_token,
+              refreshToken: refresh_token,
+              expiresAt: new Date(Date.now() + (expires_in * 1000)),
+              tokenType: 'Bearer',
+              userType: userType || 'Location',
+              installedAt: new Date(),
+              installedBy: userId
+            },
+            companyId: finalCompanyId,
+            hasLocationOAuth: true,
+            updatedAt: new Date()
+          }
+        }
+      );
+
+      console.log('[OAuth Callback] Location tokens stored for:', tokenLocationId);
+    }
+
+    // Success page
     const html = `
       <!DOCTYPE html>
       <html>
@@ -111,17 +178,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
             text-align: center;
-            max-width: 400px;
+            max-width: 500px;
           }
           h1 { color: #2E86AB; margin-bottom: 10px; }
           p { color: #666; line-height: 1.6; }
           .success { color: #27AE60; font-weight: 600; }
-          .location-id { 
+          .details { 
             background: #f0f0f0; 
-            padding: 10px; 
+            padding: 20px; 
             border-radius: 4px; 
-            font-family: monospace;
             margin: 20px 0;
+            text-align: left;
+          }
+          .details-item {
+            margin: 10px 0;
+            font-size: 14px;
+          }
+          .label {
+            font-weight: 600;
+            color: #333;
+          }
+          .value {
+            color: #666;
+            font-family: monospace;
           }
         </style>
       </head>
@@ -129,7 +208,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         <div class="container">
           <h1>✅ Installation Successful!</h1>
           <p class="success">LPai App has been successfully installed.</p>
-          <div class="location-id">Location ID: ${finalLocationId}</div>
+          <div class="details">
+            <div class="details-item">
+              <span class="label">Install Type:</span> 
+              <span class="value">${userType || 'Unknown'}</span>
+            </div>
+            ${tokenLocationId ? `
+              <div class="details-item">
+                <span class="label">Location ID:</span> 
+                <span class="value">${tokenLocationId}</span>
+              </div>
+            ` : ''}
+            <div class="details-item">
+              <span class="label">Company ID:</span> 
+              <span class="value">${finalCompanyId}</span>
+            </div>
+            ${approvedLocations && approvedLocations.length > 0 ? `
+              <div class="details-item">
+                <span class="label">Approved Locations:</span> 
+                <span class="value">${approvedLocations.length} locations</span>
+              </div>
+            ` : ''}
+          </div>
           <p>The app is now connected and webhooks will begin flowing automatically.</p>
           <p style="margin-top: 30px; font-size: 14px;">You can close this window.</p>
         </div>

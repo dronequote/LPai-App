@@ -1,177 +1,229 @@
 // src/utils/webhooks/nativeWebhookProcessor.ts
 import { ObjectId } from 'mongodb';
 
-// Map native webhook types to your existing handler types
-const WEBHOOK_TYPE_MAP: Record<string, string> = {
-  // Contacts
-  'ContactCreate': 'contact_create',
-  'ContactUpdate': 'contact_update',
-  'ContactDelete': 'contact_delete',
-  'ContactTagUpdate': 'contact_tag_update',
-  'ContactDndUpdate': 'contact_dnd_update',
-  
-  // Appointments
-  'AppointmentCreate': 'appointment_create',
-  'AppointmentUpdate': 'appointment_update',
-  'AppointmentDelete': 'appointment_delete',
-  
-  // Opportunities
-  'OpportunityCreate': 'opportunity_create',
-  'OpportunityUpdate': 'opportunity_update',
-  'OpportunityDelete': 'opportunity_delete',
-  'OpportunityStageUpdate': 'opportunity_stage_update',
-  'OpportunityStatusUpdate': 'opportunity_status_update',
-  'OpportunityMonetaryValueUpdate': 'opportunity_value_update',
-  'OpportunityAssignedToUpdate': 'opportunity_assigned_update',
-  
-  // Messages
-  'InboundMessage': 'message_inbound',
-  'OutboundMessage': 'message_outbound',
-  
-  // Tasks
-  'TaskCreate': 'task_create',
-  'TaskComplete': 'task_complete',
-  'TaskDelete': 'task_delete',
-  
-  // Notes
-  'NoteCreate': 'note_create',
-  'NoteDelete': 'note_delete',
-  
-  // Conversations
-  'ConversationUnreadUpdate': 'conversation_unread',
-  'ConversationProviderOutboundMessage': 'conversation_provider_message',
-  
-  // Invoices
-  'InvoiceCreate': 'invoice_create',
-  'InvoiceUpdate': 'invoice_update',
-  'InvoicePaid': 'invoice_paid',
-  'InvoicePartiallyPaid': 'invoice_partial',
-  'InvoiceVoid': 'invoice_void',
-  'InvoiceDelete': 'invoice_delete',
-  
-  // Products & Prices
-  'ProductCreate': 'product_create',
-  'ProductUpdate': 'product_update',
-  'ProductDelete': 'product_delete',
-  'PriceCreate': 'price_create',
-  'PriceUpdate': 'price_update',
-  'PriceDelete': 'price_delete',
-  
-  // Orders
-  'OrderCreate': 'order_create',
-  'OrderStatusUpdate': 'order_status_update',
-  
-  // Campaigns
-  'CampaignStatusUpdate': 'campaign_status_update',
-  
-  // Location
-  'LocationCreate': 'location_create',
-  'LocationUpdate': 'location_update',
-  
-  // Users
-  'UserCreate': 'user_create',
-  
-  // Custom Objects
-  'ObjectSchemaCreate': 'custom_object_create',
-  'UpdateCustomObject': 'custom_object_update',
-  'RecordCreate': 'record_create',
-  'RecordUpdate': 'record_update',
-  'DeleteRecord': 'record_delete',
-  
-  // Associations
-  'AssociationCreated': 'association_create',
-  'AssociationUpdated': 'association_update',
-  'AssociationDeleted': 'association_delete',
-  'RelationCreate': 'relation_create',
-  'RelationDelete': 'relation_delete',
-  
-  // Other
-  'LCEmailStats': 'email_stats',
-  'PLAN_CHANGE': 'plan_change',
-  'EXTERNAL_AUTH_CONNECTED': 'external_auth_connected'
-};
-
 export async function processNativeWebhook(db: any, queueItem: any) {
   const { type, payload, webhookId } = queueItem;
-  const mappedType = WEBHOOK_TYPE_MAP[type] || type;
-  
-  console.log(`[Native Webhook ${webhookId}] Processing ${type} as ${mappedType}`);
   
   try {
+    // Mark as processing
+    await db.collection('webhook_queue').updateOne(
+      { _id: queueItem._id },
+      { $set: { status: 'processing', startedAt: new Date() } }
+    );
+    
+    console.log(`[Native Webhook ${webhookId}] Processing ${type} webhook`);
+    
+    // Process based on type
     switch (type) {
       // Contact Events
       case 'ContactCreate':
-      case 'ContactUpdate':
-        await processContactChange(db, payload, webhookId, type);
+        await processContactCreate(db, payload, webhookId);
         break;
-        
+      case 'ContactUpdate':
+        await processContactUpdate(db, payload, webhookId);
+        break;
       case 'ContactDelete':
         await processContactDelete(db, payload, webhookId);
         break;
-        
+      case 'ContactDndUpdate':
+        await processContactDndUpdate(db, payload, webhookId);
+        break;
       case 'ContactTagUpdate':
         await processContactTagUpdate(db, payload, webhookId);
         break;
         
-      case 'ContactDndUpdate':
-        await processContactDndUpdate(db, payload, webhookId);
-        break;
-        
       // Appointment Events
       case 'AppointmentCreate':
+        await processAppointmentCreate(db, payload, webhookId);
+        break;
       case 'AppointmentUpdate':
+        await processAppointmentUpdate(db, payload, webhookId);
+        break;
       case 'AppointmentDelete':
-        await processAppointmentEvent(db, payload, webhookId, type);
+        await processAppointmentDelete(db, payload, webhookId);
         break;
         
       // Opportunity Events
       case 'OpportunityCreate':
-      case 'OpportunityUpdate':
-      case 'OpportunityDelete':
-      case 'OpportunityStageUpdate':
-      case 'OpportunityStatusUpdate':
-      case 'OpportunityMonetaryValueUpdate':
-      case 'OpportunityAssignedToUpdate':
-        await processOpportunityEvent(db, payload, webhookId, type);
+        await processOpportunityCreate(db, payload, webhookId);
         break;
-        
-      // Message Events
-      case 'InboundMessage':
-      case 'OutboundMessage':
-        await processMessageEvent(db, payload, webhookId, type);
+      case 'OpportunityUpdate':
+        await processOpportunityUpdate(db, payload, webhookId);
+        break;
+      case 'OpportunityDelete':
+        await processOpportunityDelete(db, payload, webhookId);
+        break;
+      case 'OpportunityStageUpdate':
+        await processOpportunityStageUpdate(db, payload, webhookId);
+        break;
+      case 'OpportunityStatusUpdate':
+        await processOpportunityStatusUpdate(db, payload, webhookId);
+        break;
+      case 'OpportunityMonetaryValueUpdate':
+        await processOpportunityMonetaryValueUpdate(db, payload, webhookId);
+        break;
+      case 'OpportunityAssignedToUpdate':
+        await processOpportunityAssignedToUpdate(db, payload, webhookId);
         break;
         
       // Task Events
       case 'TaskCreate':
+        await processTaskCreate(db, payload, webhookId);
+        break;
       case 'TaskComplete':
+        await processTaskComplete(db, payload, webhookId);
+        break;
       case 'TaskDelete':
-        await processTaskEvent(db, payload, webhookId, type);
+        await processTaskDelete(db, payload, webhookId);
         break;
         
       // Note Events
       case 'NoteCreate':
+        await processNoteCreate(db, payload, webhookId);
+        break;
       case 'NoteDelete':
-        await processNoteEvent(db, payload, webhookId, type);
+        await processNoteDelete(db, payload, webhookId);
+        break;
+        
+      // Message Events
+      case 'InboundMessage':
+        await processInboundMessage(db, payload, webhookId);
+        break;
+      case 'OutboundMessage':
+        await processOutboundMessage(db, payload, webhookId);
         break;
         
       // Invoice Events
       case 'InvoiceCreate':
+        await processInvoiceCreate(db, payload, webhookId);
+        break;
       case 'InvoiceUpdate':
-      case 'InvoicePaid':
-      case 'InvoicePartiallyPaid':
-      case 'InvoiceVoid':
+        await processInvoiceUpdate(db, payload, webhookId);
+        break;
       case 'InvoiceDelete':
-        await processInvoiceEvent(db, payload, webhookId, type);
+        await processInvoiceDelete(db, payload, webhookId);
+        break;
+      case 'InvoiceVoid':
+        await processInvoiceVoid(db, payload, webhookId);
+        break;
+      case 'InvoicePaid':
+        await processInvoicePaid(db, payload, webhookId);
+        break;
+      case 'InvoicePartiallyPaid':
+        await processInvoicePartiallyPaid(db, payload, webhookId);
         break;
         
       // Order Events
       case 'OrderCreate':
+        await processOrderCreate(db, payload, webhookId);
+        break;
       case 'OrderStatusUpdate':
-        await processOrderEvent(db, payload, webhookId, type);
+        await processOrderStatusUpdate(db, payload, webhookId);
+        break;
+        
+      // Product/Price Events
+      case 'ProductCreate':
+        await processProductCreate(db, payload, webhookId);
+        break;
+      case 'ProductUpdate':
+        await processProductUpdate(db, payload, webhookId);
+        break;
+      case 'ProductDelete':
+        await processProductDelete(db, payload, webhookId);
+        break;
+      case 'PriceCreate':
+        await processPriceCreate(db, payload, webhookId);
+        break;
+      case 'PriceUpdate':
+        await processPriceUpdate(db, payload, webhookId);
+        break;
+      case 'PriceDelete':
+        await processPriceDelete(db, payload, webhookId);
+        break;
+        
+      // User Events
+      case 'UserCreate':
+        await processUserCreate(db, payload, webhookId);
+        break;
+        
+      // Location Events
+      case 'LocationCreate':
+        await processLocationCreate(db, payload, webhookId);
+        break;
+      case 'LocationUpdate':
+        await processLocationUpdate(db, payload, webhookId);
+        break;
+        
+      // Campaign Events
+      case 'CampaignStatusUpdate':
+        await processCampaignStatusUpdate(db, payload, webhookId);
+        break;
+        
+      // Conversation Events
+      case 'ConversationUnreadUpdate':
+        await processConversationUnreadUpdate(db, payload, webhookId);
+        break;
+      case 'ConversationProviderOutboundMessage':
+        await processConversationProviderOutboundMessage(db, payload, webhookId);
+        break;
+        
+      // LC Email Events
+      case 'LCEmailStats':
+        await processLCEmailStats(db, payload, webhookId);
+        break;
+        
+      // App Events
+      case 'INSTALL':
+        await processInstallEvent(db, payload, webhookId);
+        break;
+      case 'UNINSTALL':
+        await processUninstallEvent(db, payload, webhookId);
+        break;
+      case 'PLAN_CHANGE':
+        await processPlanChange(db, payload, webhookId);
+        break;
+        
+      // External Auth Events
+      case 'EXTERNAL_AUTH_CONNECTED':
+        await processExternalAuthConnected(db, payload, webhookId);
+        break;
+        
+      // Object Events
+      case 'ObjectSchemaCreate':
+        await processObjectSchemaCreate(db, payload, webhookId);
+        break;
+      case 'UpdateCustomObject':
+        await processUpdateCustomObject(db, payload, webhookId);
+        break;
+      case 'RecordCreate':
+        await processRecordCreate(db, payload, webhookId);
+        break;
+      case 'RecordUpdate':
+        await processRecordUpdate(db, payload, webhookId);
+        break;
+      case 'DeleteRecord':
+        await processDeleteRecord(db, payload, webhookId);
+        break;
+        
+      // Association Events
+      case 'AssociationCreated':
+        await processAssociationCreated(db, payload, webhookId);
+        break;
+      case 'AssociationUpdated':
+        await processAssociationUpdated(db, payload, webhookId);
+        break;
+      case 'AssociationDeleted':
+        await processAssociationDeleted(db, payload, webhookId);
+        break;
+      case 'RelationCreate':
+        await processRelationCreate(db, payload, webhookId);
+        break;
+      case 'RelationDelete':
+        await processRelationDelete(db, payload, webhookId);
         break;
         
       default:
-        console.log(`[Native Webhook ${webhookId}] Unhandled type: ${type}`);
+        console.log(`[Native Webhook ${webhookId}] Unknown event type: ${type}`);
     }
     
     // Mark as completed
@@ -183,7 +235,7 @@ export async function processNativeWebhook(db: any, queueItem: any) {
   } catch (error: any) {
     console.error(`[Native Webhook ${webhookId}] Processing error:`, error);
     
-    // Mark as failed
+    // Mark as failed, increment attempts
     await db.collection('webhook_queue').updateOne(
       { _id: queueItem._id },
       { 
@@ -199,516 +251,531 @@ export async function processNativeWebhook(db: any, queueItem: any) {
   }
 }
 
-// ===== CONTACT EVENT PROCESSORS =====
-// Process contact create/update
-async function processContactChange(db: any, payload: any, webhookId: string, eventType: string) {
-  const {
-    id,
-    locationId,
-    firstName,
-    lastName,
-    email,
-    phone,
-    address1,
-    city,
-    state,
-    postalCode,
-    country,
-    tags,
-    source,
-    companyName,
-    website,
-    dateOfBirth,
-    dnd,
-    dndSettings,
-    assignedTo,
-    customFields,
-    attachments,
-    dateAdded
-  } = payload;
+// Contact Event Handlers
+async function processContactCreate(db: any, payload: any, webhookId: string) {
+  const { locationId, id, email, firstName, lastName, phone } = payload;
   
-  if (!id || !locationId) {
-    console.log(`[Webhook ${webhookId}] Missing contact ID or location ID`);
-    return;
-  }
+  console.log(`[Native Webhook ${webhookId}] Creating contact ${email} for location ${locationId}`);
   
-  const contactData = {
-    ghlContactId: id,
-    locationId: locationId,
-    firstName: firstName || '',
-    lastName: lastName || '',
-    email: email || '',
-    phone: phone || '',
-    address: address1 || '',
-    city: city || '',
-    state: state || '',
-    postalCode: postalCode || '',
-    country: country || '',
-    tags: tags || [],
-    source: source || 'ghl_webhook',
-    companyName: companyName || '',
-    website: website || '',
-    dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
-    dnd: dnd || false,
-    dndSettings: dndSettings || {},
-    assignedTo: assignedTo || null,
-    customFields: customFields || [],
-    attachments: attachments || [],
-    ghlCreatedAt: dateAdded ? new Date(dateAdded) : null,
+  await db.collection('contacts').updateOne(
+    { ghlContactId: id, locationId },
+    {
+      $set: {
+        ghlContactId: id,
+        locationId,
+        email,
+        firstName,
+        lastName,
+        phone,
+        fullName: `${firstName || ''} ${lastName || ''}`.trim(),
+        tags: payload.tags || [],
+        source: payload.source || 'webhook',
+        dateOfBirth: payload.dateOfBirth ? new Date(payload.dateOfBirth) : null,
+        address1: payload.address1,
+        city: payload.city,
+        state: payload.state,
+        country: payload.country,
+        postalCode: payload.postalCode,
+        companyName: payload.companyName,
+        website: payload.website,
+        dnd: payload.dnd || false,
+        dndSettings: payload.dndSettings,
+        customFields: payload.customFields || [],
+        lastWebhookUpdate: new Date(),
+        updatedAt: new Date()
+      },
+      $setOnInsert: {
+        _id: new ObjectId(),
+        createdAt: new Date(),
+        createdByWebhook: webhookId
+      }
+    },
+    { upsert: true }
+  );
+}
+
+async function processContactUpdate(db: any, payload: any, webhookId: string) {
+  const { locationId, id } = payload;
+  
+  console.log(`[Native Webhook ${webhookId}] Updating contact ${id} for location ${locationId}`);
+  
+  const updateData: any = {
     lastWebhookUpdate: new Date(),
-    lastWebhookId: webhookId
+    updatedAt: new Date()
   };
   
-  // Remove null values
-  Object.keys(contactData).forEach(key => {
-    if (contactData[key] === null || contactData[key] === undefined) {
-      delete contactData[key];
+  // Only update fields that are present in the payload
+  const fieldsToUpdate = [
+    'email', 'firstName', 'lastName', 'phone', 'tags', 'source',
+    'dateOfBirth', 'address1', 'city', 'state', 'country', 'postalCode',
+    'companyName', 'website', 'dnd', 'dndSettings', 'customFields'
+  ];
+  
+  fieldsToUpdate.forEach(field => {
+    if (payload[field] !== undefined) {
+      updateData[field] = payload[field];
     }
   });
   
-  // Check if contact exists
-  const existing = await db.collection('contacts').findOne({
-    ghlContactId: id,
-    locationId: locationId
-  });
-  
-  if (!existing && eventType === 'ContactCreate') {
-    // Create new contact
-    await db.collection('contacts').insertOne({
-      _id: new ObjectId(),
-      ...contactData,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      createdByWebhook: webhookId
-    });
-    console.log(`[Webhook ${webhookId}] Created contact: ${email}`);
-    
-  } else if (existing) {
-    // Update existing contact
-    await db.collection('contacts').updateOne(
-      { _id: existing._id },
-      {
-        $set: {
-          ...contactData,
-          updatedAt: new Date()
-        }
-      }
-    );
-    console.log(`[Webhook ${webhookId}] Updated contact: ${email}`);
+  // Update fullName if name fields changed
+  if (payload.firstName !== undefined || payload.lastName !== undefined) {
+    updateData.fullName = `${payload.firstName || ''} ${payload.lastName || ''}`.trim();
   }
+  
+  await db.collection('contacts').updateOne(
+    { ghlContactId: id, locationId },
+    { $set: updateData }
+  );
 }
 
-// Process contact delete
 async function processContactDelete(db: any, payload: any, webhookId: string) {
-  const { id, locationId } = payload;
+  const { locationId, id } = payload;
   
-  const contact = await db.collection('contacts').findOne({
-    ghlContactId: id,
-    locationId: locationId
-  });
-  
-  if (contact) {
-    // Soft delete - mark as deleted but keep record
-    await db.collection('contacts').updateOne(
-      { _id: contact._id },
-      {
-        $set: {
-          deleted: true,
-          deletedAt: new Date(),
-          deletedByWebhook: webhookId
-        }
-      }
-    );
-    console.log(`[Webhook ${webhookId}] Soft deleted contact: ${contact.email}`);
-  }
-}
-
-// Process contact tag update
-async function processContactTagUpdate(db: any, payload: any, webhookId: string) {
-  const { id, locationId, tags } = payload;
+  console.log(`[Native Webhook ${webhookId}] Deleting contact ${id} for location ${locationId}`);
   
   await db.collection('contacts').updateOne(
-    { ghlContactId: id, locationId: locationId },
-    {
-      $set: {
-        tags: tags || [],
-        updatedAt: new Date(),
-        lastWebhookUpdate: new Date(),
-        lastWebhookId: webhookId
-      }
+    { ghlContactId: id, locationId },
+    { 
+      $set: { 
+        deleted: true,
+        deletedAt: new Date(),
+        deletedByWebhook: webhookId
+      } 
     }
   );
-  console.log(`[Webhook ${webhookId}] Updated tags for contact ${id}`);
 }
 
-// Process contact DND update
 async function processContactDndUpdate(db: any, payload: any, webhookId: string) {
-  const { id, locationId, dnd, dndSettings } = payload;
+  const { locationId, id, dnd, dndSettings } = payload;
+  
+  console.log(`[Native Webhook ${webhookId}] Updating DND for contact ${id}`);
   
   await db.collection('contacts').updateOne(
-    { ghlContactId: id, locationId: locationId },
-    {
-      $set: {
-        dnd: dnd || false,
-        dndSettings: dndSettings || {},
-        updatedAt: new Date(),
-        lastWebhookUpdate: new Date(),
-        lastWebhookId: webhookId
-      }
+    { ghlContactId: id, locationId },
+    { 
+      $set: { 
+        dnd,
+        dndSettings,
+        lastWebhookUpdate: new Date()
+      } 
     }
   );
-  console.log(`[Webhook ${webhookId}] Updated DND settings for contact ${id}`);
 }
 
-// ===== APPOINTMENT EVENT PROCESSORS =====
-// Process appointment events
-async function processAppointmentEvent(db: any, payload: any, webhookId: string, eventType: string) {
-  const { appointment, locationId } = payload;
+async function processContactTagUpdate(db: any, payload: any, webhookId: string) {
+  const { locationId, id, tags } = payload;
   
-  if (!appointment || !appointment.id) {
-    console.log(`[Webhook ${webhookId}] No appointment data in payload`);
-    return;
-  }
+  console.log(`[Native Webhook ${webhookId}] Updating tags for contact ${id}`);
   
-  // Map appointment data
-  const appointmentData = {
-    ghlAppointmentId: appointment.id,
-    locationId: locationId,
-    contactId: appointment.contactId,
-    calendarId: appointment.calendarId,
-    title: appointment.title || '',
-    address: appointment.address || '',
-    appointmentStatus: appointment.appointmentStatus || 'confirmed',
-    assignedUserId: appointment.assignedUserId || null,
-    users: appointment.users || [],
-    notes: appointment.notes || '',
-    source: appointment.source || 'ghl_webhook',
-    start: new Date(appointment.startTime),
-    end: new Date(appointment.endTime),
-    dateAdded: appointment.dateAdded ? new Date(appointment.dateAdded) : new Date(),
-    dateUpdated: appointment.dateUpdated ? new Date(appointment.dateUpdated) : new Date(),
-    groupId: appointment.groupId || null
-  };
-  
-  if (eventType === 'AppointmentDelete') {
-    // Soft delete appointment
-    await db.collection('appointments').updateOne(
-      { ghlAppointmentId: appointment.id },
-      {
-        $set: {
-          deleted: true,
-          deletedAt: new Date(),
-          deletedByWebhook: webhookId,
-          status: 'cancelled'
-        }
-      }
-    );
-    console.log(`[Webhook ${webhookId}] Deleted appointment ${appointment.id}`);
-    return;
-  }
-  
-  // Find contact in our DB
-  let contact = await db.collection('contacts').findOne({
-    ghlContactId: appointment.contactId,
-    locationId: locationId
-  });
-  
-  if (!contact) {
-    console.log(`[Webhook ${webhookId}] Contact not found for appointment, creating basic contact`);
-    // Create basic contact
-    const newContact = await db.collection('contacts').insertOne({
-      _id: new ObjectId(),
-      ghlContactId: appointment.contactId,
-      locationId: locationId,
-      firstName: 'Unknown',
-      lastName: 'Contact',
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      createdByWebhook: webhookId,
-      source: 'appointment_webhook'
-    });
-    contact = { _id: newContact.insertedId };
-  }
-  
-  // Update appointment data with our contact ID
-  appointmentData.contactId = contact._id.toString();
-  
-  // Check if appointment exists
-  const existing = await db.collection('appointments').findOne({
-    ghlAppointmentId: appointment.id
-  });
-  
-  if (!existing && eventType === 'AppointmentCreate') {
-    // Create new appointment
-    await db.collection('appointments').insertOne({
-      _id: new ObjectId(),
-      ...appointmentData,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      createdByWebhook: webhookId
-    });
-    console.log(`[Webhook ${webhookId}] Created appointment ${appointment.id}`);
-    
-  } else if (existing) {
-    // Update existing appointment
-    await db.collection('appointments').updateOne(
-      { _id: existing._id },
-      {
-        $set: {
-          ...appointmentData,
-          updatedAt: new Date(),
-          lastWebhookUpdate: new Date(),
-          lastWebhookId: webhookId
-        }
-      }
-    );
-    console.log(`[Webhook ${webhookId}] Updated appointment ${appointment.id}`);
-  }
-  
-  // Update project timeline if contact has active projects
-  const activeProject = await db.collection('projects').findOne({
-    contactId: contact._id.toString(),
-    locationId: locationId,
-    status: { $in: ['open', 'in_progress', 'quoted', 'won'] }
-  });
-  
-  if (activeProject) {
-    const timelineEvent = {
-      id: new ObjectId().toString(),
-      event: eventType === 'AppointmentCreate' ? 'appointment_scheduled' : 'appointment_updated',
-      description: `${appointment.title} - ${appointment.appointmentStatus}`,
-      timestamp: new Date().toISOString(),
-      metadata: {
-        appointmentId: appointment.id,
-        status: appointment.appointmentStatus,
-        webhookId
-      }
-    };
-    
-    await db.collection('projects').updateOne(
-      { _id: activeProject._id },
-      {
-        $push: { timeline: timelineEvent }
-      }
-    );
-  }
+  await db.collection('contacts').updateOne(
+    { ghlContactId: id, locationId },
+    { 
+      $set: { 
+        tags: tags || [],
+        lastWebhookUpdate: new Date()
+      } 
+    }
+  );
 }
 
-// ===== OPPORTUNITY/PROJECT EVENT PROCESSORS =====
-// Process opportunity events (projects in your system)
-async function processOpportunityEvent(db: any, payload: any, webhookId: string, eventType: string) {
-  const {
-    id,
-    locationId,
-    assignedTo,
-    contactId,
-    monetaryValue,
-    name,
-    pipelineId,
-    pipelineStageId,
-    source,
-    status,
-    dateAdded
-  } = payload;
+// Appointment Event Handlers
+async function processAppointmentCreate(db: any, payload: any, webhookId: string) {
+  const { locationId, appointment } = payload;
   
-  if (!id || !locationId || !contactId) {
-    console.log(`[Webhook ${webhookId}] Missing required opportunity fields`);
-    return;
-  }
+  console.log(`[Native Webhook ${webhookId}] Creating appointment ${appointment.id}`);
   
-  // Find contact in our DB
-  const contact = await db.collection('contacts').findOne({
-    ghlContactId: contactId,
-    locationId: locationId
-  });
+  await db.collection('appointments').updateOne(
+    { ghlAppointmentId: appointment.id, locationId },
+    {
+      $set: {
+        ghlAppointmentId: appointment.id,
+        locationId,
+        contactId: appointment.contactId,
+        calendarId: appointment.calendarId,
+        groupId: appointment.groupId,
+        title: appointment.title,
+        appointmentStatus: appointment.appointmentStatus,
+        assignedUserId: appointment.assignedUserId,
+        users: appointment.users || [],
+        notes: appointment.notes,
+        source: appointment.source,
+        startTime: new Date(appointment.startTime),
+        endTime: new Date(appointment.endTime),
+        address: appointment.address,
+        lastWebhookUpdate: new Date(),
+        updatedAt: new Date()
+      },
+      $setOnInsert: {
+        _id: new ObjectId(),
+        createdAt: new Date(),
+        createdByWebhook: webhookId
+      }
+    },
+    { upsert: true }
+  );
+}
+
+async function processAppointmentUpdate(db: any, payload: any, webhookId: string) {
+  const { locationId, appointment } = payload;
   
-  if (!contact) {
-    console.log(`[Webhook ${webhookId}] Contact not found for opportunity ${id}`);
-    return;
-  }
+  console.log(`[Native Webhook ${webhookId}] Updating appointment ${appointment.id}`);
   
-  const projectData = {
-    ghlOpportunityId: id,
-    locationId: locationId,
-    contactId: contact._id.toString(),
-    title: name || 'Untitled Project',
-    assignedTo: assignedTo || null,
-    monetaryValue: parseFloat(monetaryValue) || 0,
-    pipelineId: pipelineId || '',
-    pipelineStageId: pipelineStageId || '',
-    source: source || 'ghl_webhook',
-    status: mapGHLStatusToProjectStatus(status),
-    ghlCreatedAt: dateAdded ? new Date(dateAdded) : null,
+  const updateData: any = {
     lastWebhookUpdate: new Date(),
-    lastWebhookId: webhookId
+    updatedAt: new Date()
   };
   
-  if (eventType === 'OpportunityDelete') {
-    // Soft delete
-    await db.collection('projects').updateOne(
-      { ghlOpportunityId: id },
+  // Update fields that might change
+  const fieldsToUpdate = [
+    'title', 'appointmentStatus', 'assignedUserId', 'users',
+    'notes', 'source', 'address'
+  ];
+  
+  fieldsToUpdate.forEach(field => {
+    if (appointment[field] !== undefined) {
+      updateData[field] = appointment[field];
+    }
+  });
+  
+  // Handle date fields
+  if (appointment.startTime) updateData.startTime = new Date(appointment.startTime);
+  if (appointment.endTime) updateData.endTime = new Date(appointment.endTime);
+  
+  await db.collection('appointments').updateOne(
+    { ghlAppointmentId: appointment.id, locationId },
+    { $set: updateData }
+  );
+}
+
+async function processAppointmentDelete(db: any, payload: any, webhookId: string) {
+  const { locationId, appointment } = payload;
+  
+  console.log(`[Native Webhook ${webhookId}] Deleting appointment ${appointment.id}`);
+  
+  await db.collection('appointments').updateOne(
+    { ghlAppointmentId: appointment.id, locationId },
+    { 
+      $set: { 
+        deleted: true,
+        deletedAt: new Date(),
+        deletedByWebhook: webhookId
+      } 
+    }
+  );
+}
+
+// App Install/Uninstall/Update Event Handlers
+async function processInstallEvent(db: any, payload: any, webhookId: string) {
+  const { installType, locationId, companyId, userId, companyName, whitelabelDetails, planId } = payload;
+  
+  console.log(`[Native Webhook ${webhookId}] Processing ${installType} install`);
+  console.log(`[Native Webhook ${webhookId}] Full payload:`, JSON.stringify(payload, null, 2));
+  
+  if (installType === 'Location' && locationId) {
+    // Location-specific install
+    await db.collection('locations').updateOne(
+      { locationId },
       {
         $set: {
-          deleted: true,
-          deletedAt: new Date(),
-          deletedByWebhook: webhookId,
-          status: 'deleted'
+          locationId: locationId,
+          companyId: companyId,
+          name: companyName || `Location ${locationId}`,
+          appInstalled: true,
+          installedAt: new Date(payload.timestamp),
+          installedBy: userId,
+          installType: 'Location',
+          isWhitelabelCompany: payload.isWhitelabelCompany || false,
+          whitelabelDetails: whitelabelDetails,
+          planId: planId,
+          lastWebhookUpdate: new Date(),
+          updatedAt: new Date()
+        },
+        $setOnInsert: {
+          createdAt: new Date(),
+          createdByWebhook: webhookId
+        }
+      },
+      { upsert: true }
+    );
+    console.log(`[Native Webhook ${webhookId}] Location ${locationId} install processed`);
+    
+  } else if (installType === 'Company' && companyId) {
+    // Company-level install
+    await db.collection('locations').updateOne(
+      { companyId: companyId, locationId: null },
+      {
+        $set: {
+          companyId: companyId,
+          name: 'Company-Level Install',
+          appInstalled: true,
+          installedAt: new Date(payload.timestamp),
+          installType: 'Company',
+          isCompanyLevel: true,
+          planId: planId,
+          lastWebhookUpdate: new Date(),
+          updatedAt: new Date()
+        },
+        $setOnInsert: {
+          locationId: null,
+          createdAt: new Date(),
+          createdByWebhook: webhookId
+        }
+      },
+      { upsert: true }
+    );
+    console.log(`[Native Webhook ${webhookId}] Company ${companyId} install processed`);
+  }
+}
+
+async function processUninstallEvent(db: any, payload: any, webhookId: string) {
+  const { locationId, companyId } = payload;
+  
+  console.log(`[Native Webhook ${webhookId}] Processing uninstall`);
+  console.log(`[Native Webhook ${webhookId}] LocationId: ${locationId}, CompanyId: ${companyId}`);
+  
+  if (locationId) {
+    // Location-specific uninstall
+    const result = await db.collection('locations').updateOne(
+      { locationId },
+      {
+        $set: {
+          appInstalled: false,
+          uninstalledAt: new Date(payload.timestamp),
+          lastWebhookUpdate: new Date()
         }
       }
     );
-    console.log(`[Webhook ${webhookId}] Deleted opportunity/project ${id}`);
-    return;
-  }
-  
-  // Check if project exists
-  const existing = await db.collection('projects').findOne({
-    ghlOpportunityId: id
-  });
-  
-  if (!existing && eventType === 'OpportunityCreate') {
-    // Create new project
-    await db.collection('projects').insertOne({
-      _id: new ObjectId(),
-      ...projectData,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      createdByWebhook: webhookId,
-      timeline: [{
-        id: new ObjectId().toString(),
-        event: 'project_created',
-        description: `Project created from GHL opportunity`,
-        timestamp: new Date().toISOString(),
-        metadata: { webhookId, eventType }
-      }]
-    });
-    console.log(`[Webhook ${webhookId}] Created project from opportunity ${id}`);
+    console.log(`[Native Webhook ${webhookId}] Location ${locationId} uninstall processed, modified: ${result.modifiedCount}`);
     
-  } else if (existing) {
-    // Build timeline entry based on event type
-    let timelineEvent = null;
-    
-    switch (eventType) {
-      case 'OpportunityStageUpdate':
-        timelineEvent = {
-          id: new ObjectId().toString(),
-          event: 'stage_changed',
-          description: `Stage changed to ${pipelineStageId}`,
-          timestamp: new Date().toISOString(),
-          metadata: { 
-            webhookId,
-            previousStage: existing.pipelineStageId,
-            newStage: pipelineStageId
-          }
-        };
-        break;
-        
-      case 'OpportunityStatusUpdate':
-        timelineEvent = {
-          id: new ObjectId().toString(),
-          event: 'status_changed',
-          description: `Status changed to ${status}`,
-          timestamp: new Date().toISOString(),
-          metadata: { 
-            webhookId,
-            previousStatus: existing.status,
-            newStatus: projectData.status
-          }
-        };
-        break;
-        
-      case 'OpportunityMonetaryValueUpdate':
-        timelineEvent = {
-          id: new ObjectId().toString(),
-          event: 'value_changed',
-          description: `Value changed from $${existing.monetaryValue} to $${monetaryValue}`,
-          timestamp: new Date().toISOString(),
-          metadata: { 
-            webhookId,
-            previousValue: existing.monetaryValue,
-            newValue: parseFloat(monetaryValue)
-          }
-        };
-        break;
-        
-      case 'OpportunityAssignedToUpdate':
-        timelineEvent = {
-          id: new ObjectId().toString(),
-          event: 'assigned_changed',
-          description: `Assigned to ${assignedTo || 'Unassigned'}`,
-          timestamp: new Date().toISOString(),
-          metadata: { 
-            webhookId,
-            previousAssigned: existing.assignedTo,
-            newAssigned: assignedTo
-          }
-        };
-        break;
-    }
-    
-    // Update project
-    const updateData: any = {
-      ...projectData,
-      updatedAt: new Date()
-    };
-    
-    if (timelineEvent) {
-      await db.collection('projects').updateOne(
-        { _id: existing._id },
-        {
-          $set: updateData,
-          $push: { timeline: timelineEvent }
+  } else if (companyId && !locationId) {
+    // Company-level uninstall
+    const result = await db.collection('locations').updateOne(
+      { companyId, locationId: null },
+      {
+        $set: {
+          appInstalled: false,
+          uninstalledAt: new Date(payload.timestamp),
+          lastWebhookUpdate: new Date()
         }
-      );
-    } else {
-      await db.collection('projects').updateOne(
-        { _id: existing._id },
-        { $set: updateData }
-      );
-    }
-    
-    console.log(`[Webhook ${webhookId}] Updated project ${id} - ${eventType}`);
+      }
+    );
+    console.log(`[Native Webhook ${webhookId}] Company ${companyId} uninstall processed, modified: ${result.modifiedCount}`);
   }
 }
 
-// Helper function to map GHL status to project status
-function mapGHLStatusToProjectStatus(ghlStatus: string): string {
-  const statusMap: Record<string, string> = {
-    'open': 'open',
-    'won': 'won',
-    'lost': 'lost',
-    'abandoned': 'abandoned',
-    'deleted': 'deleted'
-  };
+async function processLocationUpdate(db: any, payload: any, webhookId: string) {
+  const { id, name, email, companyId, stripeProductId } = payload;
   
-  return statusMap[ghlStatus?.toLowerCase()] || 'open';
+  console.log(`[Native Webhook ${webhookId}] Processing location update for ${id}`);
+  console.log(`[Native Webhook ${webhookId}] Name: ${name}, Email: ${email}`);
+  
+  // Update or create location record
+  const result = await db.collection('locations').updateOne(
+    { locationId: id },
+    {
+      $set: {
+        locationId: id,
+        companyId: companyId,
+        name: name,
+        email: email,
+        stripeProductId: stripeProductId,
+        lastUpdated: new Date(payload.timestamp),
+        lastWebhookUpdate: new Date(),
+        updatedAt: new Date()
+      },
+      $setOnInsert: {
+        createdAt: new Date(),
+        createdByWebhook: webhookId,
+        source: 'location_update_webhook'
+      }
+    },
+    { upsert: true }
+  );
+  
+  console.log(`[Native Webhook ${webhookId}] Location ${id} update processed - ${result.upsertedCount ? 'created' : 'updated'}`);
 }
 
-// ===== MESSAGE EVENT PROCESSORS =====
-async function processMessageEvent(db: any, payload: any, webhookId: string, eventType: string) {
-  // TODO: Implement message processing
-  console.log(`[Webhook ${webhookId}] Message event processing not implemented yet`);
+// Add stub functions for other event types to prevent errors
+async function processOpportunityCreate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] OpportunityCreate not implemented yet`);
 }
 
-// ===== TASK EVENT PROCESSORS =====
-async function processTaskEvent(db: any, payload: any, webhookId: string, eventType: string) {
-  // TODO: Implement task processing
-  console.log(`[Webhook ${webhookId}] Task event processing not implemented yet`);
+async function processOpportunityUpdate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] OpportunityUpdate not implemented yet`);
 }
 
-// ===== NOTE EVENT PROCESSORS =====
-async function processNoteEvent(db: any, payload: any, webhookId: string, eventType: string) {
-  // TODO: Implement note processing
-  console.log(`[Webhook ${webhookId}] Note event processing not implemented yet`);
+async function processOpportunityDelete(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] OpportunityDelete not implemented yet`);
 }
 
-// ===== INVOICE EVENT PROCESSORS =====
-async function processInvoiceEvent(db: any, payload: any, webhookId: string, eventType: string) {
-  // TODO: Implement invoice processing
-  console.log(`[Webhook ${webhookId}] Invoice event processing not implemented yet`);
+async function processOpportunityStageUpdate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] OpportunityStageUpdate not implemented yet`);
 }
 
-// ===== ORDER EVENT PROCESSORS =====
-async function processOrderEvent(db: any, payload: any, webhookId: string, eventType: string) {
-  // TODO: Implement order processing
-  console.log(`[Webhook ${webhookId}] Order event processing not implemented yet`);
+async function processOpportunityStatusUpdate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] OpportunityStatusUpdate not implemented yet`);
+}
+
+async function processOpportunityMonetaryValueUpdate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] OpportunityMonetaryValueUpdate not implemented yet`);
+}
+
+async function processOpportunityAssignedToUpdate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] OpportunityAssignedToUpdate not implemented yet`);
+}
+
+async function processTaskCreate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] TaskCreate not implemented yet`);
+}
+
+async function processTaskComplete(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] TaskComplete not implemented yet`);
+}
+
+async function processTaskDelete(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] TaskDelete not implemented yet`);
+}
+
+async function processNoteCreate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] NoteCreate not implemented yet`);
+}
+
+async function processNoteDelete(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] NoteDelete not implemented yet`);
+}
+
+async function processInboundMessage(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] InboundMessage not implemented yet`);
+}
+
+async function processOutboundMessage(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] OutboundMessage not implemented yet`);
+}
+
+async function processInvoiceCreate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] InvoiceCreate not implemented yet`);
+}
+
+async function processInvoiceUpdate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] InvoiceUpdate not implemented yet`);
+}
+
+async function processInvoiceDelete(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] InvoiceDelete not implemented yet`);
+}
+
+async function processInvoiceVoid(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] InvoiceVoid not implemented yet`);
+}
+
+async function processInvoicePaid(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] InvoicePaid not implemented yet`);
+}
+
+async function processInvoicePartiallyPaid(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] InvoicePartiallyPaid not implemented yet`);
+}
+
+async function processOrderCreate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] OrderCreate not implemented yet`);
+}
+
+async function processOrderStatusUpdate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] OrderStatusUpdate not implemented yet`);
+}
+
+async function processProductCreate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] ProductCreate not implemented yet`);
+}
+
+async function processProductUpdate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] ProductUpdate not implemented yet`);
+}
+
+async function processProductDelete(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] ProductDelete not implemented yet`);
+}
+
+async function processPriceCreate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] PriceCreate not implemented yet`);
+}
+
+async function processPriceUpdate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] PriceUpdate not implemented yet`);
+}
+
+async function processPriceDelete(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] PriceDelete not implemented yet`);
+}
+
+async function processUserCreate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] UserCreate not implemented yet`);
+}
+
+async function processLocationCreate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] LocationCreate not implemented yet`);
+}
+
+async function processCampaignStatusUpdate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] CampaignStatusUpdate not implemented yet`);
+}
+
+async function processConversationUnreadUpdate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] ConversationUnreadUpdate not implemented yet`);
+}
+
+async function processConversationProviderOutboundMessage(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] ConversationProviderOutboundMessage not implemented yet`);
+}
+
+async function processLCEmailStats(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] LCEmailStats not implemented yet`);
+}
+
+async function processPlanChange(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] PlanChange not implemented yet`);
+}
+
+async function processExternalAuthConnected(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] ExternalAuthConnected not implemented yet`);
+}
+
+async function processObjectSchemaCreate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] ObjectSchemaCreate not implemented yet`);
+}
+
+async function processUpdateCustomObject(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] UpdateCustomObject not implemented yet`);
+}
+
+async function processRecordCreate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] RecordCreate not implemented yet`);
+}
+
+async function processRecordUpdate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] RecordUpdate not implemented yet`);
+}
+
+async function processDeleteRecord(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] DeleteRecord not implemented yet`);
+}
+
+async function processAssociationCreated(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] AssociationCreated not implemented yet`);
+}
+
+async function processAssociationUpdated(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] AssociationUpdated not implemented yet`);
+}
+
+async function processAssociationDeleted(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] AssociationDeleted not implemented yet`);
+}
+
+async function processRelationCreate(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] RelationCreate not implemented yet`);
+}
+
+async function processRelationDelete(db: any, payload: any, webhookId: string) {
+  console.log(`[Native Webhook ${webhookId}] RelationDelete not implemented yet`);
 }
