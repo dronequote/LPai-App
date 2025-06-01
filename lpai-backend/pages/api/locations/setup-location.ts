@@ -17,6 +17,8 @@ import { syncAppointments } from '../../../src/utils/sync/syncAppointments';
 import { syncConversations } from '../../../src/utils/sync/syncConversations';
 import { syncInvoices } from '../../../src/utils/sync/syncInvoices';
 import { setupDefaults } from '../../../src/utils/sync/setupDefaults';
+import { syncCustomValues } from '../../../src/utils/sync/syncCustomValues';
+
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -105,6 +107,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     } catch (error: any) {
       console.error(`[Location Setup] Custom field sync failed:`, error);
       setupResults.steps.customFields = { success: false, error: error.message };
+    }
+
+    // 5.5 Sync Custom Values
+    try {
+      console.log(`[Location Setup] Step 5.5: Syncing custom values...`);
+      const customValuesResult = await syncCustomValues(db, location);
+      setupResults.steps.customValues = { success: true, ...customValuesResult };
+    } catch (error: any) {
+      console.error(`[Location Setup] Custom values sync failed:`, error);
+      setupResults.steps.customValues = { success: false, error: error.message };
     }
 
     // Only do full sync if requested (for initial setup)

@@ -29,7 +29,6 @@ export async function syncOpportunities(db: Db, location: any, options: SyncOpti
           'Accept': 'application/json'
         },
         params: {
-          locationId: location.locationId,
           limit,
           offset
         }
