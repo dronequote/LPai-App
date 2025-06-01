@@ -29,6 +29,7 @@ export async function syncContacts(db: Db, location: any, options: SyncOptions =
           'Accept': 'application/json'
         },
         params: {
+          locationId: location.locationId,
           limit,
           skip: offset
         }
