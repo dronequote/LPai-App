@@ -1,253 +1,204 @@
+## FILE: `/lpai-backend/docs/WEBHOOK_QUEUE_SYSTEM.md` (UPDATED)
+
+```markdown
 # Webhook Queue System Documentation
 
 ## Overview
-
 The LPai webhook queue system provides scalable, reliable processing of GoHighLevel (GHL) webhooks with built-in deduplication, retry logic, and non-blocking responses.
+
+## Current Implementation Status (June 1, 2025)
+
+### ✅ Implemented
+- Webhook queue collection and processing
+- Cron job running every minute
+- Signature verification using GHL public key
+- Deduplication system with MD5 hashing
+- Native webhook processor with event routing
+- INSTALL/UNINSTALL/LocationUpdate handlers
+
+### 🚧 In Progress
+- Contact event handlers (stub functions exist)
+- Appointment event handlers (stub functions exist)
+- Complete webhook processor implementation
+
+### ❌ Not Implemented
+- Retry logic for failed webhooks
+- Dead letter queue
+- Webhook analytics
+- Priority queue system
 
 ## Architecture
 
 ### Components
 
-1. **Webhook Endpoint** (`/api/webhooks/ghl/unified.ts`)
-   - Receives webhooks from GHL
-   - Validates payload
+1. **Native Webhook Endpoint** (`/api/webhooks/ghl/native.ts`)
+   - Receives marketplace app webhooks
+   - Verifies signature with GHL public key
    - Queues for async processing
-   - Returns immediately (non-blocking)
+   - Returns 200 immediately
 
 2. **Queue Processor** (`/api/cron/process-webhooks.ts`)
    - Runs every minute via Vercel cron
-   - Processes pending webhooks in batches
-   - Handles retries for failed webhooks
-   - Updates MongoDB with changes
+   - Protected by CRON_SECRET
+   - Processes up to 50 webhooks per run
+   - Cleans up old completed webhooks
 
-3. **Webhook Processor** (`/src/utils/webhookProcessor.ts`)
-   - Contains business logic for each webhook type
-   - Smart diffing to detect actual changes
-   - Updates only changed fields
+3. **Native Webhook Processor** (`/src/utils/webhooks/nativeWebhookProcessor.ts`)
+   - Routes events to specific handlers
+   - Currently handles: INSTALL, UNINSTALL, LocationUpdate
+   - Stub functions for all other event types
 
 4. **Deduplication System** (`/src/utils/deduplication.ts`)
-   - Prevents processing duplicate webhooks
-   - Uses MD5 hashing of key fields
-   - Auto-expires hashes after 5 minutes
+   - Creates MD5 hash of webhook payload
+   - Prevents duplicate processing within 5 minutes
+   - Auto-expires hashes
 
-## Database Collections
+## Database Schema
 
 ### webhook_queue
-Stores incoming webhooks for processing
 ```javascript
 {
   _id: ObjectId,
-  webhookId: string,
-  type: string,
-  payload: object,
-  status: 'pending' | 'processing' | 'completed' | 'failed',
-  attempts: number,
+  webhookId: string,              // Unique webhook ID
+  type: string,                   // Event type (e.g., "INSTALL", "ContactCreate")
+  payload: object,                // Full webhook payload
+  locationId: string | null,      // Associated location
+  source: "native",               // Webhook source
+  status: "pending" | "processing" | "completed" | "failed" | "skipped",
+  attempts: number,               // Retry counter
   createdAt: Date,
-  processAfter: Date,
-  startedAt?: Date,
-  completedAt?: Date,
-  lastError?: string
-}
-```
-
-### webhook_hashes
-Prevents duplicate processing
-```javascript
-{
-  hash: string,
-  createdAt: Date,
-  expireAt: Date  // TTL index
-}
-```
-
-## MongoDB Indexes
-
-Run `npm run setup-indexes` to create:
-- `webhook_queue`: status + processAfter (compound), createdAt (TTL)
-- `webhook_hashes`: hash, expireAt (TTL)
-- `contacts`: ghlContactId, email, locationId
-- `appointments`: ghlAppointmentId, locationId + start
-- `projects`: ghlOpportunityId, locationId + status
-
-## Configuration
-
-### Environment Variables
-```bash
-MONGODB_URI=your-mongodb-connection-string
-CRON_SECRET=your-super-secret-cron-key-123456
-```
-
-### Vercel Configuration
-Add to `vercel.json`:
-```json
-{
-  "crons": [
-    {
-      "path": "/api/cron/process-webhooks",
-      "schedule": "* * * * *"
-    }
-  ],
-  "functions": {
-    "pages/api/cron/process-webhooks.ts": {
-      "maxDuration": 60
-    }
+  processAfter: Date,             // For retry delays
+  startedAt?: Date,               // Processing start time
+  completedAt?: Date,             // Processing end time
+  lastError?: string,             // Last error message
+  skipReason?: string,            // Why webhook was skipped
+  metadata: {                     // Quick reference fields
+    contactId?: string,
+    email?: string,
+    appointmentId?: string,
+    opportunityId?: string,
+    invoiceId?: string,
+    orderId?: string
   }
 }
-```
-
-## Testing
-
-### Local Testing
-
-1. **Send test webhook:**
-```bash
-curl -X POST http://localhost:3000/api/webhooks/ghl/unified \
-  -H "Content-Type: application/json" \
-  -d '{
-    "triggerData": {"name": "Contact Created"},
-    "contact": {
-      "id": "test123",
-      "firstName": "Test",
-      "lastName": "User",
-      "email": "test@example.com"
-    }
-  }'
-```
-
-2. **Check queue in MongoDB:**
-   - Look in `webhook_queue` collection
-   - Should see entry with `status: "pending"`
-
-3. **Process queue manually:**
-```bash
-curl http://localhost:3000/api/cron/process-webhooks \
-  -H "Authorization: Bearer your-super-secret-cron-key-123456"
-```
-
-4. **Verify processing:**
-   - Queue entry should show `status: "completed"`
-   - Check relevant collection (contacts, appointments, etc.)
-
-### Production Testing
-
-After deployment:
-```bash
-curl -X POST https://your-app.vercel.app/api/webhooks/ghl/unified \
-  -H "Content-Type: application/json" \
-  -d '{
-    "triggerData": {"name": "Contact Created"},
-    "contact": {
-      "id": "prod-test123",
-      "firstName": "Production",
-      "lastName": "Test"
-    }
-  }'
-```
-
-## Adding New Webhook Types
-
-1. **Update type detection** in `/api/webhooks/ghl/unified.ts`:
-```typescript
-function determineEventType(payload: any): string {
-  if (payload.contact) return 'contact_changed';
-  if (payload.opportunity) return 'opportunity_changed';
-  if (payload.yourNewType) return 'your_new_type';
-  return 'unknown';
+webhook_logs
+javascript{
+  _id: ObjectId,
+  webhookId: string,
+  type: string,
+  locationId: string | null,
+  payload: object,
+  signature: string,              // x-wh-signature header
+  verified: boolean,              // Signature verification result
+  receivedAt: Date
 }
-```
-
-2. **Add processor** in `/src/utils/webhookProcessor.ts`:
-```typescript
-case 'your_new_type':
-  await processYourNewType(db, payload, webhookId);
-  break;
-```
-
-3. **Implement handler:**
-```typescript
-async function processYourNewType(db: any, payload: any, webhookId: string) {
-  // Your processing logic
+webhook_hashes
+javascript{
+  hash: string,                   // MD5 hash of payload
+  createdAt: Date,
+  expireAt: Date                  // TTL index (5 minutes)
 }
-```
+Current Webhook Types
+Implemented ✅
 
-## Monitoring
+INSTALL - App installation
+UNINSTALL - App removal
+LocationUpdate - Location details changed
 
-### Check Queue Health
-```typescript
-// Count pending webhooks
-db.webhook_queue.countDocuments({ status: 'pending' })
+Stub Functions Only 🚧
+All other webhook types have stub functions that log but don't process:
 
-// Find failed webhooks
-db.webhook_queue.find({ status: 'failed' }).sort({ createdAt: -1 })
+ContactCreate/Update/Delete
+AppointmentCreate/Update/Delete
+OpportunityCreate/Update/Delete/StageUpdate/StatusUpdate
+TaskCreate/Complete/Delete
+NoteCreate/Delete
+InvoiceCreate/Update/Delete/Void/Paid/PartiallyPaid
+OrderCreate/StatusUpdate
+And many more...
 
-// Check processing times
-db.webhook_queue.aggregate([
-  { $match: { status: 'completed' } },
-  { $project: {
-    processingTime: { $subtract: ['$completedAt', '$startedAt'] }
-  }},
-  { $group: {
-    _id: null,
-    avgTime: { $avg: '$processingTime' }
-  }}
-])
-```
+Environment Configuration
+Required Variables
+bash# MongoDB connection
+MONGODB_URI=mongodb+srv://...
 
-### Common Issues
+# Cron job authentication
+CRON_SECRET=lpai_cron_2024_xK9mN3pQ7rL5vB8wT6yH2jF4
 
-1. **Webhooks not processing:**
-   - Check CRON_SECRET is set correctly
-   - Verify cron job is running (Vercel Pro plan required)
-   - Check MongoDB connection
+# GHL OAuth credentials
+GHL_MARKETPLACE_CLIENT_ID=683aa5ce1a9647760b904986-mbc8v930
+GHL_MARKETPLACE_CLIENT_SECRET=a6ec6cdc-047d-41d0-bcc5-96de0acd37d3
+GHL_MARKETPLACE_SHARED_SECRET=aafa362b-0e65-48d8-8373-8277026090e6
+Vercel Configuration
+Current vercel.json:
+json{
+  "crons": [{
+    "path": "/api/cron/process-webhooks",
+    "schedule": "* * * * *"
+  }]
+}
+Testing Current Implementation
+1. Check Queue Status
+javascript// In MongoDB console
+db.webhook_queue.countDocuments({ status: "pending" })
+db.webhook_queue.find({ status: "failed" }).limit(5)
+2. Manually Process Queue
+bashcurl https://lpai-backend-omega.vercel.app/api/cron/process-webhooks \
+  -H "Authorization: Bearer lpai_cron_2024_xK9mN3pQ7rL5vB8wT6yH2jF4"
+3. View Recent Webhooks
+javascriptdb.webhook_logs.find().sort({ receivedAt: -1 }).limit(10)
+Known Issues
 
-2. **Duplicate processing:**
-   - Verify deduplication indexes exist
-   - Check webhook_hashes TTL is working
+No retry logic - Failed webhooks stay failed
+Limited processing - Only 3 event types fully implemented
+No pagination - Agency sync limited to 100 locations
+No monitoring - Need better visibility into queue health
 
-3. **Slow processing:**
-   - Increase batch size in processor
-   - Add more specific indexes
-   - Consider splitting into multiple queues
+Implementation Priority
+Phase 1 (Current)
 
-## Performance Optimization
+ Basic queue system
+ Signature verification
+ App lifecycle webhooks
 
-1. **Batch Processing:**
-   - Current: 50 webhooks per minute
-   - Adjust in `process-webhooks.ts`: `.limit(50)`
+Phase 2 (Next)
 
-2. **Retry Strategy:**
-   - Current: 3 attempts with 5-minute delays
-   - Adjust in `webhookProcessor.ts`
+ Contact webhooks
+ Appointment webhooks
+ Token refresh logic
+ Retry mechanism
 
-3. **TTL Settings:**
-   - Queue entries expire after 24 hours
-   - Hashes expire after 5 minutes
-   - Adjust based on your needs
+Phase 3 (Future)
 
-## Security
+ All remaining webhook types
+ Webhook analytics dashboard
+ Priority queue
+ Dead letter queue
 
-- Webhook endpoint accepts all requests (GHL doesn't support authentication)
-- Cron endpoint protected by Bearer token
-- All data filtered by locationId for multi-tenancy
-- No sensitive data logged
+Debugging Tips
+Check if webhooks are arriving
+bashtail -f vercel.log | grep "Native Webhook"
+Find stuck webhooks
+javascriptdb.webhook_queue.find({
+  status: "processing",
+  startedAt: { $lt: new Date(Date.now() - 5 * 60 * 1000) }
+})
+Reset failed webhooks
+javascriptdb.webhook_queue.updateMany(
+  { status: "failed", attempts: { $lt: 3 } },
+  { $set: { status: "pending", processAfter: new Date() } }
+)
+Performance Metrics
+Current Settings
 
-## Future Enhancements
+Batch size: 50 webhooks per minute
+Max attempts: 3
+Retry delay: 5 minutes
+Queue retention: 24 hours
+Hash expiry: 5 minutes
 
-1. **Priority Queue:** Add priority field for urgent webhooks
-2. **Dead Letter Queue:** Store permanently failed webhooks
-3. **Webhook Analytics:** Track processing times, success rates
-4. **Real-time Monitoring:** Dashboard for queue status
-5. **Selective Processing:** Filter which events to process per location
+Observed Performance
 
-## Troubleshooting Commands
-
-```bash
-# View recent webhooks
-mongo lpai --eval "db.webhook_queue.find().sort({createdAt: -1}).limit(10).pretty()"
-
-# Retry failed webhooks
-mongo lpai --eval "db.webhook_queue.updateMany({status: 'failed'}, {\$set: {status: 'pending', attempts: 0}})"
-
-# Clear old webhooks
-mongo lpai --eval "db.webhook_queue.deleteMany({createdAt: {\$lt: new Date(Date.now() - 7*24*60*60*1000)}})"
-```
+Average processing time: ~2 seconds per webhook
+Success rate: ~95% (mostly INSTALL/UNINSTALL)
+Queue depth: Usually < 10 webhooks

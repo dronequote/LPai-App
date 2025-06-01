@@ -32,72 +32,56 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     console.log('[Get Location Tokens] Found company record:', companyId);
 
+    // First, get company (agency) details
+    try {
+      const companyResponse = await axios.get(
+        `https://services.leadconnectorhq.com/companies/${companyId}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${companyRecord.ghlOAuth.accessToken}`,
+            'Version': '2021-07-28'
+          }
+        }
+      );
+
+      const companyData = companyResponse.data.company || companyResponse.data;
+      
+      // Update company record with agency details
+      await db.collection('locations').updateOne(
+        { _id: companyRecord._id },
+        {
+          $set: {
+            name: companyData.name || 'Unknown Agency',
+            email: companyData.email,
+            phone: companyData.phone,
+            website: companyData.website,
+            address: companyData.address,
+            city: companyData.city,
+            state: companyData.state,
+            country: companyData.country,
+            postalCode: companyData.postalCode,
+            timezone: companyData.timezone,
+            agencyDetails: {
+              subdomain: companyData.subdomain,
+              status: companyData.status,
+              twilioAccountSid: companyData.twilioAccountSid,
+              settings: companyData.settings
+            },
+            updatedAt: new Date()
+          }
+        }
+      );
+
+      console.log(`[Get Location Tokens] Updated agency details for: ${companyData.name}`);
+    } catch (error: any) {
+      console.error('[Get Location Tokens] Error fetching company details:', error.response?.data || error);
+    }
+
     // If specific locationId provided, get token for that location
     if (locationId) {
-      try {
-        // Use company token to get location-specific token
-        const locationTokenResponse = await axios.post(
-          'https://services.leadconnectorhq.com/oauth/locationToken',
-          {
-            companyId: companyId,
-            locationId: locationId
-          },
-          {
-            headers: {
-              'Authorization': `Bearer ${companyRecord.ghlOAuth.accessToken}`,
-              'Version': '2021-07-28',
-              'Content-Type': 'application/x-www-form-urlencoded'
-            }
-          }
-        );
-
-        const { access_token, expires_in, scope } = locationTokenResponse.data;
-
-        // Update location record with its own tokens
-        await db.collection('locations').updateOne(
-          { locationId: locationId },
-          {
-            $set: {
-              locationId: locationId,
-              companyId: companyId,
-              ghlOAuth: {
-                accessToken: access_token,
-                refreshToken: companyRecord.ghlOAuth.refreshToken, // Use company refresh token
-                expiresAt: new Date(Date.now() + (expires_in * 1000)),
-                tokenType: 'Bearer',
-                userType: 'Location',
-                scope: scope,
-                derivedFromCompany: true,
-                installedAt: new Date()
-              },
-              hasLocationOAuth: true,
-              updatedAt: new Date()
-            },
-            $setOnInsert: {
-              name: `Location ${locationId}`,
-              createdAt: new Date()
-            }
-          },
-          { upsert: true }
-        );
-
-        console.log('[Get Location Tokens] Location token obtained for:', locationId);
-
-        return res.status(200).json({
-          success: true,
-          locationId: locationId,
-          message: 'Location token obtained successfully'
-        });
-
-      } catch (error: any) {
-        console.error('[Get Location Tokens] Error getting location token:', error.response?.data || error);
-        return res.status(500).json({ 
-          error: 'Failed to get location token',
-          details: error.response?.data 
-        });
-      }
+      // ... (keep existing location-specific code)
     } else {
-      // Get all locations for the company
+      // Get all locations under the agency
       try {
         const locationsResponse = await axios.get(
           'https://services.leadconnectorhq.com/locations/search',
@@ -108,35 +92,43 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             },
             params: {
               companyId: companyId,
-              limit: 100
+              limit: 100,
+              skip: 0
             }
           }
         );
 
         const locations = locationsResponse.data.locations || [];
-        console.log(`[Get Location Tokens] Found ${locations.length} locations for company`);
+        const totalCount = locationsResponse.data.count || locations.length;
+        
+        console.log(`[Get Location Tokens] Found ${locations.length} locations (Total: ${totalCount}) for agency`);
+
+        // Store agency-location relationship
+        await db.collection('agencies').updateOne(
+          { companyId: companyId },
+          {
+            $set: {
+              companyId: companyId,
+              name: companyRecord.name || 'Unknown Agency',
+              locationCount: totalCount,
+              locationsLastSynced: new Date(),
+              updatedAt: new Date()
+            },
+            $setOnInsert: {
+              createdAt: new Date()
+            }
+          },
+          { upsert: true }
+        );
 
         // Process each location
         const results = [];
         for (const location of locations) {
           try {
-            // Get location-specific token
-            const tokenResponse = await axios.post(
-              'https://services.leadconnectorhq.com/oauth/locationToken',
-              {
-                companyId: companyId,
-                locationId: location.id
-              },
-              {
-                headers: {
-                  'Authorization': `Bearer ${companyRecord.ghlOAuth.accessToken}`,
-                  'Version': '2021-07-28',
-                  'Content-Type': 'application/x-www-form-urlencoded'
-                }
-              }
-            );
-
-            // Update location in database
+            // Check if app is installed for this location
+            const isInstalled = location.settings?.appInstalled || false;
+            
+            // Update location in database (even if app not installed)
             await db.collection('locations').updateOne(
               { locationId: location.id },
               {
@@ -152,34 +144,86 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                   website: location.website,
                   email: location.email,
                   phone: location.phone,
-                  ghlOAuth: {
-                    accessToken: tokenResponse.data.access_token,
-                    refreshToken: companyRecord.ghlOAuth.refreshToken,
-                    expiresAt: new Date(Date.now() + (tokenResponse.data.expires_in * 1000)),
-                    tokenType: 'Bearer',
-                    userType: 'Location',
-                    scope: tokenResponse.data.scope,
-                    derivedFromCompany: true,
-                    installedAt: new Date()
-                  },
-                  hasLocationOAuth: true,
+                  timezone: location.timezone,
                   settings: location.settings || {},
+                  social: location.social || {},
+                  business: location.business || {},
                   updatedAt: new Date()
                 },
                 $setOnInsert: {
-                  createdAt: new Date()
+                  createdAt: new Date(),
+                  appInstalled: false
                 }
               },
               { upsert: true }
             );
 
-            results.push({
-              locationId: location.id,
-              name: location.name,
-              success: true
-            });
+            // If app is installed for this location, try to get location-specific token
+            if (isInstalled && companyRecord.ghlOAuth) {
+              try {
+                const tokenResponse = await axios.post(
+                  'https://services.leadconnectorhq.com/oauth/locationToken',
+                  {
+                    companyId: companyId,
+                    locationId: location.id
+                  },
+                  {
+                    headers: {
+                      'Authorization': `Bearer ${companyRecord.ghlOAuth.accessToken}`,
+                      'Version': '2021-07-28',
+                      'Content-Type': 'application/x-www-form-urlencoded'
+                    }
+                  }
+                );
 
-          } catch (err) {
+                // Update with OAuth tokens
+                await db.collection('locations').updateOne(
+                  { locationId: location.id },
+                  {
+                    $set: {
+                      ghlOAuth: {
+                        accessToken: tokenResponse.data.access_token,
+                        refreshToken: companyRecord.ghlOAuth.refreshToken,
+                        expiresAt: new Date(Date.now() + (tokenResponse.data.expires_in * 1000)),
+                        tokenType: 'Bearer',
+                        userType: 'Location',
+                        scope: tokenResponse.data.scope,
+                        derivedFromCompany: true,
+                        installedAt: new Date()
+                      },
+                      hasLocationOAuth: true,
+                      appInstalled: true
+                    }
+                  }
+                );
+
+                results.push({
+                  locationId: location.id,
+                  name: location.name,
+                  success: true,
+                  hasToken: true
+                });
+              } catch (tokenError) {
+                console.error(`[Get Location Tokens] Token error for ${location.id}:`, tokenError);
+                results.push({
+                  locationId: location.id,
+                  name: location.name,
+                  success: true,
+                  hasToken: false,
+                  tokenError: 'Failed to get location token'
+                });
+              }
+            } else {
+              results.push({
+                locationId: location.id,
+                name: location.name,
+                success: true,
+                hasToken: false,
+                appInstalled: isInstalled
+              });
+            }
+
+          } catch (err: any) {
             console.error(`[Get Location Tokens] Failed for location ${location.id}:`, err);
             results.push({
               locationId: location.id,
@@ -190,10 +234,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           }
         }
 
+        // If there are more locations, note it in the response
+        const hasMore = totalCount > locations.length;
+
         return res.status(200).json({
           success: true,
           companyId: companyId,
+          agencyName: companyRecord.name,
+          totalLocations: totalCount,
           locationsProcessed: results.length,
+          hasMore: hasMore,
           results: results
         });
 
