@@ -499,6 +499,69 @@ async function processInstallEvent(db: any, payload: any, webhookId: string) {
     );
     console.log(`[Native Webhook ${webhookId}] Location ${locationId} install processed`);
     
+    // Trigger location setup after install
+    try {
+      console.log(`[Native Webhook ${webhookId}] Triggering location setup for ${locationId}`);
+      
+      // Call the setup endpoint
+      const setupResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://lpai-backend-omega.vercel.app'}/api/locations/setup-location`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          locationId: locationId,
+          fullSync: true
+        })
+      });
+      
+      if (setupResponse.ok) {
+        const setupResult = await setupResponse.json();
+        console.log(`[Native Webhook ${webhookId}] Location setup completed:`, setupResult.message);
+        
+        // Update location with setup results
+        await db.collection('locations').updateOne(
+          { locationId },
+          {
+            $set: {
+              setupTriggeredBy: webhookId,
+              setupTriggeredAt: new Date(),
+              initialSetupComplete: true
+            }
+          }
+        );
+      } else {
+        const error = await setupResponse.text();
+        console.error(`[Native Webhook ${webhookId}] Location setup failed:`, error);
+        
+        // Mark setup as failed but don't fail the webhook
+        await db.collection('locations').updateOne(
+          { locationId },
+          {
+            $set: {
+              setupTriggeredBy: webhookId,
+              setupTriggeredAt: new Date(),
+              setupFailed: true,
+              setupError: error
+            }
+          }
+        );
+      }
+    } catch (setupError: any) {
+      console.error(`[Native Webhook ${webhookId}] Failed to trigger location setup:`, setupError.message);
+      
+      // Store error but don't fail the webhook
+      await db.collection('locations').updateOne(
+        { locationId },
+        {
+          $set: {
+            setupError: setupError.message,
+            needsManualSetup: true
+          }
+        }
+      );
+    }
+    
   } else if (installType === 'Company' && companyId) {
     // Company-level install
     await db.collection('locations').updateOne(
@@ -524,6 +587,30 @@ async function processInstallEvent(db: any, payload: any, webhookId: string) {
       { upsert: true }
     );
     console.log(`[Native Webhook ${webhookId}] Company ${companyId} install processed`);
+    
+    // For company installs, we should trigger the agency sync
+    try {
+      console.log(`[Native Webhook ${webhookId}] Triggering agency sync for company ${companyId}`);
+      
+      const syncResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://lpai-backend-omega.vercel.app'}/api/oauth/get-location-tokens`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          companyId: companyId
+        })
+      });
+      
+      if (syncResponse.ok) {
+        const syncResult = await syncResponse.json();
+        console.log(`[Native Webhook ${webhookId}] Agency sync completed: Found ${syncResult.locationsProcessed} locations`);
+      } else {
+        console.error(`[Native Webhook ${webhookId}] Agency sync failed:`, await syncResponse.text());
+      }
+    } catch (syncError: any) {
+      console.error(`[Native Webhook ${webhookId}] Failed to trigger agency sync:`, syncError.message);
+    }
   }
 }
 
