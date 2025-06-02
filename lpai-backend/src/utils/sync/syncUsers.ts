@@ -22,8 +22,7 @@ export async function syncUsers(db: Db, location: any) {
           'Accept': 'application/json'
         },
         params: {
-          skip: 0,
-          limit: 100  // Adjust if location has more users
+          locationId: location.locationId
         }
       }
     );
