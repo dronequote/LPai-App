@@ -1,14 +1,23 @@
 // pages/api/cron/refresh-tokens.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
-import { refreshGHLToken, tokenNeedsRefresh } from '../../../src/utils/refreshGHLToken';
+import { refreshOAuthToken, tokenNeedsRefresh } from '../../../src/utils/ghlAuth';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  // Verify cron secret
+  // Verify cron secret - check multiple methods
   const authHeader = req.headers.authorization;
   const cronSecret = process.env.CRON_SECRET;
   
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+  // Check if it's from Vercel Cron (they use a special header)
+  const isVercelCron = req.headers['x-vercel-cron'] === '1';
+  
+  // Allow if it's from Vercel Cron OR has correct Bearer token
+  if (!isVercelCron && (!cronSecret || authHeader !== `Bearer ${cronSecret}`)) {
+    console.log('[Token Refresh Cron] Unauthorized attempt', {
+      hasAuthHeader: !!authHeader,
+      isVercelCron,
+      headers: req.headers
+    });
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
@@ -37,7 +46,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       try {
         if (tokenNeedsRefresh(location)) {
           console.log(`[Token Refresh Cron] Refreshing token for ${location.locationId}`);
-          await refreshGHLToken(db, location);
+          await refreshOAuthToken(location);
           results.refreshed++;
         }
       } catch (error: any) {
