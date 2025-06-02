@@ -57,6 +57,7 @@ export async function refreshOAuthToken(location: any): Promise<any> {
   try {
     console.log('[Auth] Refreshing OAuth token...');
     
+    // Only send required fields
     const response = await axios.post(
       'https://services.leadconnectorhq.com/oauth/token',
       new URLSearchParams({
@@ -79,13 +80,15 @@ export async function refreshOAuthToken(location: any): Promise<any> {
     const client = await clientPromise;
     const db = client.db('lpai');
     
+    const newExpiresAt = new Date(Date.now() + (expires_in * 1000));
+    
     await db.collection('locations').updateOne(
       { _id: location._id },
       {
         $set: {
           'ghlOAuth.accessToken': access_token,
           'ghlOAuth.refreshToken': refresh_token,
-          'ghlOAuth.expiresAt': new Date(Date.now() + (expires_in * 1000)),
+          'ghlOAuth.expiresAt': newExpiresAt,
           'ghlOAuth.lastRefreshed': new Date()
         }
       }
@@ -96,14 +99,14 @@ export async function refreshOAuthToken(location: any): Promise<any> {
     return {
       accessToken: access_token,
       refreshToken: refresh_token,
-      expiresAt: new Date(Date.now() + (expires_in * 1000))
+      expiresAt: newExpiresAt
     };
     
   } catch (error: any) {
     console.error('[Auth] Token refresh failed:', error.response?.data || error);
     
     // If refresh fails due to invalid token, mark for re-auth
-    if (error.response?.status === 400) {
+    if (error.response?.status === 400 || error.response?.status === 401) {
       const client = await clientPromise;
       const db = client.db('lpai');
       
@@ -112,7 +115,7 @@ export async function refreshOAuthToken(location: any): Promise<any> {
         {
           $set: {
             'ghlOAuth.needsReauth': true,
-            'ghlOAuth.reauthReason': 'Refresh token invalid',
+            'ghlOAuth.reauthReason': error.response?.data?.error_description || 'Refresh token invalid',
             'ghlOAuth.reauthDate': new Date()
           }
         }
