@@ -11,12 +11,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // Check if it's from Vercel Cron (they use a special header)
   const isVercelCron = req.headers['x-vercel-cron'] === '1';
   
+  // Fix: Check if cronSecret exists before comparing
+  const hasValidAuth = cronSecret && authHeader === `Bearer ${cronSecret}`;
+  
   // Allow if it's from Vercel Cron OR has correct Bearer token
-  if (!isVercelCron && (!cronSecret || authHeader !== `Bearer ${cronSecret}`)) {
+  if (!isVercelCron && !hasValidAuth) {
     console.log('[Token Refresh Cron] Unauthorized attempt', {
       hasAuthHeader: !!authHeader,
       isVercelCron,
-      headers: req.headers
+      authHeader: authHeader, // Log what we received
+      expectedAuth: `Bearer ${cronSecret}`, // Log what we expected
+      match: authHeader === `Bearer ${cronSecret}`
     });
     return res.status(401).json({ error: 'Unauthorized' });
   }
