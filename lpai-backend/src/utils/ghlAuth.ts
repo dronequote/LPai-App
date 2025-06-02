@@ -11,13 +11,14 @@ export interface AuthResult {
 export async function getAuthHeader(location: any): Promise<AuthResult> {
   // Check if we have OAuth tokens
   if (location.ghlOAuth?.accessToken) {
-    // Check if token is expired
+    // Check if token is expired or expiring soon
     const expiresAt = new Date(location.ghlOAuth.expiresAt);
     const now = new Date();
+    const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000); // 1 hour buffer
     
-    if (expiresAt < now) {
-      console.log(`[Auth] Token expired for location ${location.locationId}, needs refresh`);
-      // Token expired, try to refresh
+    if (expiresAt < oneHourFromNow) {
+      console.log(`[Auth] Token expired or expiring soon for location ${location.locationId}, refreshing...`);
+      // Token expired or expiring soon, refresh it
       const refreshed = await refreshOAuthToken(location);
       if (refreshed) {
         return {
@@ -100,6 +101,24 @@ export async function refreshOAuthToken(location: any): Promise<any> {
     
   } catch (error: any) {
     console.error('[Auth] Token refresh failed:', error.response?.data || error);
+    
+    // If refresh fails due to invalid token, mark for re-auth
+    if (error.response?.status === 400) {
+      const client = await clientPromise;
+      const db = client.db('lpai');
+      
+      await db.collection('locations').updateOne(
+        { _id: location._id },
+        {
+          $set: {
+            'ghlOAuth.needsReauth': true,
+            'ghlOAuth.reauthReason': 'Refresh token invalid',
+            'ghlOAuth.reauthDate': new Date()
+          }
+        }
+      );
+    }
+    
     return null;
   }
 }
@@ -131,4 +150,15 @@ export async function getLocationToken(companyToken: string, locationId: string)
     console.error('[Auth] Failed to get location token:', error.response?.data || error);
     throw error;
   }
+}
+
+// Helper function to check if token needs refresh (for cron job)
+export function tokenNeedsRefresh(location: any): boolean {
+  if (!location.ghlOAuth?.expiresAt) return true;
+  
+  const expiresAt = new Date(location.ghlOAuth.expiresAt);
+  const now = new Date();
+  const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000);
+  
+  return expiresAt <= oneHourFromNow;
 }
