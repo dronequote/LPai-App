@@ -65,6 +65,25 @@ export async function syncAppointments(db: Db, location: any, options: SyncOptio
      try {
        console.log(`[Sync Appointments] Syncing calendar: ${calendar.name} (${calendar.id})`);
        
+       // Add detailed logging before request
+       console.log(`[Sync Appointments] Making request to GHL for calendar ${calendar.id}`);
+       console.log(`[Sync Appointments] Full auth header:`, auth.header);
+       console.log(`[Sync Appointments] Auth type:`, auth.type);
+       console.log(`[Sync Appointments] Request config:`, {
+         url: 'https://services.leadconnectorhq.com/calendars/events',
+         headers: {
+           'Authorization': auth.header,
+           'Version': '2021-04-15',
+           'Accept': 'application/json'
+         },
+         params: {
+           locationId: location.locationId,
+           calendarId: calendar.id,
+           startTime: startTimeMs,
+           endTime: endTimeMs
+         }
+       });
+       
        // Fetch appointments from GHL for this calendar
        const response = await axios.get(
          'https://services.leadconnectorhq.com/calendars/events',
@@ -233,10 +252,14 @@ export async function syncAppointments(db: Db, location: any, options: SyncOptio
        
      } catch (calendarError: any) {
        console.error(`[Sync Appointments] Error syncing calendar ${calendar.name}:`, calendarError.message);
+       console.error(`[Sync Appointments] Error status:`, calendarError.response?.status);
+       console.error(`[Sync Appointments] Error response:`, calendarError.response?.data);
+       console.error(`[Sync Appointments] Error headers:`, calendarError.response?.headers);
        errors.push({
          calendarId: calendar.id,
          calendarName: calendar.name,
          error: calendarError.message,
+         errorDetails: calendarError.response?.data,
          isCalendarLevel: true
        });
      }
