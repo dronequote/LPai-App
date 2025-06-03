@@ -81,6 +81,13 @@ export async function syncContacts(db: Db, location: any, options: SyncOptions =
         allErrors.push(...batchResult.errors);
       }
       
+      // FIX: Check if no contacts were returned
+      if (batchResult.processed === 0) {
+        console.log(`[Sync Contacts] No more contacts found, ending sync`);
+        hasMoreData = false;
+        break;
+      }
+      
       // Check if there's more data
       hasMoreData = batchResult.hasMore || false;
       currentStartAfter = batchResult.nextStartAfter;
