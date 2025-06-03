@@ -44,82 +44,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(404).json({ error: 'Location not found' });
     }
 
-    // Check for OAuth tokens - handle both company-level and direct location installs
-    
-    // Scenario 1: Direct location OAuth (installed directly in sub-account)
-    if (location.ghlOAuth?.accessToken) {
-      console.log(`[Location Setup] Location has direct OAuth tokens`);
-      console.log(`[Location Setup] Token expires at: ${location.ghlOAuth.expiresAt}`);
-      console.log(`[Location Setup] Token user type: ${location.ghlOAuth.userType || 'not specified'}`);
-      // Location has its own OAuth, we're good to go!
-    }
-    
-    // Scenario 2: Company-level OAuth (installed at agency level)
-    else if (location.companyId) {
-      console.log(`[Location Setup] No direct OAuth, checking for company-level tokens...`);
+    // Check if we have OAuth or API key
+    if (!location.ghlOAuth?.accessToken && !location.apiKey) {
+      console.log(`[Location Setup] No authentication method found for location ${locationId}`);
       
-      const companyRecord = await db.collection('locations').findOne({
-        companyId: location.companyId,
-        locationId: null,
-        isCompanyLevel: true,
-        'ghlOAuth.accessToken': { $exists: true }
-      });
-      
-      if (companyRecord) {
-        console.log(`[Location Setup] Company has OAuth, fetching location-specific tokens...`);
+      // If location is under a company, we can try to get tokens
+      if (location.companyId && location.appInstalled) {
+        console.log(`[Location Setup] Location is under company ${location.companyId}, checking for company OAuth...`);
         
-        try {
-          // Fetch location-specific tokens from company tokens
-          const tokenResponse = await fetch(
-            `${process.env.NEXT_PUBLIC_API_URL || 'https://lpai-backend-omega.vercel.app'}/api/oauth/get-location-tokens`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                companyId: location.companyId,
-                locationId: location.locationId
-              })
-            }
-          );
-          
-          if (tokenResponse.ok) {
-            const result = await tokenResponse.json();
-            console.log(`[Location Setup] Location tokens fetched successfully`);
-            
-            // Re-fetch location to get updated tokens
-            location = await db.collection('locations').findOne({ locationId });
-            
-            // Log token details for debugging
-            if (location.ghlOAuth) {
-              console.log(`[Location Setup] Token expires at: ${location.ghlOAuth.expiresAt}`);
-              console.log(`[Location Setup] Token derived from company: ${location.ghlOAuth.derivedFromCompany || false}`);
-            }
-          } else {
-            const error = await tokenResponse.text();
-            console.error(`[Location Setup] Token fetch failed:`, error);
-            // Continue anyway - maybe they have an API key
-          }
-        } catch (error: any) {
-          console.error(`[Location Setup] Error fetching tokens:`, error.message);
-          // Continue anyway - maybe they have an API key
-        }
-      } else {
-        console.log(`[Location Setup] No company OAuth found`);
-      }
-    }
-    
-    // Optional: Refresh tokens if they already exist but might be stale
-    if (location.ghlOAuth?.accessToken && location.companyId) {
-      // Even if location has tokens, check if we should refresh from company
-      const tokenAge = location.ghlOAuth.installedAt ? 
-        Date.now() - new Date(location.ghlOAuth.installedAt).getTime() : 
-        Infinity;
-      
-      // Refresh if tokens are older than 1 hour
-      if (tokenAge > 60 * 60 * 1000) {
-        console.log(`[Location Setup] Existing tokens are ${Math.round(tokenAge / 1000 / 60)} minutes old, checking for fresher tokens...`);
-        
-        // Try to fetch fresh tokens from company (same code as above)
         const companyRecord = await db.collection('locations').findOne({
           companyId: location.companyId,
           locationId: null,
@@ -128,6 +60,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
         
         if (companyRecord) {
+          console.log(`[Location Setup] Company has OAuth, attempting to get location tokens...`);
+          
           try {
             const tokenResponse = await fetch(
               `${process.env.NEXT_PUBLIC_API_URL || 'https://lpai-backend-omega.vercel.app'}/api/oauth/get-location-tokens`,
@@ -142,11 +76,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             );
             
             if (tokenResponse.ok) {
-              console.log(`[Location Setup] Refreshed tokens from company`);
+              const result = await tokenResponse.json();
+              console.log(`[Location Setup] Token fetch completed`);
+              
+              // Re-fetch location to get updated tokens
               location = await db.collection('locations').findOne({ locationId });
+              
+              if (!location.ghlOAuth?.accessToken) {
+                console.log(`[Location Setup] Warning: Token fetch succeeded but location still has no OAuth`);
+              }
+            } else {
+              const error = await tokenResponse.text();
+              console.error(`[Location Setup] Token fetch failed:`, error);
             }
           } catch (error: any) {
-            console.error(`[Location Setup] Token refresh failed:`, error.message);
+            console.error(`[Location Setup] Error fetching tokens:`, error.message);
           }
         }
       }
