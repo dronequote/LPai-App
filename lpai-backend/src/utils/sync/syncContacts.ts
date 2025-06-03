@@ -5,33 +5,71 @@ import { getAuthHeader } from '../ghlAuth';
 
 interface SyncOptions {
   limit?: number;
-  offset?: number;
+  startAfter?: number;
+  startAfterId?: string;
   fullSync?: boolean;
 }
 
 export async function syncContacts(db: Db, location: any, options: SyncOptions = {}) {
   const startTime = Date.now();
-  const { limit = 100, offset = 0, fullSync = false } = options;
+  const { limit = 100, startAfter, startAfterId, fullSync = false } = options;
   
-  console.log(`[Sync Contacts] Starting for ${location.locationId} - Limit: ${limit}, Offset: ${offset}`);
+  console.log(`[Sync Contacts] Starting for ${location.locationId} - Limit: ${limit}`);
   
-  // If this is the initial call and we want a full sync, handle pagination automatically
-  if (fullSync && offset === 0) {
+  // If fullSync requested, handle pagination automatically
+  if (fullSync && !startAfter && !startAfterId) {
     console.log(`[Sync Contacts] Full sync requested - will fetch all contacts in batches`);
+    
+    // Rate limit configuration
+    const BATCH_SIZE = 500; // Larger batches for efficiency
+    const REQUESTS_PER_SECOND = 8; // Stay under 10/second limit
+    const DELAY_BETWEEN_BATCHES = 1000 / REQUESTS_PER_SECOND; // 125ms
+    const MAX_REQUESTS_PER_RUN = 50; // 50 requests = 25k contacts
+    const MAX_SYNC_DURATION = 55000; // 55 seconds (safe for 60s timeout)
     
     let totalCreated = 0;
     let totalUpdated = 0;
     let totalSkipped = 0;
-    let currentOffset = 0;
+    let currentStartAfter: number | undefined;
+    let currentStartAfterId: string | undefined;
     let hasMoreData = true;
+    let requestCount = 0;
+    const syncStartTime = Date.now();
     const allErrors: any[] = [];
     
     while (hasMoreData) {
-      console.log(`[Sync Contacts] Fetching batch at offset ${currentOffset}...`);
+      requestCount++;
+      
+      // Safety checks for Vercel timeout and rate limits
+      if (requestCount >= MAX_REQUESTS_PER_RUN || 
+          Date.now() - syncStartTime > MAX_SYNC_DURATION) {
+        console.log(`[Sync Contacts] Stopping sync - limit reached (${requestCount} requests, ${Date.now() - syncStartTime}ms elapsed)`);
+        
+        const totalDuration = Date.now() - startTime;
+        return {
+          success: true,
+          created: totalCreated,
+          updated: totalUpdated,
+          skipped: totalSkipped,
+          processed: totalCreated + totalUpdated + totalSkipped,
+          hasMore: true,
+          partial: true,
+          message: `Synced ${totalCreated + totalUpdated} contacts. More contacts available - run sync again to continue.`,
+          resumeFrom: {
+            startAfter: currentStartAfter,
+            startAfterId: currentStartAfterId
+          },
+          errors: allErrors.length > 0 ? allErrors : undefined,
+          duration: `${totalDuration}ms`
+        };
+      }
+      
+      console.log(`[Sync Contacts] Fetching batch ${requestCount}...`);
       
       const batchResult = await syncContacts(db, location, {
-        limit: 250, // Process 250 at a time for faster initial sync
-        offset: currentOffset,
+        limit: BATCH_SIZE,
+        startAfter: currentStartAfter,
+        startAfterId: currentStartAfterId,
         fullSync: false // Prevent recursion
       });
       
@@ -43,18 +81,19 @@ export async function syncContacts(db: Db, location: any, options: SyncOptions =
         allErrors.push(...batchResult.errors);
       }
       
+      // Check if there's more data
       hasMoreData = batchResult.hasMore || false;
-      currentOffset = batchResult.nextOffset || currentOffset + limit;
+      currentStartAfter = batchResult.nextStartAfter;
+      currentStartAfterId = batchResult.nextStartAfterId;
       
-      // Add a small delay to avoid rate limiting (only wait if we have more than 1000 contacts)
-      if (hasMoreData && currentOffset > 1000) {
-        console.log(`[Sync Contacts] Large dataset detected, waiting 1 second before next batch...`);
-        await new Promise(resolve => setTimeout(resolve, 1000));
+      // Rate limit delay
+      if (hasMoreData) {
+        await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_BATCHES));
       }
     }
     
     const totalDuration = Date.now() - startTime;
-    console.log(`[Sync Contacts] Full sync completed in ${totalDuration}ms`);
+    console.log(`[Sync Contacts] Full sync completed in ${totalDuration}ms - Total requests: ${requestCount}`);
     
     return {
       success: true,
@@ -62,17 +101,27 @@ export async function syncContacts(db: Db, location: any, options: SyncOptions =
       updated: totalUpdated,
       skipped: totalSkipped,
       processed: totalCreated + totalUpdated + totalSkipped,
-      totalInGHL: totalCreated + totalUpdated + totalSkipped,
       hasMore: false,
       errors: allErrors.length > 0 ? allErrors : undefined,
       duration: `${totalDuration}ms`,
-      fullSyncCompleted: true
+      fullSyncCompleted: true,
+      totalRequests: requestCount
     };
   }
 
   try {
-    // Get auth header (OAuth or API key)
+    // Get auth header
     const auth = await getAuthHeader(location);
+    
+    // Build params
+    const params: any = {
+      locationId: location.locationId,
+      limit
+    };
+    
+    // Add pagination params if provided
+    if (startAfter) params.startAfter = startAfter;
+    if (startAfterId) params.startAfterId = startAfterId;
     
     // Fetch contacts from GHL
     const response = await axios.get(
@@ -83,18 +132,14 @@ export async function syncContacts(db: Db, location: any, options: SyncOptions =
           'Version': '2021-07-28',
           'Accept': 'application/json'
         },
-        params: {
-          locationId: location.locationId,  // ✅ FIXED: Added locationId
-          limit,
-          skip: offset
-        }
+        params
       }
     );
 
     const ghlContacts = response.data.contacts || [];
-    const totalCount = response.data.total || response.data.count || ghlContacts.length;
+    const meta = response.data.meta || {};
     
-    console.log(`[Sync Contacts] Found ${ghlContacts.length} contacts (Total: ${totalCount})`);
+    console.log(`[Sync Contacts] Found ${ghlContacts.length} contacts (Total: ${meta.total})`);
 
     // Process each contact
     let created = 0;
@@ -124,7 +169,7 @@ export async function syncContacts(db: Db, location: any, options: SyncOptions =
           // Basic Information
           firstName: ghlContact.firstName || '',
           lastName: ghlContact.lastName || '',
-          fullName: ghlContact.fullName || `${ghlContact.firstName || ''} ${ghlContact.lastName || ''}`.trim(),
+          fullName: ghlContact.contactName || `${ghlContact.firstName || ''} ${ghlContact.lastName || ''}`.trim(),
           email: ghlContact.email || '',
           phone: ghlContact.phone || '',
           
@@ -151,13 +196,20 @@ export async function syncContacts(db: Db, location: any, options: SyncOptions =
           
           // Tags and Source
           tags: Array.isArray(ghlContact.tags) ? ghlContact.tags : [],
-          source: ghlContact.source || ghlContact.contactSource || '',
+          source: ghlContact.source || '',
+          type: ghlContact.type || 'lead',
           
-          // Notes
-          notes: ghlContact.notes || '',
+          // Assignment
+          assignedTo: ghlContact.assignedTo || null,
           
           // Custom Fields (store all of them)
           customFields: ghlContact.customFields || [],
+          
+          // Additional emails
+          additionalEmails: ghlContact.additionalEmails || [],
+          
+          // Attribution
+          attributions: ghlContact.attributions || [],
           
           // GHL Metadata
           ghlCreatedAt: ghlContact.dateAdded ? new Date(ghlContact.dateAdded) : null,
@@ -208,8 +260,8 @@ export async function syncContacts(db: Db, location: any, options: SyncOptions =
           lastContactSync: new Date(),
           contactSyncStatus: {
             lastSync: new Date(),
-            totalContacts: totalCount,
-            synced: offset + ghlContacts.length,
+            totalContacts: meta.total,
+            currentPage: meta.currentPage,
             errors: errors.length
           }
         }
@@ -219,8 +271,8 @@ export async function syncContacts(db: Db, location: any, options: SyncOptions =
     const duration = Date.now() - startTime;
     console.log(`[Sync Contacts] Completed in ${duration}ms - Created: ${created}, Updated: ${updated}, Skipped: ${skipped}`);
 
-    // Determine if more contacts need to be synced
-    const hasMore = (offset + limit) < totalCount;
+    // Determine if more contacts exist
+    const hasMore = meta.nextPage !== null;
 
     return {
       success: true,
@@ -228,9 +280,12 @@ export async function syncContacts(db: Db, location: any, options: SyncOptions =
       updated,
       skipped,
       processed: ghlContacts.length,
-      totalInGHL: totalCount,
+      totalInGHL: meta.total,
       hasMore,
-      nextOffset: hasMore ? offset + limit : null,
+      nextStartAfter: meta.startAfter,
+      nextStartAfterId: meta.startAfterId,
+      currentPage: meta.currentPage,
+      nextPage: meta.nextPage,
       errors: errors.length > 0 ? errors : undefined,
       duration: `${duration}ms`
     };
