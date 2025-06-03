@@ -154,6 +154,58 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Now check if we have any auth method
     if (!location.ghlOAuth?.accessToken && !location.apiKey) {
+      console.log(`[Location Setup] No authentication method found for location ${locationId}`);
+      
+      // If location is under a company, we can try to get tokens
+      if (location.companyId && location.appInstalled) {
+        console.log(`[Location Setup] Location is under company ${location.companyId}, checking for company OAuth...`);
+        
+        const companyRecord = await db.collection('locations').findOne({
+          companyId: location.companyId,
+          locationId: null,
+          isCompanyLevel: true,
+          'ghlOAuth.accessToken': { $exists: true }
+        });
+        
+        if (companyRecord) {
+          console.log(`[Location Setup] Company has OAuth, attempting to get location tokens...`);
+          
+          try {
+            const tokenResponse = await fetch(
+              `${process.env.NEXT_PUBLIC_API_URL || 'https://lpai-backend-omega.vercel.app'}/api/oauth/get-location-tokens`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  companyId: location.companyId,
+                  locationId: location.locationId
+                })
+              }
+            );
+            
+            if (tokenResponse.ok) {
+              const result = await tokenResponse.json();
+              console.log(`[Location Setup] Token fetch completed`);
+              
+              // Re-fetch location to get updated tokens
+              location = await db.collection('locations').findOne({ locationId });
+              
+              if (!location.ghlOAuth?.accessToken) {
+                console.log(`[Location Setup] Warning: Token fetch succeeded but location still has no OAuth`);
+              }
+            } else {
+              const error = await tokenResponse.text();
+              console.error(`[Location Setup] Token fetch failed:`, error);
+            }
+          } catch (error: any) {
+            console.error(`[Location Setup] Error fetching tokens:`, error.message);
+          }
+        }
+      }
+    }
+
+    // Now check if we have any auth method
+    if (!location.ghlOAuth?.accessToken && !location.apiKey) {
       return res.status(400).json({ 
         error: 'No authentication method available for location',
         details: 'Location needs OAuth token or API key',
