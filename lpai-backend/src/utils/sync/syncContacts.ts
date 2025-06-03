@@ -21,7 +21,7 @@ export async function syncContacts(db: Db, location: any, options: SyncOptions =
     console.log(`[Sync Contacts] Full sync requested - will fetch all contacts in batches`);
     
     // Rate limit configuration
-    const BATCH_SIZE = 500; // Larger batches for efficiency
+    const BATCH_SIZE = 100; // Larger batches for efficiency
     const REQUESTS_PER_SECOND = 8; // Stay under 10/second limit
     const DELAY_BETWEEN_BATCHES = 1000 / REQUESTS_PER_SECOND; // 125ms
     const MAX_REQUESTS_PER_RUN = 50; // 50 requests = 25k contacts
