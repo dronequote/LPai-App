@@ -902,32 +902,140 @@ async function processUninstallEvent(db: any, payload: any, webhookId: string) {
   
   if (locationId) {
     // Location-specific uninstall
+    const updateData = {
+      $set: {
+        // Mark as uninstalled
+        appInstalled: false,
+        uninstalledAt: new Date(payload.timestamp || Date.now()),
+        uninstalledBy: payload.userId || 'unknown',
+        lastWebhookUpdate: new Date(),
+        
+        // Preserve the uninstall reason if provided
+        uninstallReason: payload.reason || 'User uninstalled'
+      },
+      $unset: {
+        // OAuth tokens - force new auth on reinstall
+        ghlOAuth: "",
+        hasLocationOAuth: "",
+        
+        // Installation tracking
+        installedAt: "",
+        installedBy: "",
+        installType: "",
+        isWhitelabelCompany: "",
+        whitelabelDetails: "",
+        planId: "",
+        
+        // Setup status - clear all setup flags
+        setupCompleted: "",
+        setupCompletedAt: "",
+        setupTriggeredAt: "",
+        setupTriggeredBy: "",
+        initialSetupComplete: "",
+        lastSetupRun: "",
+        setupResults: "",
+        defaultsSetup: "",
+        defaultsSetupAt: "",
+        
+        // Clear any error/auth states
+        needsReauth: "",
+        reauthReason: "",
+        reauthDate: "",
+        setupError: "",
+        setupFailed: "",
+        needsManualSetup: "",
+        
+        // Clear sync status (but keep last sync timestamps for reference)
+        contactSyncStatus: "",
+        appointmentSyncStatus: "",
+        conversationSyncStatus: "",
+        
+        // Clear any temporary flags
+        approvvedViaCompany: "",
+        hasCompanyOAuth: "",
+        derivedFromCompany: ""
+      }
+    };
+    
+    // Log what we're preserving
+    const preserved = [
+      'pipelines', 'calendars', 'customFields', 'ghlCustomFields',
+      'termsAndConditions', 'emailTemplates', 'branding', 'companyInfo',
+      'business', 'social', 'settings', 'customValues',
+      'name', 'email', 'phone', 'address', 'city', 'state', 'country', 'timezone'
+    ];
+    
+    console.log(`[Native Webhook ${webhookId}] Clearing OAuth and installation data`);
+    console.log(`[Native Webhook ${webhookId}] Preserving: ${preserved.join(', ')}`);
+    
     const result = await db.collection('locations').updateOne(
       { locationId },
+      updateData
+    );
+    
+    console.log(`[Native Webhook ${webhookId}] Location ${locationId} uninstall processed, modified: ${result.modifiedCount}`);
+    
+    // Also update any active sessions/users for this location
+    await db.collection('users').updateMany(
+      { locationId, isActive: true },
       {
         $set: {
-          appInstalled: false,
-          uninstalledAt: new Date(payload.timestamp),
-          lastWebhookUpdate: new Date()
+          requiresReauth: true,
+          reauthReason: 'App was uninstalled'
         }
       }
     );
-    console.log(`[Native Webhook ${webhookId}] Location ${locationId} uninstall processed, modified: ${result.modifiedCount}`);
+    
+    // Create an uninstall record for analytics
+    await db.collection('app_events').insertOne({
+      type: 'uninstall',
+      locationId,
+      companyId,
+      timestamp: new Date(payload.timestamp || Date.now()),
+      webhookId,
+      metadata: {
+        userId: payload.userId,
+        reason: payload.reason,
+        planId: payload.planId,
+        preservedData: preserved
+      }
+    });
     
   } else if (companyId && !locationId) {
     // Company-level uninstall
     const result = await db.collection('locations').updateOne(
-      { companyId, locationId: null },
+      { companyId, locationId: null, isCompanyLevel: true },
       {
         $set: {
           appInstalled: false,
-          uninstalledAt: new Date(payload.timestamp),
+          uninstalledAt: new Date(payload.timestamp || Date.now()),
           lastWebhookUpdate: new Date()
+        },
+        $unset: {
+          ghlOAuth: "",
+          installedAt: "",
+          installType: "",
+          planId: ""
         }
       }
     );
+    
     console.log(`[Native Webhook ${webhookId}] Company ${companyId} uninstall processed, modified: ${result.modifiedCount}`);
+    
+    // Mark all locations under this company as needing reauth
+    await db.collection('locations').updateMany(
+      { companyId, locationId: { $ne: null } },
+      {
+        $set: {
+          hasCompanyOAuth: false,
+          needsReauth: true,
+          reauthReason: 'Company app was uninstalled'
+        }
+      }
+    );
   }
+  
+  console.log(`[Native Webhook ${webhookId}] Uninstall processing complete`);
 }
 
 async function processLocationUpdate(db: any, payload: any, webhookId: string) {
