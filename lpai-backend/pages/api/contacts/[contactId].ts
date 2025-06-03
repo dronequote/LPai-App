@@ -6,16 +6,16 @@ import axios from 'axios';
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const client = await clientPromise;
   const db = client.db('lpai');
-  const { id } = req.query;
+  const { contactId } = req.query;
 
-  if (!id || typeof id !== 'string') {
+  if (!contactId || typeof contactId !== 'string') {
     return res.status(400).json({ error: 'Missing or invalid contact ID' });
   }
 
   // GET: Fetch a single contact
   if (req.method === 'GET') {
     try {
-      const contact = await db.collection('contacts').findOne({ _id: new ObjectId(id) });
+      const contact = await db.collection('contacts').findOne({ _id: new ObjectId(contactId) });
       if (!contact) return res.status(404).json({ error: 'Contact not found' });
       return res.status(200).json(contact);
     } catch (err) {
@@ -31,7 +31,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       // 1. Update locally in MongoDB
       const result = await db.collection('contacts').updateOne(
-        { _id: new ObjectId(id) },
+        { _id: new ObjectId(contactId) },
         {
           $set: {
             firstName,
@@ -49,7 +49,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(404).json({ error: 'Contact not found' });
       }
 
-      const updated = await db.collection('contacts').findOne({ _id: new ObjectId(id) });
+      const updated = await db.collection('contacts').findOne({ _id: new ObjectId(contactId) });
 
       if (!updated?.ghlContactId || !updated?.locationId) {
         console.log('ℹ️ Skipping GHL sync: missing ghlContactId or locationId');
