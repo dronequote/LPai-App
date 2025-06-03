@@ -19,6 +19,9 @@ export async function syncOpportunities(db: Db, location: any, options: SyncOpti
     // Get auth header (OAuth or API key)
     const auth = await getAuthHeader(location);
     
+    // Calculate page number from offset
+    const page = Math.floor(offset / limit) + 1;
+    
     // Fetch opportunities from GHL
     const response = await axios.get(
       'https://services.leadconnectorhq.com/opportunities/search',
@@ -29,18 +32,20 @@ export async function syncOpportunities(db: Db, location: any, options: SyncOpti
           'Accept': 'application/json'
         },
         params: {
+          location_id: location.locationId,
           limit,
-          offset
+          page
         }
       }
     );
 
     const ghlOpportunities = response.data.opportunities || [];
-    const totalCount = response.data.meta?.total || response.data.total || ghlOpportunities.length;
+    const meta = response.data.meta || {};
+    const totalCount = meta.total || 0;
     
     console.log(`[Sync Opportunities] Found ${ghlOpportunities.length} opportunities (Total: ${totalCount})`);
 
-    // Get custom field mappings
+    // Get custom field mappings if they exist
     const customFieldMappings = location.ghlCustomFields || {};
 
     // Process each opportunity
@@ -52,13 +57,10 @@ export async function syncOpportunities(db: Db, location: any, options: SyncOpti
     for (const ghlOpp of ghlOpportunities) {
       try {
         // Find the contact for this opportunity
-        let contact = null;
-        if (ghlOpp.contactId) {
-          contact = await db.collection('contacts').findOne({
-            ghlContactId: ghlOpp.contactId,
-            locationId: location.locationId
-          });
-        }
+        let contact = await db.collection('contacts').findOne({
+          ghlContactId: ghlOpp.contactId,
+          locationId: location.locationId
+        });
 
         if (!contact) {
           console.warn(`[Sync Opportunities] Contact not found for opportunity ${ghlOpp.id}, skipping`);
@@ -68,43 +70,26 @@ export async function syncOpportunities(db: Db, location: any, options: SyncOpti
 
         // Check if project exists
         const existingProject = await db.collection('projects').findOne({
-          $or: [
-            { ghlOpportunityId: ghlOpp.id },
-            { 
-              title: ghlOpp.name,
-              contactId: contact._id.toString(),
-              locationId: location.locationId
-            }
-          ]
+          ghlOpportunityId: ghlOpp.id
         });
 
         // Extract custom field values
         const customFieldValues: Record<string, any> = {};
         if (ghlOpp.customFields && Array.isArray(ghlOpp.customFields)) {
           ghlOpp.customFields.forEach((field: any) => {
-            // Find which of our fields this is
-            Object.entries(customFieldMappings).forEach(([key, fieldId]) => {
-              if (field.id === fieldId || field.fieldKey === key) {
-                customFieldValues[key] = field.value || field.fieldValue;
-              }
-            });
+            // Map custom field by ID to our field names
+            if (field.id === customFieldMappings.project_title) {
+              customFieldValues.project_title = field.fieldValue;
+            } else if (field.id === customFieldMappings.quote_number) {
+              customFieldValues.quote_number = field.fieldValue;
+            } else if (field.id === customFieldMappings.signed_date) {
+              customFieldValues.signed_date = field.fieldValue;
+            }
           });
         }
 
         // Map GHL status to our project status
         const projectStatus = mapGHLStatusToProjectStatus(ghlOpp.status);
-
-        // Find assigned user if available
-        let assignedUserId = null;
-        if (ghlOpp.assignedTo) {
-          const assignedUser = await db.collection('users').findOne({
-            ghlUserId: ghlOpp.assignedTo,
-            locationId: location.locationId
-          });
-          if (assignedUser) {
-            assignedUserId = assignedUser._id.toString();
-          }
-        }
 
         // Prepare project data
         const projectData = {
@@ -118,37 +103,27 @@ export async function syncOpportunities(db: Db, location: any, options: SyncOpti
           
           // Relationships
           contactId: contact._id.toString(),
-          userId: assignedUserId,
+          userId: ghlOpp.assignedTo || null,
           
           // Pipeline Information
           pipelineId: ghlOpp.pipelineId || '',
           pipelineStageId: ghlOpp.pipelineStageId || '',
-          pipelineName: ghlOpp.pipelineName || '',
-          pipelineStageName: ghlOpp.pipelineStageName || '',
           
           // Financial
-          monetaryValue: parseFloat(ghlOpp.monetaryValue || ghlOpp.leadValue || '0') || 0,
+          monetaryValue: ghlOpp.monetaryValue || 0,
           
           // Custom Fields from GHL
           quoteNumber: customFieldValues.quote_number || '',
           signedDate: customFieldValues.signed_date || '',
           
-          // Additional Fields
-          source: ghlOpp.source || '',
-          wonReason: ghlOpp.wonReason || '',
-          lostReason: ghlOpp.lostReason || '',
-          
-          // Notes (if available)
-          notes: ghlOpp.notes || '',
-          
-          // Contact Info (denormalized for convenience)
+          // Contact Info (denormalized)
           contactName: contact.fullName || `${contact.firstName} ${contact.lastName}`.trim(),
           contactEmail: contact.email,
           contactPhone: contact.phone,
           
-          // GHL Metadata
-          ghlCreatedAt: ghlOpp.dateAdded ? new Date(ghlOpp.dateAdded) : null,
-          ghlUpdatedAt: ghlOpp.dateUpdated ? new Date(ghlOpp.dateUpdated) : null,
+          // Timestamps
+          ghlCreatedAt: ghlOpp.createdAt ? new Date(ghlOpp.createdAt) : null,
+          ghlUpdatedAt: ghlOpp.updatedAt ? new Date(ghlOpp.updatedAt) : null,
           
           // Sync Metadata
           lastSyncedAt: new Date(),
@@ -161,13 +136,7 @@ export async function syncOpportunities(db: Db, location: any, options: SyncOpti
             { _id: existingProject._id },
             { 
               $set: projectData,
-              $setOnInsert: { 
-                createdAt: new Date(),
-                timeline: [],
-                milestones: [],
-                photos: [],
-                documents: []
-              }
+              $setOnInsert: { createdAt: new Date() }
             }
           );
           updated++;
@@ -189,15 +158,13 @@ export async function syncOpportunities(db: Db, location: any, options: SyncOpti
             }],
             milestones: [],
             photos: [],
-            documents: [],
-            products: [],
-            scopeOfWork: ''
+            documents: []
           });
           created++;
         }
         
       } catch (oppError: any) {
-        console.error(`[Sync Opportunities] Error processing opportunity ${ghlOpp.name || ghlOpp.id}:`, oppError.message);
+        console.error(`[Sync Opportunities] Error processing opportunity ${ghlOpp.name}:`, oppError.message);
         errors.push({
           opportunityId: ghlOpp.id,
           name: ghlOpp.name,
@@ -207,27 +174,11 @@ export async function syncOpportunities(db: Db, location: any, options: SyncOpti
       }
     }
 
-    // Update sync status
-    await db.collection('locations').updateOne(
-      { _id: location._id },
-      {
-        $set: {
-          lastOpportunitySync: new Date(),
-          opportunitySyncStatus: {
-            lastSync: new Date(),
-            totalOpportunities: totalCount,
-            synced: offset + ghlOpportunities.length,
-            errors: errors.length
-          }
-        }
-      }
-    );
-
     const duration = Date.now() - startTime;
     console.log(`[Sync Opportunities] Completed in ${duration}ms - Created: ${created}, Updated: ${updated}, Skipped: ${skipped}`);
 
     // Determine if more opportunities need to be synced
-    const hasMore = (offset + limit) < totalCount;
+    const hasMore = meta.nextPage !== null;
 
     return {
       success: true,
@@ -244,33 +195,6 @@ export async function syncOpportunities(db: Db, location: any, options: SyncOpti
 
   } catch (error: any) {
     console.error(`[Sync Opportunities] Error:`, error.response?.data || error.message);
-    
-    // Handle specific error cases
-    if (error.response?.status === 404) {
-      console.log(`[Sync Opportunities] Opportunities endpoint not found`);
-      return {
-        success: false,
-        created: 0,
-        updated: 0,
-        skipped: 0,
-        processed: 0,
-        totalInGHL: 0,
-        error: 'Opportunities endpoint not found'
-      };
-    }
-    
-    if (error.response?.status === 401) {
-      throw new Error('Authentication failed - invalid token or API key');
-    }
-    
-    if (error.response?.status === 403) {
-      throw new Error('Access denied - check permissions for opportunities');
-    }
-    
-    if (error.response?.status === 429) {
-      throw new Error('Rate limit exceeded - too many requests');
-    }
-    
     throw error;
   }
 }
@@ -281,8 +205,7 @@ function mapGHLStatusToProjectStatus(ghlStatus: string): string {
     'open': 'open',
     'won': 'won',
     'lost': 'lost',
-    'abandoned': 'abandoned',
-    'deleted': 'deleted'
+    'abandoned': 'abandoned'
   };
   
   return statusMap[ghlStatus?.toLowerCase()] || 'open';

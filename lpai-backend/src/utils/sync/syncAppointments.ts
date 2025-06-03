@@ -20,7 +20,6 @@ export async function syncAppointments(db: Db, location: any, options: SyncOptio
   defaultEndDate.setDate(defaultEndDate.getDate() + 90);
   
   const { 
-    limit = 100, 
     startDate = defaultStartDate,
     endDate = defaultEndDate,
     fullSync = false 
@@ -32,209 +31,209 @@ export async function syncAppointments(db: Db, location: any, options: SyncOptio
     // Get auth header (OAuth or API key)
     const auth = await getAuthHeader(location);
     
-    // Fetch appointments from GHL
-    const response = await axios.get(
-      'https://services.leadconnectorhq.com/calendars/events',
-      {
-        headers: {
-          'Authorization': auth.header,
-          'Version': '2021-04-15',  // Calendar events use older version
-          'Accept': 'application/json'
-        },
-        params: {
-          locationId: location.locationId,
-          startTime: startDate.toISOString(),
-          endTime: endDate.toISOString(),
-          limit
-        }
-      }
-    );
+    // Get all calendars for this location
+    const calendars = location.calendars || [];
+    if (calendars.length === 0) {
+      console.log(`[Sync Appointments] No calendars found for location ${location.locationId}`);
+      return {
+        success: true,
+        created: 0,
+        updated: 0,
+        skipped: 0,
+        processed: 0,
+        message: 'No calendars configured'
+      };
+    }
 
-    const ghlAppointments = response.data.events || [];
-    console.log(`[Sync Appointments] Found ${ghlAppointments.length} appointments`);
+    // Convert dates to milliseconds for API
+    const startTimeMs = startDate.getTime().toString();
+    const endTimeMs = endDate.getTime().toString();
 
-    // Process each appointment
-    let created = 0;
-    let updated = 0;
-    let skipped = 0;
+    // Process each calendar
+    let totalCreated = 0;
+    let totalUpdated = 0;
+    let totalSkipped = 0;
+    let totalProcessed = 0;
     const errors: any[] = [];
 
-    for (const ghlAppt of ghlAppointments) {
+    for (const calendar of calendars) {
       try {
-        // Find the contact for this appointment
-        let contact = null;
-        let contactId = null;
+        console.log(`[Sync Appointments] Syncing calendar: ${calendar.name} (${calendar.id})`);
         
-        if (ghlAppt.contactId) {
-          contact = await db.collection('contacts').findOne({
-            ghlContactId: ghlAppt.contactId,
-            locationId: location.locationId
-          });
-          if (contact) {
-            contactId = contact._id.toString();
-          }
-        }
-
-        // If no contact found, try to find by email or phone
-        if (!contact && (ghlAppt.contact?.email || ghlAppt.contact?.phone)) {
-          contact = await db.collection('contacts').findOne({
-            locationId: location.locationId,
-            $or: [
-              { email: ghlAppt.contact?.email },
-              { phone: ghlAppt.contact?.phone }
-            ]
-          });
-          if (contact) {
-            contactId = contact._id.toString();
-          }
-        }
-
-        if (!contact) {
-          console.warn(`[Sync Appointments] Contact not found for appointment ${ghlAppt.id}, skipping`);
-          skipped++;
-          continue;
-        }
-
-        // Find assigned user if available
-        let assignedUserId = null;
-        if (ghlAppt.assignedUserId || ghlAppt.userId) {
-          const assignedUser = await db.collection('users').findOne({
-            ghlUserId: ghlAppt.assignedUserId || ghlAppt.userId,
-            locationId: location.locationId
-          });
-          if (assignedUser) {
-            assignedUserId = assignedUser._id.toString();
-          }
-        }
-
-        // Check if appointment exists
-        const existingAppointment = await db.collection('appointments').findOne({
-          $or: [
-            { ghlAppointmentId: ghlAppt.id },
-            { ghlEventId: ghlAppt.id }
-          ]
-        });
-
-        // Determine location type and address
-        let locationType = 'address';
-        let address = contact.address || '';
-        let customLocation = '';
-        
-        if (ghlAppt.address) {
-          address = ghlAppt.address;
-          locationType = 'address';
-        } else if (ghlAppt.meetingLocation) {
-          if (ghlAppt.meetingLocation.includes('zoom') || ghlAppt.meetingLocation.includes('meet.google')) {
-            locationType = ghlAppt.meetingLocation.includes('zoom') ? 'zoom' : 'googlemeet';
-            customLocation = ghlAppt.meetingLocation;
-          } else if (ghlAppt.meetingLocation.toLowerCase().includes('phone')) {
-            locationType = 'phone';
-            customLocation = ghlAppt.meetingLocation;
-          } else {
-            locationType = 'custom';
-            customLocation = ghlAppt.meetingLocation;
-          }
-        }
-
-        // Parse dates
-        const startDate = new Date(ghlAppt.startTime);
-        const endDate = new Date(ghlAppt.endTime);
-        const duration = Math.round((endDate.getTime() - startDate.getTime()) / 60000); // in minutes
-
-        // Map appointment status
-        const status = mapGHLAppointmentStatus(ghlAppt.appointmentStatus || ghlAppt.status);
-
-        // Prepare appointment data
-        const appointmentData = {
-          // GHL Integration
-          ghlAppointmentId: ghlAppt.id,
-          ghlEventId: ghlAppt.id,
-          locationId: location.locationId,
-          
-          // Basic Information
-          title: ghlAppt.title || 'Appointment',
-          notes: ghlAppt.notes || '',
-          
-          // Relationships
-          contactId: contactId,
-          userId: assignedUserId,
-          calendarId: ghlAppt.calendarId || '',
-          
-          // Timing
-          start: startDate,
-          end: endDate,
-          duration: duration,
-          timezone: ghlAppt.selectedTimezone || location.timezone || 'UTC',
-          
-          // Location
-          locationType: locationType,
-          customLocation: customLocation,
-          address: address,
-          
-          // Status
-          status: status,
-          appointmentStatus: ghlAppt.appointmentStatus || status,
-          
-          // Contact Info (denormalized)
-          contactName: contact.fullName || `${contact.firstName} ${contact.lastName}`.trim(),
-          contactEmail: contact.email,
-          contactPhone: contact.phone,
-          
-          // Additional GHL fields
-          assignedUserId: ghlAppt.assignedUserId || ghlAppt.userId,
-          meetingLocationType: ghlAppt.meetingLocationType,
-          meetingLocationId: ghlAppt.meetingLocationId,
-          
-          // GHL Metadata
-          ghlCreatedAt: ghlAppt.dateAdded ? new Date(ghlAppt.dateAdded) : null,
-          ghlUpdatedAt: ghlAppt.dateUpdated ? new Date(ghlAppt.dateUpdated) : null,
-          ghlPayload: ghlAppt,  // Store full payload for reference
-          
-          // Sync Metadata
-          lastSyncedAt: new Date(),
-          updatedAt: new Date()
-        };
-
-        // Find related project if exists
-        const project = await db.collection('projects').findOne({
-          contactId: contactId,
-          locationId: location.locationId,
-          status: { $in: ['open', 'quoted'] }
-        });
-        
-        if (project) {
-          appointmentData.projectId = project._id.toString();
-        }
-
-        if (existingAppointment) {
-          // Update existing appointment
-          await db.collection('appointments').updateOne(
-            { _id: existingAppointment._id },
-            { 
-              $set: appointmentData,
-              $setOnInsert: { createdAt: new Date() }
+        // Fetch appointments from GHL for this calendar
+        const response = await axios.get(
+          'https://services.leadconnectorhq.com/calendars/events',
+          {
+            headers: {
+              'Authorization': auth.header,
+              'Version': '2021-04-15',  // Calendar events use older version
+              'Accept': 'application/json'
+            },
+            params: {
+              locationId: location.locationId,
+              calendarId: calendar.id,
+              startTime: startTimeMs,
+              endTime: endTimeMs
             }
-          );
-          updated++;
-        } else {
-          // Create new appointment
-          await db.collection('appointments').insertOne({
-            _id: new ObjectId(),
-            ...appointmentData,
-            createdAt: new Date(),
-            createdBySync: true
-          });
-          created++;
+          }
+        );
+
+        const ghlAppointments = response.data.events || [];
+        console.log(`[Sync Appointments] Found ${ghlAppointments.length} appointments in calendar ${calendar.name}`);
+
+        // Process each appointment
+        for (const ghlAppt of ghlAppointments) {
+          try {
+            // Find the contact for this appointment
+            let contact = null;
+            let contactId = null;
+            
+            if (ghlAppt.contactId) {
+              contact = await db.collection('contacts').findOne({
+                ghlContactId: ghlAppt.contactId,
+                locationId: location.locationId
+              });
+              if (contact) {
+                contactId = contact._id.toString();
+              } else {
+                console.warn(`[Sync Appointments] Contact not found for appointment ${ghlAppt.id}, GHL contact: ${ghlAppt.contactId}`);
+                totalSkipped++;
+                continue;
+              }
+            }
+
+            // Find assigned user if available
+            let assignedUserId = null;
+            if (ghlAppt.assignedUserId) {
+              const assignedUser = await db.collection('users').findOne({
+                ghlUserId: ghlAppt.assignedUserId,
+                locationId: location.locationId
+              });
+              if (assignedUser) {
+                assignedUserId = assignedUser._id.toString();
+              }
+            }
+
+            // Check if appointment exists
+            const existingAppointment = await db.collection('appointments').findOne({
+              ghlAppointmentId: ghlAppt.id
+            });
+
+            // Parse dates (they come with timezone info)
+            const startDate = new Date(ghlAppt.startTime);
+            const endDate = new Date(ghlAppt.endTime);
+            const duration = Math.round((endDate.getTime() - startDate.getTime()) / 60000); // in minutes
+
+            // Determine location type and address
+            let locationType = 'address';
+            let address = ghlAppt.address || '';
+            let customLocation = '';
+            
+            if (!address && contact) {
+              address = contact.address || '';
+            }
+
+            // Prepare appointment data
+            const appointmentData = {
+              // GHL Integration
+              ghlAppointmentId: ghlAppt.id,
+              ghlEventId: ghlAppt.id,
+              locationId: location.locationId,
+              
+              // Basic Information
+              title: ghlAppt.title || 'Appointment',
+              notes: ghlAppt.notes || '',
+              
+              // Relationships
+              contactId: contactId,
+              userId: assignedUserId,
+              calendarId: ghlAppt.calendarId,
+              groupId: ghlAppt.groupId || '',
+              
+              // Timing
+              start: startDate,
+              end: endDate,
+              duration: duration,
+              timezone: location.timezone || 'America/Denver', // Extract from location
+              
+              // Location
+              locationType: locationType,
+              customLocation: customLocation,
+              address: address,
+              
+              // Status
+              status: mapGHLAppointmentStatus(ghlAppt.appointmentStatus),
+              appointmentStatus: ghlAppt.appointmentStatus,
+              
+              // Contact Info (denormalized)
+              contactName: contact ? (contact.fullName || `${contact.firstName} ${contact.lastName}`.trim()) : '',
+              contactEmail: contact?.email || '',
+              contactPhone: contact?.phone || '',
+              
+              // Calendar Info (denormalized)
+              calendarName: calendar.name,
+              
+              // Additional GHL fields
+              assignedUserId: ghlAppt.assignedUserId,
+              assignedResources: ghlAppt.assignedResources || [],
+              isRecurring: ghlAppt.isRecurring || false,
+              
+              // Creation info
+              createdBy: ghlAppt.createdBy || {},
+              
+              // GHL Metadata
+              ghlCreatedAt: ghlAppt.dateAdded ? new Date(ghlAppt.dateAdded) : null,
+              ghlUpdatedAt: ghlAppt.dateUpdated ? new Date(ghlAppt.dateUpdated) : null,
+              
+              // Sync Metadata
+              lastSyncedAt: new Date(),
+              updatedAt: new Date()
+            };
+
+            if (existingAppointment) {
+              // Update existing appointment
+              await db.collection('appointments').updateOne(
+                { _id: existingAppointment._id },
+                { 
+                  $set: appointmentData,
+                  $setOnInsert: { createdAt: new Date() }
+                }
+              );
+              totalUpdated++;
+            } else {
+              // Create new appointment
+              await db.collection('appointments').insertOne({
+                _id: new ObjectId(),
+                ...appointmentData,
+                createdAt: new Date(),
+                createdBySync: true
+              });
+              totalCreated++;
+            }
+            
+            totalProcessed++;
+            
+          } catch (apptError: any) {
+            console.error(`[Sync Appointments] Error processing appointment ${ghlAppt.title || ghlAppt.id}:`, apptError.message);
+            errors.push({
+              appointmentId: ghlAppt.id,
+              title: ghlAppt.title,
+              calendarId: calendar.id,
+              calendarName: calendar.name,
+              error: apptError.message
+            });
+            totalSkipped++;
+          }
         }
         
-      } catch (apptError: any) {
-        console.error(`[Sync Appointments] Error processing appointment ${ghlAppt.title || ghlAppt.id}:`, apptError.message);
+      } catch (calendarError: any) {
+        console.error(`[Sync Appointments] Error syncing calendar ${calendar.name}:`, calendarError.message);
         errors.push({
-          appointmentId: ghlAppt.id,
-          title: ghlAppt.title,
-          error: apptError.message
+          calendarId: calendar.id,
+          calendarName: calendar.name,
+          error: calendarError.message,
+          isCalendarLevel: true
         });
-        skipped++;
       }
     }
 
@@ -246,11 +245,12 @@ export async function syncAppointments(db: Db, location: any, options: SyncOptio
           lastAppointmentSync: new Date(),
           appointmentSyncStatus: {
             lastSync: new Date(),
-            syncedCount: created + updated,
             dateRange: {
               start: startDate,
               end: endDate
             },
+            calendarsProcessed: calendars.length,
+            appointmentsSynced: totalProcessed,
             errors: errors.length
           }
         }
@@ -258,14 +258,15 @@ export async function syncAppointments(db: Db, location: any, options: SyncOptio
     );
 
     const duration = Date.now() - startTime;
-    console.log(`[Sync Appointments] Completed in ${duration}ms - Created: ${created}, Updated: ${updated}, Skipped: ${skipped}`);
+    console.log(`[Sync Appointments] Completed in ${duration}ms - Created: ${totalCreated}, Updated: ${totalUpdated}, Skipped: ${totalSkipped}`);
 
     return {
       success: true,
-      created,
-      updated,
-      skipped,
-      processed: ghlAppointments.length,
+      created: totalCreated,
+      updated: totalUpdated,
+      skipped: totalSkipped,
+      processed: totalProcessed,
+      calendarsProcessed: calendars.length,
       dateRange: {
         start: startDate.toISOString(),
         end: endDate.toISOString()
@@ -309,14 +310,17 @@ export async function syncAppointments(db: Db, location: any, options: SyncOptio
 // Helper function to map GHL appointment status to our status
 function mapGHLAppointmentStatus(ghlStatus: string): string {
   const statusMap: Record<string, string> = {
-    'scheduled': 'scheduled',
     'confirmed': 'scheduled',
+    'scheduled': 'scheduled',
+    'pending': 'scheduled',
     'showed': 'completed',
+    'complete': 'completed',
     'completed': 'completed',
     'noshow': 'no-show',
     'no-show': 'no-show',
     'cancelled': 'cancelled',
-    'canceled': 'cancelled'
+    'canceled': 'cancelled',
+    'declined': 'cancelled'
   };
   
   return statusMap[ghlStatus?.toLowerCase()] || 'scheduled';

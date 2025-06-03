@@ -464,6 +464,286 @@ async function processAppointmentDelete(db: any, payload: any, webhookId: string
   );
 }
 
+// Message Event Handlers
+async function processInboundMessage(db: any, payload: any, webhookId: string) {
+  const { locationId, contactId, conversationId, message } = payload;
+  
+  console.log(`[Native Webhook ${webhookId}] Processing inbound message`);
+  console.log(`[Native Webhook ${webhookId}] Message type: ${message?.type}`);
+  
+  try {
+    // Find contact by GHL ID
+    const contact = await db.collection('contacts').findOne({
+      ghlContactId: contactId,
+      locationId: locationId
+    });
+    
+    if (!contact) {
+      console.warn(`[Native Webhook ${webhookId}] Contact not found: ${contactId}`);
+      return;
+    }
+    
+    // Find or create conversation
+    const conversationData = {
+      ghlConversationId: conversationId || message.conversationId,
+      locationId: locationId,
+      contactId: contact._id.toString(),
+      type: message.type === 1 ? 'TYPE_PHONE' : message.type === 3 ? 'TYPE_EMAIL' : 'TYPE_OTHER',
+      lastMessageDate: new Date(),
+      lastMessageBody: message.body?.substring(0, 200) || '', // Preview
+      lastMessageType: getMessageTypeName(message.type),
+      lastMessageDirection: 'inbound',
+      contactName: contact.fullName || `${contact.firstName} ${contact.lastName}`,
+      contactEmail: contact.email,
+      contactPhone: contact.phone,
+      updatedAt: new Date()
+    };
+    
+    const conversation = await db.collection('conversations').findOneAndUpdate(
+      { 
+        ghlConversationId: conversationId,
+        locationId: locationId 
+      },
+      {
+        $set: conversationData,
+        $inc: { unreadCount: 1 },
+        $setOnInsert: {
+          _id: new ObjectId(),
+          createdAt: new Date(),
+          createdByWebhook: webhookId
+        }
+      },
+      { 
+        upsert: true,
+        returnDocument: 'after'
+      }
+    );
+    
+    // Store the message
+    const messageData: any = {
+      _id: new ObjectId(),
+      ghlMessageId: message.id,
+      conversationId: conversation.value._id.toString(),
+      ghlConversationId: conversationId,
+      locationId: locationId,
+      contactId: contact._id.toString(),
+      type: message.type,
+      messageType: message.messageType || getMessageTypeName(message.type),
+      direction: 'inbound',
+      contentType: message.contentType,
+      source: message.source || 'webhook',
+      dateAdded: new Date(message.dateAdded || Date.now()),
+      read: false,
+      createdAt: new Date(),
+      createdByWebhook: webhookId
+    };
+    
+    // Handle different message types
+    switch (message.type) {
+      case 1: // SMS
+        messageData.body = message.body || '';
+        messageData.status = message.status || 'received';
+        break;
+        
+      case 3: // Email
+        // For emails, store the reference only
+        if (message.meta?.email?.messageIds?.[0]) {
+          messageData.emailMessageId = message.meta.email.messageIds[0];
+          messageData.needsContentFetch = true;
+          // Don't store full HTML body
+        }
+        break;
+        
+      case 4: // WhatsApp
+        messageData.body = message.body || '';
+        messageData.mediaUrl = message.mediaUrl;
+        messageData.mediaType = message.mediaType;
+        break;
+        
+      default:
+        messageData.body = message.body || '';
+        messageData.meta = message.meta || {};
+    }
+    
+    // Find related project if exists
+    const project = await db.collection('projects').findOne({
+      contactId: contact._id.toString(),
+      locationId: locationId,
+      status: { $in: ['open', 'quoted', 'won', 'in_progress'] }
+    });
+    
+    if (project) {
+      messageData.projectId = project._id.toString();
+    }
+    
+    await db.collection('messages').insertOne(messageData);
+    
+    console.log(`[Native Webhook ${webhookId}] Inbound message processed: ${message.type}`);
+    
+    // TODO: Send push notification to assigned users
+    
+  } catch (error: any) {
+    console.error(`[Native Webhook ${webhookId}] Error processing inbound message:`, error);
+    throw error;
+  }
+}
+
+async function processOutboundMessage(db: any, payload: any, webhookId: string) {
+  const { locationId, contactId, conversationId, message, userId } = payload;
+  
+  console.log(`[Native Webhook ${webhookId}] Processing outbound message`);
+  
+  try {
+    // Find contact
+    const contact = await db.collection('contacts').findOne({
+      ghlContactId: contactId,
+      locationId: locationId
+    });
+    
+    if (!contact) {
+      console.warn(`[Native Webhook ${webhookId}] Contact not found: ${contactId}`);
+      return;
+    }
+    
+    // Find user who sent it (if available)
+    let senderId = null;
+    if (userId) {
+      const user = await db.collection('users').findOne({
+        ghlUserId: userId,
+        locationId: locationId
+      });
+      if (user) {
+        senderId = user._id.toString();
+      }
+    }
+    
+    // Update conversation
+    const conversationData = {
+      ghlConversationId: conversationId,
+      locationId: locationId,
+      contactId: contact._id.toString(),
+      type: message.type === 1 ? 'TYPE_PHONE' : message.type === 3 ? 'TYPE_EMAIL' : 'TYPE_OTHER',
+      lastMessageDate: new Date(),
+      lastMessageBody: message.body?.substring(0, 200) || '', // Preview
+      lastMessageType: getMessageTypeName(message.type),
+      lastMessageDirection: 'outbound',
+      lastOutboundMessageAction: message.source || 'manual',
+      lastManualMessageDate: message.source === 'manual' ? new Date() : undefined,
+      contactName: contact.fullName || `${contact.firstName} ${contact.lastName}`,
+      contactEmail: contact.email,
+      contactPhone: contact.phone,
+      updatedAt: new Date()
+    };
+    
+    const conversation = await db.collection('conversations').findOneAndUpdate(
+      { 
+        ghlConversationId: conversationId,
+        locationId: locationId 
+      },
+      {
+        $set: conversationData,
+        $setOnInsert: {
+          _id: new ObjectId(),
+          createdAt: new Date(),
+          createdByWebhook: webhookId,
+          unreadCount: 0
+        }
+      },
+      { 
+        upsert: true,
+        returnDocument: 'after'
+      }
+    );
+    
+    // Store the message
+    const messageData: any = {
+      _id: new ObjectId(),
+      ghlMessageId: message.id,
+      conversationId: conversation.value._id.toString(),
+      ghlConversationId: conversationId,
+      locationId: locationId,
+      contactId: contact._id.toString(),
+      userId: senderId,
+      type: message.type,
+      messageType: message.messageType || getMessageTypeName(message.type),
+      direction: 'outbound',
+      contentType: message.contentType,
+      source: message.source || 'manual',
+      dateAdded: new Date(message.dateAdded || Date.now()),
+      read: true, // Outbound messages are always "read"
+      createdAt: new Date(),
+      createdByWebhook: webhookId
+    };
+    
+    // Handle different message types
+    switch (message.type) {
+      case 1: // SMS
+        messageData.body = message.body || '';
+        messageData.status = message.status || 'sent';
+        break;
+        
+      case 3: // Email
+        // For emails, store the reference only
+        if (message.meta?.email?.messageIds?.[0]) {
+          messageData.emailMessageId = message.meta.email.messageIds[0];
+          messageData.needsContentFetch = true;
+        }
+        break;
+        
+      default:
+        messageData.body = message.body || '';
+        messageData.meta = message.meta || {};
+    }
+    
+    // Find related project
+    const project = await db.collection('projects').findOne({
+      contactId: contact._id.toString(),
+      locationId: locationId,
+      status: { $in: ['open', 'quoted', 'won', 'in_progress'] }
+    });
+    
+    if (project) {
+      messageData.projectId = project._id.toString();
+    }
+    
+    await db.collection('messages').insertOne(messageData);
+    
+    console.log(`[Native Webhook ${webhookId}] Outbound message processed: ${message.type}`);
+    
+  } catch (error: any) {
+    console.error(`[Native Webhook ${webhookId}] Error processing outbound message:`, error);
+    throw error;
+  }
+}
+
+// Conversation Event Handlers
+async function processConversationUnreadUpdate(db: any, payload: any, webhookId: string) {
+  const { locationId, conversationId, unreadCount } = payload;
+  
+  console.log(`[Native Webhook ${webhookId}] Updating conversation unread count`);
+  
+  try {
+    await db.collection('conversations').updateOne(
+      {
+        ghlConversationId: conversationId,
+        locationId: locationId
+      },
+      {
+        $set: {
+          unreadCount: unreadCount || 0,
+          lastWebhookUpdate: new Date()
+        }
+      }
+    );
+    
+    console.log(`[Native Webhook ${webhookId}] Updated unread count to ${unreadCount}`);
+    
+  } catch (error: any) {
+    console.error(`[Native Webhook ${webhookId}] Error updating conversation:`, error);
+    throw error;
+  }
+}
+
 // App Install/Uninstall/Update Event Handlers
 async function processInstallEvent(db: any, payload: any, webhookId: string) {
   const { installType, locationId, companyId, userId, companyName, whitelabelDetails, planId } = payload;
@@ -682,6 +962,25 @@ async function processLocationUpdate(db: any, payload: any, webhookId: string) {
   console.log(`[Native Webhook ${webhookId}] Location ${id} update processed - ${result.upsertedCount ? 'created' : 'updated'}`);
 }
 
+// Helper function to get message type name
+function getMessageTypeName(type: number): string {
+  const typeMap: Record<number, string> = {
+    1: 'TYPE_SMS',
+    3: 'TYPE_EMAIL',
+    4: 'TYPE_WHATSAPP',
+    5: 'TYPE_GMB',
+    6: 'TYPE_FB',
+    7: 'TYPE_IG',
+    24: 'TYPE_ACTIVITY_APPOINTMENT',
+    25: 'TYPE_ACTIVITY_CONTACT',
+    26: 'TYPE_ACTIVITY_INVOICE',
+    27: 'TYPE_ACTIVITY_OPPORTUNITY',
+    28: 'TYPE_ACTIVITY_PAYMENT'
+  };
+  
+  return typeMap[type] || `TYPE_UNKNOWN_${type}`;
+}
+
 // Add stub functions for other event types to prevent errors
 async function processOpportunityCreate(db: any, payload: any, webhookId: string) {
   console.log(`[Native Webhook ${webhookId}] OpportunityCreate not implemented yet`);
@@ -729,14 +1028,6 @@ async function processNoteCreate(db: any, payload: any, webhookId: string) {
 
 async function processNoteDelete(db: any, payload: any, webhookId: string) {
   console.log(`[Native Webhook ${webhookId}] NoteDelete not implemented yet`);
-}
-
-async function processInboundMessage(db: any, payload: any, webhookId: string) {
-  console.log(`[Native Webhook ${webhookId}] InboundMessage not implemented yet`);
-}
-
-async function processOutboundMessage(db: any, payload: any, webhookId: string) {
-  console.log(`[Native Webhook ${webhookId}] OutboundMessage not implemented yet`);
 }
 
 async function processInvoiceCreate(db: any, payload: any, webhookId: string) {
@@ -805,10 +1096,6 @@ async function processLocationCreate(db: any, payload: any, webhookId: string) {
 
 async function processCampaignStatusUpdate(db: any, payload: any, webhookId: string) {
   console.log(`[Native Webhook ${webhookId}] CampaignStatusUpdate not implemented yet`);
-}
-
-async function processConversationUnreadUpdate(db: any, payload: any, webhookId: string) {
-  console.log(`[Native Webhook ${webhookId}] ConversationUnreadUpdate not implemented yet`);
 }
 
 async function processConversationProviderOutboundMessage(db: any, payload: any, webhookId: string) {

@@ -14,6 +14,61 @@ export async function syncContacts(db: Db, location: any, options: SyncOptions =
   const { limit = 100, offset = 0, fullSync = false } = options;
   
   console.log(`[Sync Contacts] Starting for ${location.locationId} - Limit: ${limit}, Offset: ${offset}`);
+  
+  // If this is the initial call and we want a full sync, handle pagination automatically
+  if (fullSync && offset === 0) {
+    console.log(`[Sync Contacts] Full sync requested - will fetch all contacts in batches`);
+    
+    let totalCreated = 0;
+    let totalUpdated = 0;
+    let totalSkipped = 0;
+    let currentOffset = 0;
+    let hasMoreData = true;
+    const allErrors: any[] = [];
+    
+    while (hasMoreData) {
+      console.log(`[Sync Contacts] Fetching batch at offset ${currentOffset}...`);
+      
+      const batchResult = await syncContacts(db, location, {
+        limit: 250, // Process 250 at a time for faster initial sync
+        offset: currentOffset,
+        fullSync: false // Prevent recursion
+      });
+      
+      totalCreated += batchResult.created;
+      totalUpdated += batchResult.updated;
+      totalSkipped += batchResult.skipped;
+      
+      if (batchResult.errors) {
+        allErrors.push(...batchResult.errors);
+      }
+      
+      hasMoreData = batchResult.hasMore || false;
+      currentOffset = batchResult.nextOffset || currentOffset + limit;
+      
+      // Add a small delay to avoid rate limiting (only wait if we have more than 1000 contacts)
+      if (hasMoreData && currentOffset > 1000) {
+        console.log(`[Sync Contacts] Large dataset detected, waiting 1 second before next batch...`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    
+    const totalDuration = Date.now() - startTime;
+    console.log(`[Sync Contacts] Full sync completed in ${totalDuration}ms`);
+    
+    return {
+      success: true,
+      created: totalCreated,
+      updated: totalUpdated,
+      skipped: totalSkipped,
+      processed: totalCreated + totalUpdated + totalSkipped,
+      totalInGHL: totalCreated + totalUpdated + totalSkipped,
+      hasMore: false,
+      errors: allErrors.length > 0 ? allErrors : undefined,
+      duration: `${totalDuration}ms`,
+      fullSyncCompleted: true
+    };
+  }
 
   try {
     // Get auth header (OAuth or API key)
@@ -29,6 +84,7 @@ export async function syncContacts(db: Db, location: any, options: SyncOptions =
           'Accept': 'application/json'
         },
         params: {
+          locationId: location.locationId,  // ✅ FIXED: Added locationId
           limit,
           skip: offset
         }

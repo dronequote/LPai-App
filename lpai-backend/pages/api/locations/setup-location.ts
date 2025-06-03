@@ -124,7 +124,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // 6. Sync Contacts (initial batch)
       try {
         console.log(`[Location Setup] Step 6: Syncing contacts (initial batch)...`);
-        const contactResult = await syncContacts(db, location, { limit: 100 });
+        const contactResult = await syncContacts(db, location, { fullSync: true });
         setupResults.steps.contacts = { success: true, ...contactResult };
       } catch (error: any) {
         console.error(`[Location Setup] Contact sync failed:`, error);
@@ -134,7 +134,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // 7. Sync Opportunities
       try {
         console.log(`[Location Setup] Step 7: Syncing opportunities...`);
-        const opportunityResult = await syncOpportunities(db, location, { limit: 100 });
+        const opportunityResult = await syncOpportunities(db, location, { fullSync: true  });
         setupResults.steps.opportunities = { success: true, ...opportunityResult };
       } catch (error: any) {
         console.error(`[Location Setup] Opportunity sync failed:`, error);
@@ -144,7 +144,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // 8. Sync Appointments
       try {
         console.log(`[Location Setup] Step 8: Syncing appointments...`);
-        const appointmentResult = await syncAppointments(db, location, { limit: 100 });
+        const appointmentResult = await syncAppointments(db, location, { fullSync: true  });
         setupResults.steps.appointments = { success: true, ...appointmentResult };
       } catch (error: any) {
         console.error(`[Location Setup] Appointment sync failed:`, error);

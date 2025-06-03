@@ -2,6 +2,7 @@
 import axios from 'axios';
 import { Db, ObjectId } from 'mongodb';
 import { getAuthHeader } from '../ghlAuth';
+import { syncMessages } from './syncMessages'; // New import
 
 interface SyncOptions {
   limit?: number;
@@ -20,19 +21,19 @@ export async function syncConversations(db: Db, location: any, options: SyncOpti
     // Get auth header (OAuth or API key)
     const auth = await getAuthHeader(location);
     
-    // Fetch conversations from GHL
+    // Fetch conversations from GHL - matching your exact request
     const response = await axios.get(
       'https://services.leadconnectorhq.com/conversations/search',
       {
         headers: {
           'Authorization': auth.header,
-          'Version': '2021-04-15',
+          'Version': '2021-04-15', // Matching your version
           'Accept': 'application/json'
         },
         params: {
           locationId: location.locationId,
           limit,
-          offset
+          status: 'all' // Matching your params
         }
       }
     );
@@ -45,7 +46,7 @@ export async function syncConversations(db: Db, location: any, options: SyncOpti
     // Process each conversation
     let created = 0;
     let updated = 0;
-    let messagesCreated = 0;
+    let messagesProcessed = 0;
     let skipped = 0;
     const errors: any[] = [];
 
@@ -72,7 +73,7 @@ export async function syncConversations(db: Db, location: any, options: SyncOpti
           locationId: location.locationId
         });
 
-        // Prepare conversation data
+        // Prepare conversation data - matching GHL response structure
         const conversationData = {
           // GHL Integration
           ghlConversationId: ghlConv.id,
@@ -80,26 +81,33 @@ export async function syncConversations(db: Db, location: any, options: SyncOpti
           
           // Basic Information
           contactId: contact._id.toString(),
-          type: ghlConv.type || 'SMS', // SMS, Email, Call, etc.
+          type: ghlConv.type, // TYPE_PHONE, TYPE_EMAIL, etc.
           
           // Status
           unreadCount: ghlConv.unreadCount || 0,
+          inbox: ghlConv.inbox || false,
           starred: ghlConv.starred || false,
-          status: ghlConv.status || 'active',
           
-          // Last Message Info
+          // Last Message Info - Store preview only
           lastMessageDate: ghlConv.lastMessageDate ? new Date(ghlConv.lastMessageDate) : null,
-          lastMessageBody: ghlConv.lastMessageBody || '',
+          lastMessageBody: ghlConv.lastMessageBody || '', // This is just preview
           lastMessageType: ghlConv.lastMessageType || '',
           lastMessageDirection: ghlConv.lastMessageDirection || 'inbound',
           
           // Contact Info (denormalized)
-          contactName: contact.fullName || `${contact.firstName} ${contact.lastName}`.trim(),
+          contactName: ghlConv.contactName || ghlConv.fullName || contact.fullName,
           contactEmail: contact.email,
           contactPhone: contact.phone,
           
-          // Metadata
+          // GHL Metadata
           dateAdded: ghlConv.dateAdded ? new Date(ghlConv.dateAdded) : new Date(),
+          dateUpdated: ghlConv.dateUpdated ? new Date(ghlConv.dateUpdated) : new Date(),
+          
+          // Additional fields from GHL
+          attributed: ghlConv.attributed || false,
+          scoring: ghlConv.scoring || [],
+          followers: ghlConv.followers || [],
+          tags: ghlConv.tags || [],
           
           // Sync Metadata
           lastSyncedAt: new Date(),
@@ -141,70 +149,18 @@ export async function syncConversations(db: Db, location: any, options: SyncOpti
           created++;
         }
 
-        // Sync messages for this conversation (if requested)
-        if (fullSync || !existingConversation) {
-          try {
-            const messagesResponse = await axios.get(
-              `https://services.leadconnectorhq.com/conversations/${ghlConv.id}/messages`,
-              {
-                headers: {
-                  'Authorization': auth.header,
-                  'Version': '2021-04-15',
-                  'Accept': 'application/json'
-                },
-                params: {
-                  limit: 50  // Get last 50 messages
-                }
-              }
-            );
+        // Sync messages for this conversation
+        // Pass the conversation data to avoid re-fetching
+        const messageResult = await syncMessages(db, location, {
+          conversationId: conversationId,
+          ghlConversationId: ghlConv.id,
+          contactId: contact._id.toString(),
+          projectId: project?._id.toString(),
+          limit: fullSync ? 50 : 20, // Get more messages on full sync
+          auth: auth // Pass auth to avoid re-fetching
+        });
 
-            const messages = messagesResponse.data.messages || [];
-            
-            for (const msg of messages) {
-              // Check if message exists
-              const existingMessage = await db.collection('messages').findOne({
-                ghlMessageId: msg.id
-              });
-
-              if (!existingMessage) {
-                await db.collection('messages').insertOne({
-                  _id: new ObjectId(),
-                  
-                  // GHL Integration
-                  ghlMessageId: msg.id,
-                  ghlConversationId: ghlConv.id,
-                  
-                  // Relationships
-                  conversationId: conversationId,
-                  contactId: contact._id.toString(),
-                  locationId: location.locationId,
-                  projectId: project?._id.toString(),
-                  
-                  // Message Details
-                  type: msg.type || 'SMS',
-                  direction: msg.direction || 'inbound',
-                  status: msg.status || 'delivered',
-                  body: msg.body || '',
-                  
-                  // Media/Attachments
-                  attachments: msg.attachments || [],
-                  
-                  // Metadata
-                  dateAdded: msg.dateAdded ? new Date(msg.dateAdded) : new Date(),
-                  
-                  // User Info (if outbound)
-                  userId: msg.userId || null,
-                  
-                  createdAt: new Date(),
-                  createdBySync: true
-                });
-                messagesCreated++;
-              }
-            }
-          } catch (msgError: any) {
-            console.error(`[Sync Conversations] Error syncing messages for conversation ${ghlConv.id}:`, msgError.message);
-          }
-        }
+        messagesProcessed += messageResult.processed || 0;
         
       } catch (convError: any) {
         console.error(`[Sync Conversations] Error processing conversation ${ghlConv.id}:`, convError.message);
@@ -226,7 +182,7 @@ export async function syncConversations(db: Db, location: any, options: SyncOpti
             lastSync: new Date(),
             totalConversations: totalCount,
             synced: offset + ghlConversations.length,
-            messagesCreated: messagesCreated,
+            messagesProcessed: messagesProcessed,
             errors: errors.length
           }
         }
@@ -234,7 +190,7 @@ export async function syncConversations(db: Db, location: any, options: SyncOpti
     );
 
     const duration = Date.now() - startTime;
-    console.log(`[Sync Conversations] Completed in ${duration}ms - Created: ${created}, Updated: ${updated}, Messages: ${messagesCreated}, Skipped: ${skipped}`);
+    console.log(`[Sync Conversations] Completed in ${duration}ms - Created: ${created}, Updated: ${updated}, Messages: ${messagesProcessed}, Skipped: ${skipped}`);
 
     // Determine if more conversations need to be synced
     const hasMore = (offset + limit) < totalCount;
@@ -243,7 +199,7 @@ export async function syncConversations(db: Db, location: any, options: SyncOpti
       success: true,
       created,
       updated,
-      messagesCreated,
+      messagesProcessed,
       skipped,
       processed: ghlConversations.length,
       totalInGHL: totalCount,
@@ -263,7 +219,7 @@ export async function syncConversations(db: Db, location: any, options: SyncOpti
         success: false,
         created: 0,
         updated: 0,
-        messagesCreated: 0,
+        messagesProcessed: 0,
         skipped: 0,
         processed: 0,
         totalInGHL: 0,
