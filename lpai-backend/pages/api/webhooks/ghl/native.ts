@@ -3,8 +3,11 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../../src/lib/mongodb';
 import crypto from 'crypto';
 import { ObjectId } from 'mongodb';
+import { analyzeWebhook, isSystemHealthy } from '../../../../src/utils/webhooks/router';
+import { QueueManager } from '../../../../src/utils/webhooks/queueManager';
+import { processMessageDirect } from '../../../../src/utils/webhooks/directProcessor';
 
-// GHL Public Key from the docs for webhook verification
+// GHL Public Key for webhook verification
 const GHL_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
 MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAokvo/r9tVgcfZ5DysOSC
 Frm602qYV0MaAiNnX9O8KxMbiyRKWeL9JpCpVpt4XHIcBOK4u3cLSqJGOLaPuXw6
@@ -38,7 +41,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Get signature from headers - note it's x-wh-signature per the docs
+  const receivedAt = new Date();
+  
+  // Get signature from headers
   const signature = req.headers['x-wh-signature'] as string;
   
   if (!signature) {
@@ -46,21 +51,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(401).json({ error: 'No signature' });
   }
 
-  // Verify signature with the EXACT payload as string
+  // Verify signature
   const payload = JSON.stringify(req.body);
   if (!verifyWebhookSignature(payload, signature)) {
     console.log('[Native Webhook] Invalid signature');
     return res.status(401).json({ error: 'Invalid signature' });
   }
 
-  // Use webhookId from payload if available, otherwise generate
+  // Generate webhook ID
   const webhookId = req.body.webhookId || new ObjectId().toString();
   
-  // Log webhook type for debugging
-  if (req.body.type) {
-    console.log(`[Native Webhook ${webhookId}] Received: ${req.body.type}`);
-  } else {
-    console.log(`[Native Webhook ${webhookId}] Received webhook without type field`);
+  // Log webhook type
+  const eventType = req.body.type;
+  if (__DEV__) {
+    console.log(`[Native Webhook ${webhookId}] Received: ${eventType}`);
   }
 
   try {
@@ -79,68 +83,89 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
 
-    // Native webhooks have the event type in the 'type' field
-    const eventType = req.body.type;
+    // Analyze webhook to determine routing
+    const routeDecision = analyzeWebhook(req.body);
     
-    if (!eventType) {
-      console.error(`[Native Webhook ${webhookId}] No event type in payload`);
-      return res.status(200).json({ success: false, error: 'No event type' });
+    if (__DEV__) {
+      console.log(`[Native Webhook ${webhookId}] Route decision:`, {
+        type: routeDecision.type,
+        queue: routeDecision.queueType,
+        priority: routeDecision.priority,
+        direct: routeDecision.shouldDirectProcess
+      });
     }
 
-    // Extract locationId - it's directly in the payload for native webhooks
-    const locationId = req.body.locationId;
-    
-    if (!locationId) {
-      console.warn(`[Native Webhook ${webhookId}] No location ID found in payload`);
-    }
+    // Initialize queue manager
+    const queueManager = new QueueManager(db);
 
-    // Queue webhook for processing
-    await db.collection('webhook_queue').insertOne({
-      _id: new ObjectId(),
-      webhookId,
-      type: eventType, // This will be 'ContactCreate', 'AppointmentUpdate', etc.
-      payload: req.body,
-      locationId: locationId,
-      source: 'native', // Mark as native webhook
-      status: 'pending',
-      attempts: 0,
-      createdAt: new Date(),
-      processAfter: new Date(), // Process immediately
-      // Store key identifiers for easier debugging
-      metadata: {
-        contactId: req.body.id || req.body.contactId,
-        email: req.body.email,
-        appointmentId: req.body.appointment?.id,
-        opportunityId: req.body.id,
-        invoiceId: req.body._id,
-        orderId: req.body._id
+    // Check if we should process directly
+    if (routeDecision.shouldDirectProcess) {
+      const systemHealthy = await isSystemHealthy(db);
+      
+      if (systemHealthy) {
+        // Process immediately in background
+        processMessageDirect(db, webhookId, req.body)
+          .then(() => {
+            if (__DEV__) {
+              console.log(`[Native Webhook ${webhookId}] Direct processing completed`);
+            }
+          })
+          .catch((error) => {
+            console.error(`[Native Webhook ${webhookId}] Direct processing failed:`, error);
+            // Will be picked up by queue processor as backup
+          });
       }
-    });
+    }
 
-    console.log(`[Native Webhook ${webhookId}] Queued ${eventType} webhook for location ${locationId}`);
+    // Always queue (even if direct processing) as backup
+    try {
+      await queueManager.addToQueue({
+        webhookId,
+        type: routeDecision.type,
+        queueType: routeDecision.queueType,
+        priority: routeDecision.priority,
+        payload: req.body,
+        receivedAt
+      });
+      
+      if (__DEV__) {
+        console.log(`[Native Webhook ${webhookId}] Queued successfully`);
+      }
+      
+    } catch (error: any) {
+      if (error.message === 'DUPLICATE_WEBHOOK') {
+        console.log(`[Native Webhook ${webhookId}] Duplicate webhook, ignoring`);
+        return res.status(200).json({ 
+          success: true, 
+          webhookId,
+          duplicate: true
+        });
+      }
+      throw error;
+    }
 
-    // Log webhook to separate collection for debugging (optional)
-    await db.collection('webhook_logs').insertOne({
-      _id: new ObjectId(),
-      webhookId,
-      type: eventType,
-      locationId,
-      payload: req.body,
-      signature,
-      verified: true,
-      receivedAt: new Date()
-    });
+    // Log unrecognized types for discovery
+    if (!routeDecision.isRecognized) {
+      await db.collection('webhook_discovery').insertOne({
+        _id: new ObjectId(),
+        type: routeDecision.type,
+        firstSeen: new Date(),
+        lastSeen: new Date(),
+        count: 1,
+        samplePayload: req.body
+      });
+    }
 
     // Return 200 immediately (don't block GHL)
     return res.status(200).json({ 
       success: true, 
       webhookId,
-      type: eventType,
+      type: routeDecision.type,
       queued: true 
     });
     
   } catch (error: any) {
-    console.error(`[Native Webhook ${webhookId}] Queue error:`, error);
+    console.error(`[Native Webhook ${webhookId}] Fatal error:`, error);
     
     // Still return 200 to prevent GHL from retrying
     return res.status(200).json({ 

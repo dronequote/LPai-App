@@ -7,6 +7,14 @@
   {
     "path": "/api/cron/refresh-tokens",
     "schedule": "0 */6 * * *"
+  },
+  {
+    "path": "/api/cron/process-critical",
+    "schedule": "* * * * *"
+  },
+  {
+    "path": "/api/cron/process-messages",
+    "schedule": "* * * * *"
   }
 ],
 "functions": {
