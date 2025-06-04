@@ -744,153 +744,204 @@ async function processConversationUnreadUpdate(db: any, payload: any, webhookId:
   }
 }
 
-// App Install/Uninstall/Update Event Handlers
+// App Install/Uninstall/Update Event Handlers with LOCKING
 async function processInstallEvent(db: any, payload: any, webhookId: string) {
   const { installType, locationId, companyId, userId, companyName, whitelabelDetails, planId } = payload;
   
   console.log(`[Native Webhook ${webhookId}] Processing ${installType} install`);
   console.log(`[Native Webhook ${webhookId}] Full payload:`, JSON.stringify(payload, null, 2));
   
-  if (installType === 'Location' && locationId) {
-    // Location-specific install
-    await db.collection('locations').updateOne(
-      { locationId },
-      {
-        $set: {
-          locationId: locationId,
-          companyId: companyId,
-          name: companyName || `Location ${locationId}`,
-          appInstalled: true,
-          installedAt: new Date(payload.timestamp),
-          installedBy: userId,
-          installType: 'Location',
-          isWhitelabelCompany: payload.isWhitelabelCompany || false,
-          whitelabelDetails: whitelabelDetails,
-          planId: planId,
-          lastWebhookUpdate: new Date(),
-          updatedAt: new Date()
-        },
-        $setOnInsert: {
-          createdAt: new Date(),
-          createdByWebhook: webhookId
-        }
-      },
-      { upsert: true }
-    );
-    console.log(`[Native Webhook ${webhookId}] Location ${locationId} install processed`);
-    
-    // Trigger location setup after install
-    try {
-      console.log(`[Native Webhook ${webhookId}] Triggering location setup for ${locationId}`);
+  // Import our install queue utilities
+  const { acquireInstallLock, releaseInstallLock, queueInstallForRetry, checkInstallState } = await import('../installQueue');
+  
+  // Try to acquire install lock
+  const lockAcquired = await acquireInstallLock(db, companyId, locationId, webhookId);
+  
+  if (!lockAcquired) {
+    console.log(`[Native Webhook ${webhookId}] Could not acquire lock, queueing for retry`);
+    await queueInstallForRetry(db, payload, webhookId, 'Could not acquire install lock');
+    return;
+  }
+  
+  try {
+    if (installType === 'Location' && locationId) {
+      // Check if location is already being installed
+      const { isInstalling, isComplete } = await checkInstallState(db, locationId);
       
-      // Call the setup endpoint
-      const setupResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://lpai-backend-omega.vercel.app'}/api/locations/setup-location`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          locationId: locationId,
-          fullSync: true
-        })
-      });
-      
-      if (setupResponse.ok) {
-        const setupResult = await setupResponse.json();
-        console.log(`[Native Webhook ${webhookId}] Location setup completed:`, setupResult.message);
-        
-        // Update location with setup results
-        await db.collection('locations').updateOne(
-          { locationId },
-          {
-            $set: {
-              setupTriggeredBy: webhookId,
-              setupTriggeredAt: new Date(),
-              initialSetupComplete: true
-            }
-          }
-        );
-      } else {
-        const error = await setupResponse.text();
-        console.error(`[Native Webhook ${webhookId}] Location setup failed:`, error);
-        
-        // Mark setup as failed but don't fail the webhook
-        await db.collection('locations').updateOne(
-          { locationId },
-          {
-            $set: {
-              setupTriggeredBy: webhookId,
-              setupTriggeredAt: new Date(),
-              setupFailed: true,
-              setupError: error
-            }
-          }
-        );
+      if (isInstalling) {
+        console.log(`[Native Webhook ${webhookId}] Location ${locationId} install already in progress`);
+        return;
       }
-    } catch (setupError: any) {
-      console.error(`[Native Webhook ${webhookId}] Failed to trigger location setup:`, setupError.message);
       
-      // Store error but don't fail the webhook
+      if (isComplete) {
+        console.log(`[Native Webhook ${webhookId}] Location ${locationId} already installed`);
+        return;
+      }
+      
+      // Location-specific install
       await db.collection('locations').updateOne(
         { locationId },
         {
           $set: {
-            setupError: setupError.message,
-            needsManualSetup: true
+            locationId: locationId,
+            companyId: companyId,
+            name: companyName || `Location ${locationId}`,
+            appInstalled: true,
+            installedAt: new Date(payload.timestamp),
+            installedBy: userId,
+            installType: 'Location',
+            isWhitelabelCompany: payload.isWhitelabelCompany || false,
+            whitelabelDetails: whitelabelDetails,
+            planId: planId,
+            installState: 'in_progress',
+            installStarted: new Date(),
+            lastWebhookUpdate: new Date(),
+            updatedAt: new Date()
+          },
+          $setOnInsert: {
+            createdAt: new Date(),
+            createdByWebhook: webhookId
           }
-        }
+        },
+        { upsert: true }
       );
-    }
-    
-  } else if (installType === 'Company' && companyId) {
-    // Company-level install
-    await db.collection('locations').updateOne(
-      { companyId: companyId, locationId: null },
-      {
-        $set: {
-          companyId: companyId,
-          name: 'Company-Level Install',
-          appInstalled: true,
-          installedAt: new Date(payload.timestamp),
-          installType: 'Company',
-          isCompanyLevel: true,
-          planId: planId,
-          lastWebhookUpdate: new Date(),
-          updatedAt: new Date()
-        },
-        $setOnInsert: {
-          locationId: null,
-          createdAt: new Date(),
-          createdByWebhook: webhookId
-        }
-      },
-      { upsert: true }
-    );
-    console.log(`[Native Webhook ${webhookId}] Company ${companyId} install processed`);
-    
-    // For company installs, we should trigger the agency sync
-    try {
-      console.log(`[Native Webhook ${webhookId}] Triggering agency sync for company ${companyId}`);
+      console.log(`[Native Webhook ${webhookId}] Location ${locationId} install processed`);
       
-      const syncResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://lpai-backend-omega.vercel.app'}/api/oauth/get-location-tokens`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          companyId: companyId
-        })
+      // Trigger location setup after install
+      try {
+        console.log(`[Native Webhook ${webhookId}] Triggering location setup for ${locationId}`);
+        
+        // Add delay to ensure company tokens are ready if this is from agency install
+        if (payload.companyId) {
+          await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
+        }
+        
+        // Call the setup endpoint
+        const setupResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://lpai-backend-omega.vercel.app'}/api/locations/setup-location`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            locationId: locationId,
+            fullSync: true
+          })
+        });
+        
+        if (setupResponse.ok) {
+          const setupResult = await setupResponse.json();
+          console.log(`[Native Webhook ${webhookId}] Location setup completed:`, setupResult.message);
+          
+          // Update location with setup results
+          await db.collection('locations').updateOne(
+            { locationId },
+            {
+              $set: {
+                setupTriggeredBy: webhookId,
+                setupTriggeredAt: new Date(),
+                initialSetupComplete: true,
+                installState: 'complete',
+                installCompleted: new Date()
+              }
+            }
+          );
+        } else {
+          const error = await setupResponse.text();
+          console.error(`[Native Webhook ${webhookId}] Location setup failed:`, error);
+          
+          // Mark setup as failed but don't fail the webhook
+          await db.collection('locations').updateOne(
+            { locationId },
+            {
+              $set: {
+                setupTriggeredBy: webhookId,
+                setupTriggeredAt: new Date(),
+                setupFailed: true,
+                setupError: error,
+                installState: 'setup_failed'
+              }
+            }
+          );
+        }
+      } catch (setupError: any) {
+        console.error(`[Native Webhook ${webhookId}] Failed to trigger location setup:`, setupError.message);
+        
+        // Store error but don't fail the webhook
+        await db.collection('locations').updateOne(
+          { locationId },
+          {
+            $set: {
+              setupError: setupError.message,
+              needsManualSetup: true,
+              installState: 'setup_failed'
+            }
+          }
+        );
+      }
+      
+    } else if (installType === 'Company' && companyId) {
+      // Check if company is already installed
+      const existingCompany = await db.collection('locations').findOne({
+        companyId: companyId,
+        locationId: null,
+        isCompanyLevel: true
       });
       
-      if (syncResponse.ok) {
-        const syncResult = await syncResponse.json();
-        console.log(`[Native Webhook ${webhookId}] Agency sync completed: Found ${syncResult.locationsProcessed} locations`);
-      } else {
-        console.error(`[Native Webhook ${webhookId}] Agency sync failed:`, await syncResponse.text());
+      if (existingCompany?.appInstalled) {
+        console.log(`[Native Webhook ${webhookId}] Company ${companyId} already installed`);
+        return;
       }
-    } catch (syncError: any) {
-      console.error(`[Native Webhook ${webhookId}] Failed to trigger agency sync:`, syncError.message);
+      
+      // Company-level install
+      await db.collection('locations').updateOne(
+        { companyId: companyId, locationId: null },
+        {
+          $set: {
+            companyId: companyId,
+            name: companyName || 'Company-Level Install',
+            appInstalled: true,
+            installedAt: new Date(payload.timestamp),
+            installType: 'Company',
+            isCompanyLevel: true,
+            planId: planId,
+            installState: 'complete',
+            lastWebhookUpdate: new Date(),
+            updatedAt: new Date()
+          },
+          $setOnInsert: {
+            locationId: null,
+            createdAt: new Date(),
+            createdByWebhook: webhookId
+          }
+        },
+        { upsert: true }
+      );
+      console.log(`[Native Webhook ${webhookId}] Company ${companyId} install processed`);
+      
+      // For company installs, we should trigger the agency sync with rate limiting
+      try {
+        console.log(`[Native Webhook ${webhookId}] Queueing agency sync for company ${companyId}`);
+        
+        // Queue the sync instead of doing it immediately
+        await db.collection('sync_queue').insertOne({
+          _id: new ObjectId(),
+          type: 'agency_sync',
+          companyId: companyId,
+          webhookId: webhookId,
+          status: 'pending',
+          attempts: 0,
+          createdAt: new Date(),
+          scheduledFor: new Date(Date.now() + 5000) // 5 seconds from now
+        });
+        
+        console.log(`[Native Webhook ${webhookId}] Agency sync queued`);
+      } catch (syncError: any) {
+        console.error(`[Native Webhook ${webhookId}] Failed to queue agency sync:`, syncError.message);
+      }
     }
+  } finally {
+    // Always release the lock
+    await releaseInstallLock(db, companyId, locationId, webhookId);
   }
 }
 
