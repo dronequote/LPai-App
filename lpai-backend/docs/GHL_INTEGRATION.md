@@ -1,864 +1,1123 @@
-# GoHighLevel (GHL) Integration Guide
+GoHighLevel (GHL) Integration Guide
+Overview
+LPai integrates with GoHighLevel (LeadConnector) as a Marketplace App using OAuth 2.0 authentication. MongoDB serves as the primary data source with bidirectional sync to GHL. This guide covers the OAuth flow, sync patterns, webhook processing, and best practices.
+Architecture Overview
+┌─────────────────┐     ┌─────────────┐     ┌─────────────┐
+│   LPai App      │     │   MongoDB   │     │     GHL     │
+│  (Frontend)     │────▶│  (Primary)  │◀───▶│   (CRM)     │
+└─────────────────┘     └─────────────┘     └─────────────┘
+                              ▲                      │
+                              │                      │
+                        ┌─────┴──────┐               │
+                        │  Webhooks  │◀──────────────┘
+                        │   Queue    │
+                        └────────────┘
+Key Architectural Principles
 
-## Overview
+MongoDB as Source of Truth: All app operations read/write to MongoDB first
+OAuth-First Authentication: Uses GHL OAuth 2.0 for secure API access
+Webhook-Driven Updates: Real-time sync via native webhooks
+Queue-Based Processing: Webhooks processed asynchronously to prevent timeouts
+Multi-Tenant Isolation: All operations filtered by locationId
+Graceful Degradation: GHL failures don't block app functionality
 
-LPai integrates with GoHighLevel (LeadConnector) as the CRM backend while maintaining MongoDB as the primary data source. This guide explains the sync patterns, API integration, and best practices for GHL integration.
+OAuth 2.0 Implementation
+Installation Flow
+mermaidsequenceDiagram
+    User->>GHL Marketplace: Install App
+    GHL Marketplace->>OAuth Callback: Redirect with code
+    OAuth Callback->>GHL API: Exchange code for tokens
+    GHL API->>OAuth Callback: Return tokens
+    OAuth Callback->>MongoDB: Store tokens
+    OAuth Callback->>Setup API: Trigger location setup
+    Setup API->>GHL API: Sync all data
+    Setup API->>MongoDB: Store synced data
+OAuth Configuration
+javascript// Environment Variables
+GHL_MARKETPLACE_CLIENT_ID=683aa5ce1a9647760b904986-mbc8v930
+GHL_MARKETPLACE_CLIENT_SECRET=a6ec6cdc-047d-41d0-bcc5-96de0acd37d3
 
-## Architecture Principles
+// OAuth URLs
+const OAUTH_BASE_URL = 'https://marketplace.gohighlevel.com/oauth/chooselocation';
+const TOKEN_URL = 'https://services.leadconnectorhq.com/oauth/token';
+const CALLBACK_URL = `${process.env.NEXT_PUBLIC_API_URL}/api/oauth/callback`;
+Token Storage Structure
+javascript// Company-level OAuth (Agency installs)
+{
+  companyId: "xvoQk4MIRt1U9L3bWLcC",
+  locationId: null,  // null indicates company-level
+  isCompanyLevel: true,
+  ghlOAuth: {
+    accessToken: "eyJhbGciOiJIUzI1NiIs...",
+    refreshToken: "eyJhbGciOiJIUzI1NiIs...",
+    expiresAt: new Date("2025-01-15T10:00:00Z"),
+    tokenType: "Bearer",
+    userType: "Company",
+    installedAt: new Date(),
+    installedBy: "user_id",
+    approvedLocations: ["loc1", "loc2"]
+  }
+}
 
-```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   LPai App  │     │   MongoDB   │     │     GHL     │
-│  (Frontend) │────▶│  (Primary)  │◀───▶│   (Sync)    │
-└─────────────┘     └─────────────┘     └─────────────┘
-        │                                        ▲
-        └────────────────X───────────────────────┘
-         Never Direct - Always Through MongoDB
-```
+// Location-level OAuth (Sub-account installs)
+{
+  locationId: "JMtlZzwrNOUmLpJk2eCE",
+  companyId: "xvoQk4MIRt1U9L3bWLcC",
+  ghlOAuth: {
+    accessToken: "eyJhbGciOiJIUzI1NiIs...",
+    refreshToken: "eyJhbGciOiJIUzI1NiIs...",
+    expiresAt: new Date("2025-01-15T10:00:00Z"),
+    tokenType: "Bearer",
+    userType: "Location",
+    derivedFromCompany: true,  // If token came from company OAuth
+    installedAt: new Date()
+  }
+}
+Token Management
+javascript// Get auth header with automatic token refresh
+import { getAuthHeader } from '../utils/ghlAuth';
 
-### Key Principles
+async function makeGHLRequest(location) {
+  // Automatically handles token refresh if needed
+  const auth = await getAuthHeader(location);
+  
+  const response = await axios.get(url, {
+    headers: {
+      'Authorization': auth.header,  // "Bearer {token}" or API key
+      'Version': '2021-07-28',
+      'Accept': 'application/json'
+    }
+  });
+  
+  return response.data;
+}
 
-1. **MongoDB First**: All app reads/writes go to MongoDB
-2. **Backend Sync**: Only backend syncs with GHL
-3. **Selective Sync**: Only sync necessary fields to GHL
-4. **Graceful Failures**: GHL sync failures don't block app operations
-5. **Field Mapping**: Carefully map between MongoDB and GHL schemas
-
-## GHL API Configuration
-
-### API Versions
-
-```javascript
-// GHL uses different API versions for different endpoints
-const GHL_API_VERSIONS = {
+// Token refresh implementation
+async function refreshOAuthToken(location) {
+  if (!location.ghlOAuth?.refreshToken) {
+    throw new Error('No refresh token available');
+  }
+  
+  const response = await axios.post(
+    'https://services.leadconnectorhq.com/oauth/token',
+    new URLSearchParams({
+      client_id: process.env.GHL_MARKETPLACE_CLIENT_ID,
+      client_secret: process.env.GHL_MARKETPLACE_CLIENT_SECRET,
+      grant_type: 'refresh_token',
+      refresh_token: location.ghlOAuth.refreshToken
+    }),
+    {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json'
+      }
+    }
+  );
+  
+  // Update tokens in database
+  const newExpiresAt = new Date(Date.now() + (response.data.expires_in * 1000));
+  
+  await db.collection('locations').updateOne(
+    { _id: location._id },
+    {
+      $set: {
+        'ghlOAuth.accessToken': response.data.access_token,
+        'ghlOAuth.refreshToken': response.data.refresh_token,
+        'ghlOAuth.expiresAt': newExpiresAt,
+        'ghlOAuth.lastRefreshed': new Date()
+      }
+    }
+  );
+}
+Cron Job for Token Refresh
+javascript// Runs every hour to refresh expiring tokens
+// /api/cron/refresh-tokens
+export default async function refreshTokensCron(req, res) {
+  // Verify cron secret
+  if (req.headers['x-vercel-cron'] !== '1' && 
+      req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  
+  const locations = await db.collection('locations').find({
+    'ghlOAuth.accessToken': { $exists: true },
+    appInstalled: true
+  }).toArray();
+  
+  for (const location of locations) {
+    if (tokenNeedsRefresh(location)) {
+      await refreshOAuthToken(location);
+    }
+  }
+}
+Location Setup Process
+When a location installs the app, a comprehensive setup process runs automatically:
+javascript// /api/locations/setup-location
+async function setupLocation(locationId) {
+  const steps = [
+    { name: 'locationDetails', fn: syncLocationDetails },
+    { name: 'pipelines', fn: syncPipelines },
+    { name: 'calendars', fn: syncCalendars },
+    { name: 'users', fn: syncUsers },
+    { name: 'customFields', fn: syncCustomFields },
+    { name: 'customValues', fn: syncCustomValues },
+    { name: 'contacts', fn: syncContacts },      // Initial batch only
+    { name: 'opportunities', fn: syncOpportunities },
+    { name: 'appointments', fn: syncAppointments },
+    { name: 'conversations', fn: syncConversations },
+    { name: 'defaults', fn: setupDefaults }     // Terms, templates, libraries
+  ];
+  
+  const results = {};
+  
+  for (const step of steps) {
+    try {
+      results[step.name] = await step.fn(db, location);
+    } catch (error) {
+      results[step.name] = { success: false, error: error.message };
+    }
+  }
+  
+  return results;
+}
+API Configuration
+API Versions by Endpoint
+javascriptconst GHL_API_VERSIONS = {
+  // V2 endpoints (newer)
   contacts: '2021-07-28',
   opportunities: '2021-07-28',
-  calendars: '2021-04-15',
   pipelines: '2021-07-28',
+  customFields: '2021-07-28',
+  invoices: '2021-07-28',
+  users: '2021-07-28',
+  
+  // V1 endpoints (older)
+  calendars: '2021-04-15',
   appointments: '2021-04-15',
-  conversations: '2021-04-15'  // For emails
+  conversations: '2021-04-15',
+  messages: '2021-04-15'
 };
-```
-
-### Base Configuration
-
-```javascript
-const GHL_BASE_URL = 'https://services.leadconnectorhq.com';
-
-// Headers required for all GHL requests
-function getGHLHeaders(apiKey, version) {
-  return {
-    'Authorization': `Bearer ${apiKey}`,
-    'Content-Type': 'application/json',
-    'Accept': 'application/json',
-    'Version': version
-  };
-}
-```
-
-## Entity Mappings
-
-### Contacts
-
-**MongoDB Contact → GHL Contact**
-
-```javascript
-// MongoDB schema
+Base URLs
+javascriptconst GHL_BASE_URL = 'https://services.leadconnectorhq.com';
+const GHL_REST_URL = 'https://rest.gohighlevel.com/v1';  // Legacy endpoints
+Entity Sync Patterns
+Contacts Sync
+javascript// MongoDB Contact Schema
 {
   _id: ObjectId,
+  ghlContactId: String,      // GHL reference
+  locationId: String,        // Required for all operations
+  
+  // Basic Info
   firstName: String,
   lastName: String,
+  fullName: String,          // Computed: firstName + lastName
   email: String,
-  phone: String,
-  address: String,
-  notes: String,
-  locationId: String,
-  ghlContactId: String  // Stores GHL ID after creation
-}
-
-// GHL payload (for creation)
-{
-  firstName: "John",
-  lastName: "Doe",
-  email: "john@example.com",
-  phone: "+1234567890",
-  address1: "123 Main St",
-  locationId: "loc_xxx"
-  // notes: NOT supported in contact creation
-}
-
-// GHL payload (for updates) - NO locationId
-{
-  firstName: "John Updated",
-  lastName: "Doe",
-  email: "john@example.com",
-  phone: "+1234567890",
-  address1: "123 Main St Updated"
-}
-```
-
-**Implementation Example:**
-
-```javascript
-// Create contact in GHL
-async function createContactInGHL(contact, apiKey) {
-  try {
-    const payload = {
-      firstName: contact.firstName,
-      lastName: contact.lastName,
-      email: contact.email,
-      phone: contact.phone,
-      address1: contact.address,
-      locationId: contact.locationId
-    };
-    
-    const response = await axios.post(
-      `${GHL_BASE_URL}/contacts/`,
-      payload,
-      { headers: getGHLHeaders(apiKey, '2021-07-28') }
-    );
-    
-    return response.data.contact?.id;
-  } catch (error) {
-    console.error('GHL Contact Creation Failed:', error.response?.data);
-    return null; // Don't block local operation
-  }
-}
-
-// Update contact in GHL (NO locationId in payload!)
-async function updateContactInGHL(ghlContactId, updates, apiKey) {
-  const payload = {
-    firstName: updates.firstName,
-    lastName: updates.lastName,
-    email: updates.email,
-    phone: updates.phone,
-    address1: updates.address
-  };
+  phone: String,             // E.164 format: +1234567890
   
-  await axios.put(
-    `${GHL_BASE_URL}/contacts/${ghlContactId}`,
-    payload,
-    { headers: getGHLHeaders(apiKey, '2021-07-28') }
-  );
+  // Additional Info
+  address: String,
+  city: String,
+  state: String,
+  country: String,
+  postalCode: String,
+  dateOfBirth: Date,
+  
+  // Business Info
+  companyName: String,
+  website: String,
+  
+  // GHL Specific
+  tags: [String],
+  source: String,
+  type: String,              // 'lead' or 'contact'
+  dnd: Boolean,
+  dndSettings: Object,
+  customFields: Array,
+  
+  // Tracking
+  createdAt: Date,
+  updatedAt: Date,
+  lastSyncedAt: Date,
+  createdBySync: Boolean
 }
-```
 
-### Projects (Opportunities)
-
-**MongoDB Project → GHL Opportunity**
-
-```javascript
-// MongoDB schema
+// Sync Implementation
+async function syncContacts(db, location, options = {}) {
+  const { limit = 100, fullSync = false } = options;
+  
+  const response = await axios.get(
+    'https://services.leadconnectorhq.com/contacts/',
+    {
+      headers: {
+        'Authorization': auth.header,
+        'Version': '2021-07-28',
+        'Accept': 'application/json'
+      },
+      params: {
+        locationId: location.locationId,
+        limit,
+        startAfter: options.startAfter,
+        startAfterId: options.startAfterId
+      }
+    }
+  );
+  
+  // Bulk upsert pattern
+  const bulkOps = response.data.contacts.map(ghlContact => ({
+    updateOne: {
+      filter: { 
+        $or: [
+          { ghlContactId: ghlContact.id },
+          { email: ghlContact.email, locationId: location.locationId }
+        ]
+      },
+      update: {
+        $set: {
+          ghlContactId: ghlContact.id,
+          locationId: location.locationId,
+          firstName: ghlContact.firstName || '',
+          lastName: ghlContact.lastName || '',
+          fullName: ghlContact.contactName || `${ghlContact.firstName} ${ghlContact.lastName}`.trim(),
+          email: ghlContact.email || '',
+          phone: ghlContact.phone || '',
+          // ... map all fields
+          lastSyncedAt: new Date()
+        },
+        $setOnInsert: {
+          _id: new ObjectId(),
+          createdAt: new Date(),
+          createdBySync: true
+        }
+      },
+      upsert: true
+    }
+  }));
+  
+  await db.collection('contacts').bulkWrite(bulkOps);
+}
+Projects (Opportunities) Sync
+javascript// MongoDB Project Schema
 {
   _id: ObjectId,
-  title: String,              // → GHL "name"
-  status: String,             // Must be valid GHL status
-  contactId: String,          // MongoDB contact ID
+  ghlOpportunityId: String,  // GHL reference
   locationId: String,
-  pipelineId: String,
+  contactId: String,         // MongoDB contact ID
+  
+  // Core Fields (sync with GHL)
+  title: String,             // → GHL "name"
+  status: String,            // MUST be: open, won, lost, abandoned
   monetaryValue: Number,
+  pipelineId: String,
+  pipelineStageId: String,
   
-  // MongoDB-only fields
-  scopeOfWork: String,        // → Custom field or don't sync
-  products: [String],         // → Custom field or don't sync
-  milestones: Array,          // Don't sync
-  photos: Array,              // Don't sync
+  // Custom Fields (sync via GHL custom fields)
+  quoteNumber: String,       // → custom field
+  signedDate: String,        // → custom field
   
-  ghlOpportunityId: String    // Stores GHL ID after creation
-}
-
-// GHL payload (for creation)
-{
-  contactId: "ghl_contact_id",  // Must use GHL contact ID!
-  name: "Kitchen Remodel",
-  status: "open",               // open, won, lost, abandoned ONLY
-  pipelineId: "pipeline_id",
-  locationId: "loc_xxx",
-  monetaryValue: 15000
-}
-
-// GHL payload (for updates) - Custom fields included
-{
-  name: "Kitchen Remodel Updated",
-  status: "won",
-  monetaryValue: 18000,
-  customFields: [
-    {
-      id: "custom_field_id_1",
-      key: "project_title",
-      field_value: "Kitchen Remodel Updated"
-    },
-    {
-      id: "custom_field_id_2", 
-      key: "signed_date",
-      field_value: "2025-05-28"
-    }
-  ]
-}
-```
-
-**Custom Fields Configuration:**
-
-```javascript
-// Stored in locations collection
-{
-  locationId: "loc_xxx",
-  ghlCustomFields: {
-    project_title: "custom_field_id_1",
-    quote_number: "custom_field_id_2",
-    signed_date: "custom_field_id_3",
-    scope_of_work: "custom_field_id_4"
-  }
-}
-
-// Build custom fields for update
-async function buildCustomFields(db, locationId, projectData) {
-  const location = await db.collection('locations').findOne({ locationId });
-  const fieldMappings = location?.ghlCustomFields || {};
+  // App-specific (MongoDB only)
+  milestones: Array,
+  timeline: Array,
+  photos: Array,
+  documents: Array,
+  customFields: Object,
   
+  // Tracking
+  createdAt: Date,
+  updatedAt: Date,
+  lastSyncedAt: Date
+}
+
+// Update with Custom Fields
+async function updateProjectWithGHL(db, projectId, updates, location) {
+  const project = await db.collection('projects').findOne({
+    _id: new ObjectId(projectId)
+  });
+  
+  if (!project.ghlOpportunityId) return;
+  
+  // Get custom field mappings
+  const customFieldIds = location.ghlCustomFields || {};
+  
+  // Build custom fields array
   const customFields = [];
   
-  if (projectData.title && fieldMappings.project_title) {
+  if (updates.title && customFieldIds.project_title) {
     customFields.push({
-      id: fieldMappings.project_title,
+      id: customFieldIds.project_title,
       key: "project_title",
-      field_value: projectData.title
+      field_value: updates.title
     });
   }
   
-  if (projectData.signedDate && fieldMappings.signed_date) {
+  if (updates.signedDate && customFieldIds.signed_date) {
     customFields.push({
-      id: fieldMappings.signed_date,
+      id: customFieldIds.signed_date,
       key: "signed_date",
-      field_value: projectData.signedDate
+      field_value: updates.signedDate
     });
   }
   
-  return customFields;
-}
-```
-
-### Appointments (Calendar Events)
-
-**MongoDB Appointment → GHL Appointment**
-
-```javascript
-// MongoDB schema
-{
-  _id: ObjectId,
-  title: String,
-  contactId: String,          // MongoDB contact ID
-  userId: String,             // MongoDB user ID
-  start: Date,
-  end: Date,
-  calendarId: String,
-  notes: String,
-  locationType: String,
-  ghlAppointmentId: String    // Stores GHL ID after creation
-}
-
-// GHL payload - requires all GHL IDs!
-{
-  title: "Initial Consultation",
-  contactId: "ghl_contact_id",        // Must be GHL ID
-  assignedUserId: "ghl_user_id",      // Must be GHL ID
-  startTime: "2025-05-28T10:00:00Z",
-  endTime: "2025-05-28T11:00:00Z",
-  calendarId: "calendar_id",
-  locationId: "loc_xxx",
-  address: "123 Main St",
-  appointmentStatus: "confirmed",
-  notes: "Discuss kitchen remodel"
-}
-```
-
-## Sync Patterns
-
-### 1. Write-Through Pattern (Create)
-
-Used when creating new records - create locally first, then sync to GHL.
-
-```javascript
-// Example: Create contact
-async function createContact(contactData) {
-  // 1. Save to MongoDB first
-  const mongoResult = await db.collection('contacts').insertOne(contactData);
-  
-  // 2. Get API key for location
-  const location = await db.collection('locations').findOne({ 
-    locationId: contactData.locationId 
-  });
-  
-  if (!location?.apiKey) {
-    console.warn('No API key, skipping GHL sync');
-    return { success: true, contactId: mongoResult.insertedId };
-  }
-  
-  // 3. Sync to GHL (don't block on failure)
-  try {
-    const ghlContactId = await createContactInGHL(contactData, location.apiKey);
-    
-    if (ghlContactId) {
-      // 4. Update MongoDB with GHL ID
-      await db.collection('contacts').updateOne(
-        { _id: mongoResult.insertedId },
-        { $set: { ghlContactId } }
-      );
+  // Update GHL
+  await axios.put(
+    `https://services.leadconnectorhq.com/opportunities/${project.ghlOpportunityId}`,
+    {
+      name: updates.title || project.title,
+      status: updates.status || project.status,
+      monetaryValue: updates.monetaryValue || 0,
+      customFields: customFields
+    },
+    {
+      headers: {
+        'Authorization': auth.header,
+        'Version': '2021-07-28',
+        'Content-Type': 'application/json'
+      }
     }
-  } catch (error) {
-    console.error('GHL sync failed:', error);
-    // Log but don't fail the operation
-  }
-  
-  return { success: true, contactId: mongoResult.insertedId };
+  );
 }
-```
+Custom Fields Management
+javascript// Required custom fields for opportunities
+const REQUIRED_CUSTOM_FIELDS = [
+  {
+    key: 'project_title',
+    name: 'Project Title',
+    dataType: 'TEXT',
+    position: 0
+  },
+  {
+    key: 'quote_number',
+    name: 'Quote Number',
+    dataType: 'TEXT',
+    position: 1
+  },
+  {
+    key: 'signed_date',
+    name: 'Signed Date',
+    dataType: 'DATE',
+    position: 2
+  }
+];
 
-### 2. Update Pattern
-
-Updates go to MongoDB first, then sync to GHL if linked.
-
-```javascript
-async function updateProject(projectId, updates, locationId) {
-  // 1. Get existing project
-  const project = await db.collection('projects').findOne({
-    _id: new ObjectId(projectId),
-    locationId
-  });
-  
-  if (!project) throw new Error('Project not found');
-  
-  // 2. Update MongoDB
-  await db.collection('projects').updateOne(
-    { _id: new ObjectId(projectId) },
-    { $set: { ...updates, updatedAt: new Date() } }
+// Sync and create custom fields
+async function syncCustomFields(db, location) {
+  // Fetch existing custom fields
+  const response = await axios.get(
+    'https://services.leadconnectorhq.com/locations/customFields',
+    {
+      headers: {
+        'Authorization': auth.header,
+        'Version': '2021-07-28'
+      },
+      params: { locationId: location.locationId }
+    }
   );
   
-  // 3. Sync to GHL if linked
-  if (project.ghlOpportunityId) {
-    const location = await db.collection('locations').findOne({ locationId });
-    
-    if (location?.apiKey) {
-      try {
-        // Build custom fields
-        const customFields = await buildCustomFields(db, locationId, updates);
-        
-        await axios.put(
-          `${GHL_BASE_URL}/opportunities/${project.ghlOpportunityId}`,
-          {
-            name: updates.title || project.title,
-            status: updates.status || project.status,
-            monetaryValue: updates.monetaryValue || project.monetaryValue,
-            customFields
-          },
-          { headers: getGHLHeaders(location.apiKey, '2021-07-28') }
-        );
-      } catch (error) {
-        console.error('GHL update failed:', error.response?.data);
-        // Continue - MongoDB is already updated
-      }
-    }
-  }
+  const existingFields = response.data.customFields || [];
+  const fieldMapping = {};
   
-  return { success: true };
-}
-```
-
-### 3. Pull Pattern (Sync from GHL)
-
-Used for pipelines, calendars, and periodic contact sync.
-
-```javascript
-// Sync pipelines from GHL to MongoDB
-async function syncPipelines(locationId) {
-  const location = await db.collection('locations').findOne({ locationId });
-  if (!location?.apiKey) return;
-  
-  try {
-    // Fetch from GHL
-    const response = await axios.get(
-      `${GHL_BASE_URL}/opportunities/pipelines/`,
-      {
-        headers: getGHLHeaders(location.apiKey, '2021-07-28'),
-        params: { locationId }
-      }
-    );
+  // Check and create missing fields
+  for (const required of REQUIRED_CUSTOM_FIELDS) {
+    const existing = existingFields.find(f => f.key === required.key);
     
-    const pipelines = response.data.pipelines || [];
-    
-    // Compare with existing
-    const existingPipelines = location.pipelines || [];
-    const hasChanged = JSON.stringify(existingPipelines) !== JSON.stringify(pipelines);
-    
-    if (hasChanged) {
-      // Update MongoDB
-      await db.collection('locations').updateOne(
-        { locationId },
-        { 
-          $set: { 
-            pipelines,
-            pipelinesUpdatedAt: new Date()
+    if (existing) {
+      fieldMapping[required.key] = existing.id;
+    } else {
+      // Create missing field
+      const createResponse = await axios.post(
+        'https://services.leadconnectorhq.com/locations/customFields',
+        {
+          locationId: location.locationId,
+          name: required.name,
+          key: required.key,
+          dataType: required.dataType,
+          position: required.position,
+          model: 'opportunity'
+        },
+        {
+          headers: {
+            'Authorization': auth.header,
+            'Version': '2021-07-28',
+            'Content-Type': 'application/json'
           }
         }
       );
+      
+      fieldMapping[required.key] = createResponse.data.customField.id;
     }
-    
-    return { updated: hasChanged, pipelines };
-  } catch (error) {
-    console.error('Pipeline sync failed:', error);
-    throw error;
   }
-}
-```
-
-### 4. Webhook Pattern (Real-time Updates)
-
-For real-time updates from GHL (future implementation).
-
-```javascript
-// Webhook endpoint for GHL updates
-app.post('/api/webhooks/ghl', async (req, res) => {
-  const { event, data } = req.body;
   
-  // Verify webhook signature
-  if (!verifyGHLWebhook(req)) {
+  // Store mapping in location
+  await db.collection('locations').updateOne(
+    { _id: location._id },
+    { $set: { ghlCustomFields: fieldMapping } }
+  );
+}
+Webhook Processing
+Native Webhook Implementation
+javascript// Webhook endpoint with signature verification
+// /api/webhooks/ghl/native
+import crypto from 'crypto';
+
+const GHL_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
+MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAokvo/r9tVgcfZ5DysOSC
+...
+-----END PUBLIC KEY-----`;
+
+function verifyWebhookSignature(payload, signature) {
+  const verifier = crypto.createVerify('SHA256');
+  verifier.update(payload);
+  verifier.end();
+  return verifier.verify(GHL_PUBLIC_KEY, signature, 'base64');
+}
+
+export default async function webhookHandler(req, res) {
+  // Verify signature
+  const signature = req.headers['x-wh-signature'];
+  const payload = JSON.stringify(req.body);
+  
+  if (!verifyWebhookSignature(payload, signature)) {
     return res.status(401).json({ error: 'Invalid signature' });
   }
   
-  switch (event) {
-    case 'contact.updated':
-      await syncContactFromGHL(data.contactId, data.locationId);
-      break;
-      
-    case 'opportunity.statusChanged':
-      await updateProjectStatus(data.opportunityId, data.status);
-      break;
-      
-    // Handle other events...
-  }
-  
-  res.status(200).json({ received: true });
-});
-```
-
-## Error Handling
-
-### Common GHL Errors
-
-```javascript
-// 422 - Validation Error (most common)
-{
-  "errors": {
-    "status": ["Invalid status value"],
-    "customFields": ["Invalid custom field ID"]
-  }
-}
-
-// 401 - Invalid API Key
-{
-  "error": "Unauthorized"
-}
-
-// 404 - Resource Not Found
-{
-  "error": "Contact not found"
-}
-
-// 429 - Rate Limited
-{
-  "error": "Too many requests"
-}
-```
-
-### Error Handling Strategy
-
-```javascript
-async function handleGHLRequest(requestFn, fallbackBehavior) {
-  try {
-    return await requestFn();
-  } catch (error) {
-    const status = error.response?.status;
-    const data = error.response?.data;
-    
-    console.error('GHL API Error:', {
-      status,
-      data,
-      url: error.config?.url,
-      payload: error.config?.data
-    });
-    
-    switch (status) {
-      case 401:
-        // Invalid API key - notify admin
-        await notifyAdmin('Invalid GHL API key', { locationId });
-        break;
-        
-      case 422:
-        // Validation error - log details
-        console.error('GHL Validation Error:', data.errors);
-        break;
-        
-      case 429:
-        // Rate limited - implement backoff
-        await delay(5000);
-        return handleGHLRequest(requestFn, fallbackBehavior);
-        
-      default:
-        // Other errors - use fallback
-        if (fallbackBehavior) {
-          return fallbackBehavior();
-        }
-    }
-    
-    throw error;
-  }
-}
-```
-
-## Best Practices
-
-### 1. Always Use MongoDB IDs Internally
-
-```javascript
-// DON'T store GHL IDs as primary references
-{
-  projectId: "ghl_opportunity_123"  // Bad
-}
-
-// DO store MongoDB IDs with GHL IDs separate
-{
-  projectId: "507f1f77bcf86cd799439011",     // MongoDB ObjectId
-  ghlOpportunityId: "ghl_opportunity_123"    // GHL reference
-}
-```
-
-### 2. Map IDs Before GHL Calls
-
-```javascript
-async function prepareGHLPayload(mongoData) {
-  // Look up GHL IDs
-  const contact = await db.collection('contacts').findOne({
-    _id: new ObjectId(mongoData.contactId)
+  // Queue for processing
+  await db.collection('webhook_queue').insertOne({
+    _id: new ObjectId(),
+    webhookId: req.body.webhookId || new ObjectId().toString(),
+    type: req.body.type,  // ContactCreate, AppointmentUpdate, etc.
+    payload: req.body,
+    locationId: req.body.locationId,
+    status: 'pending',
+    attempts: 0,
+    createdAt: new Date()
   });
   
-  const user = await db.collection('users').findOne({
-    _id: new ObjectId(mongoData.userId)
-  });
-  
-  return {
-    contactId: contact.ghlContactId,      // Use GHL ID
-    assignedUserId: user.ghlUserId,       // Use GHL ID
-    ...mongoData
-  };
+  // Return immediately (process async)
+  return res.status(200).json({ success: true });
 }
-```
-
-### 3. Validate Before Sending
-
-```javascript
-// Validate GHL status values
-const VALID_GHL_STATUSES = ['open', 'won', 'lost', 'abandoned'];
-
-function validateOpportunityStatus(status) {
-  if (!VALID_GHL_STATUSES.includes(status)) {
-    throw new Error(`Invalid status: ${status}. Must be one of: ${VALID_GHL_STATUSES.join(', ')}`);
-  }
-}
-
-// Remove invalid fields
-function cleanGHLPayload(payload, allowedFields) {
-  return Object.keys(payload)
-    .filter(key => allowedFields.includes(key))
-    .reduce((obj, key) => {
-      obj[key] = payload[key];
-      return obj;
-    }, {});
-}
-```
-
-### 4. Cache Frequently Used Data
-
-```javascript
-// Cache pipelines and calendars
-const pipelineCache = new Map();
-
-async function getPipelines(locationId) {
-  const cached = pipelineCache.get(locationId);
-  const cacheAge = cached?.timestamp ? Date.now() - cached.timestamp : Infinity;
+Webhook Event Types
+javascript// Currently implemented webhook processors
+const WEBHOOK_PROCESSORS = {
+  // App lifecycle
+  'INSTALL': processInstallEvent,           // Triggers full setup
+  'UNINSTALL': processUninstallEvent,       // Cleans up OAuth tokens
+  'LocationUpdate': processLocationUpdate,   // Updates location info
   
-  // Use cache if less than 5 minutes old
-  if (cached && cacheAge < 300000) {
-    return cached.data;
-  }
+  // Contact events
+  'ContactCreate': processContactCreate,
+  'ContactUpdate': processContactUpdate,
+  'ContactDelete': processContactDelete,
   
-  // Fetch fresh data
-  const location = await db.collection('locations').findOne({ locationId });
-  const pipelines = location?.pipelines || [];
+  // Message events
+  'InboundMessage': processInboundMessage,   // SMS/Email received
+  'OutboundMessage': processOutboundMessage, // SMS/Email sent
   
-  // Update cache
-  pipelineCache.set(locationId, {
-    data: pipelines,
-    timestamp: Date.now()
-  });
+  // Conversation events
+  'ConversationUnreadUpdate': processConversationUnreadUpdate
+};
+
+// Install webhook triggers automatic setup
+async function processInstallEvent(db, payload, webhookId) {
+  const { locationId, companyId, installType } = payload;
   
-  return pipelines;
-}
-```
-
-### 5. Implement Sync Status Tracking
-
-```javascript
-// Track sync status in MongoDB
-{
-  _id: ObjectId,
-  // ... other fields
-  syncStatus: {
-    lastSyncedAt: Date,
-    syncErrors: [{
-      error: String,
-      timestamp: Date,
-      details: Object
-    }],
-    needsSync: Boolean
-  }
-}
-
-// Mark for retry on failure
-async function markForResync(collection, documentId, error) {
-  await db.collection(collection).updateOne(
-    { _id: new ObjectId(documentId) },
-    {
-      $set: {
-        'syncStatus.needsSync': true,
-        'syncStatus.lastError': {
-          error: error.message,
-          timestamp: new Date(),
-          details: error.response?.data
-        }
-      }
-    }
-  );
-}
-```
-
-## Testing GHL Integration
-
-### 1. Use GHL API Documentation
-
-```javascript
-// Always test in GHL's interactive docs first
-// 1. Go to GHL API docs
-// 2. Input your test values
-// 3. Copy the working example
-// 4. Implement in your code
-
-// Example from GHL docs
-const curlExample = `
-curl --location 'https://services.leadconnectorhq.com/contacts/' \\
---header 'Authorization: Bearer {api_key}' \\
---header 'Version: 2021-07-28' \\
---header 'Content-Type: application/json' \\
---data '{
-    "firstName": "John",
-    "lastName": "Doe",
-    "email": "john@example.com"
-}'`;
-```
-
-### 2. Log Everything During Development
-
-```javascript
-// Detailed logging for debugging
-function logGHLRequest(method, url, headers, data, response) {
-  console.log('🚀 GHL Request:', {
-    method,
-    url,
-    headers: {
-      ...headers,
-      Authorization: headers.Authorization?.substring(0, 20) + '...'
-    },
-    payload: JSON.stringify(data, null, 2),
-    response: response?.data || response?.error
-  });
-}
-```
-
-### 3. Create Test Utilities
-
-```javascript
-// Test utility for GHL sync
-async function testGHLConnection(locationId) {
-  const location = await db.collection('locations').findOne({ locationId });
-  
-  if (!location?.apiKey) {
-    return { success: false, error: 'No API key configured' };
-  }
-  
-  try {
-    // Test pipelines endpoint
-    const response = await axios.get(
-      `${GHL_BASE_URL}/opportunities/pipelines/`,
+  if (installType === 'Location' && locationId) {
+    // Store installation record
+    await db.collection('locations').updateOne(
+      { locationId },
       {
-        headers: getGHLHeaders(location.apiKey, '2021-07-28'),
-        params: { locationId }
-      }
+        $set: {
+          locationId,
+          companyId,
+          appInstalled: true,
+          installedAt: new Date(),
+          installedBy: payload.userId,
+          installType: 'Location'
+        }
+      },
+      { upsert: true }
     );
     
-    return {
-      success: true,
-      pipelines: response.data.pipelines?.length || 0,
-      message: 'GHL connection successful'
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: error.response?.data || error.message,
-      status: error.response?.status
-    };
+    // Trigger automatic setup
+    await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/locations/setup-location`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ locationId, fullSync: true })
+    });
   }
 }
-```
-
-## Monitoring & Maintenance
-
-### 1. Monitor Sync Health
-
-```javascript
-// Dashboard metrics
-async function getGHLSyncMetrics(locationId) {
-  const [contacts, projects, appointments] = await Promise.all([
-    db.collection('contacts').countDocuments({
-      locationId,
-      ghlContactId: { $exists: true }
-    }),
-    db.collection('projects').countDocuments({
-      locationId,
-      ghlOpportunityId: { $exists: true }
-    }),
-    db.collection('appointments').countDocuments({
-      locationId,
-      ghlAppointmentId: { $exists: true }
+Webhook Queue Processing
+javascript// Cron job processes webhook queue
+// /api/cron/process-webhooks
+export default async function processWebhooks(req, res) {
+  const webhooks = await db.collection('webhook_queue')
+    .find({
+      status: 'pending',
+      processAfter: { $lte: new Date() },
+      attempts: { $lt: 3 }
     })
+    .sort({ createdAt: 1 })
+    .limit(50)
+    .toArray();
+  
+  const results = await Promise.allSettled(
+    webhooks.map(webhook => processWebhook(db, webhook))
+  );
+  
+  // Clean up old completed webhooks
+  await db.collection('webhook_queue').deleteMany({
+    status: { $in: ['completed', 'skipped'] },
+    completedAt: { $lt: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+  });
+}
+Sync Strategies
+1. Initial Setup Sync (Pull Everything)
+Used during app installation to populate MongoDB with existing GHL data.
+javascriptasync function initialSetupSync(locationId) {
+  // Run in specific order due to dependencies
+  await syncLocationDetails(db, location);    // Basic info
+  await syncPipelines(db, location);          // Required for projects
+  await syncCalendars(db, location);          // Required for appointments
+  await syncUsers(db, location);              // Required for assignments
+  await syncCustomFields(db, location);       // Create/map custom fields
+  await syncContacts(db, location);           // Initial batch
+  await syncOpportunities(db, location);      // Projects
+  await syncAppointments(db, location);       // Calendar events
+  await syncConversations(db, location);      // Messages
+  await setupDefaults(db, location);          // Terms, templates
+}
+2. Write-Through Pattern (Create/Update)
+MongoDB first, then sync to GHL.
+javascript// Example: Create appointment
+async function createAppointment(appointmentData) {
+  // 1. Save to MongoDB
+  const result = await db.collection('appointments').insertOne({
+    ...appointmentData,
+    createdAt: new Date()
+  });
+  
+  // 2. Map MongoDB IDs to GHL IDs
+  const [contact, user] = await Promise.all([
+    db.collection('contacts').findOne({ _id: new ObjectId(appointmentData.contactId) }),
+    db.collection('users').findOne({ _id: new ObjectId(appointmentData.userId) })
   ]);
   
-  return {
-    syncedContacts: contacts,
-    syncedProjects: projects,
-    syncedAppointments: appointments,
-    lastSync: new Date()
-  };
-}
-```
-
-### 2. Implement Retry Queue
-
-```javascript
-// Retry failed syncs
-async function processRetryQueue() {
-  const failedSyncs = await db.collection('sync_queue').find({
-    status: 'failed',
-    retries: { $lt: 3 }
-  }).limit(10).toArray();
-  
-  for (const sync of failedSyncs) {
+  // 3. Create in GHL
+  if (contact?.ghlContactId && user?.ghlUserId) {
     try {
-      await retrySyncOperation(sync);
-      
-      // Mark as completed
-      await db.collection('sync_queue').updateOne(
-        { _id: sync._id },
-        { $set: { status: 'completed' } }
-      );
-    } catch (error) {
-      // Increment retry count
-      await db.collection('sync_queue').updateOne(
-        { _id: sync._id },
-        { 
-          $inc: { retries: 1 },
-          $set: { lastError: error.message }
+      const ghlResponse = await axios.post(
+        'https://services.leadconnectorhq.com/calendars/events/appointments',
+        {
+          contactId: contact.ghlContactId,      // GHL ID required
+          assignedUserId: user.ghlUserId,       // GHL ID required
+          calendarId: appointmentData.calendarId,
+          locationId: appointmentData.locationId,
+          startTime: appointmentData.start,
+          endTime: appointmentData.end,
+          title: appointmentData.title,
+          appointmentStatus: 'confirmed'
+        },
+        {
+          headers: {
+            'Authorization': auth.header,
+            'Version': '2021-04-15'
+          }
         }
       );
+      
+      // 4. Update MongoDB with GHL ID
+      await db.collection('appointments').updateOne(
+        { _id: result.insertedId },
+        { $set: { ghlAppointmentId: ghlResponse.data.event.id } }
+      );
+    } catch (error) {
+      console.error('GHL sync failed:', error.response?.data);
+      // Continue - MongoDB record exists
     }
   }
+  
+  return { success: true, appointmentId: result.insertedId };
 }
-```
-
-## Migration Guide
-
-### Migrating Existing GHL Data to MongoDB
-
-```javascript
-// One-time migration script
-async function migrateGHLDataToMongoDB(locationId) {
-  const location = await db.collection('locations').findOne({ locationId });
-  if (!location?.apiKey) throw new Error('No API key');
+3. Webhook-Driven Updates
+Real-time updates from GHL via webhooks.
+javascript// Contact update webhook
+async function processContactUpdate(db, payload, webhookId) {
+  const { locationId, id: ghlContactId } = payload;
   
-  // 1. Migrate Contacts
-  let contactOffset = 0;
-  const contactLimit = 100;
+  const updateData = {
+    lastWebhookUpdate: new Date(),
+    updatedAt: new Date()
+  };
   
-  while (true) {
-    const response = await axios.get(`${GHL_BASE_URL}/contacts/`, {
-      headers: getGHLHeaders(location.apiKey, '2021-07-28'),
-      params: { locationId, limit: contactLimit, offset: contactOffset }
-    });
-    
-    const contacts = response.data.contacts || [];
-    if (contacts.length === 0) break;
-    
-    // Bulk upsert
-    const bulkOps = contacts.map(ghlContact => ({
-      updateOne: {
-        filter: { ghlContactId: ghlContact.id, locationId },
-        update: {
-          $set: {
-            firstName: ghlContact.firstName,
-            lastName: ghlContact.lastName,
-            email: ghlContact.email,
-            phone: ghlContact.phone,
-            address: ghlContact.address1,
-            ghlContactId: ghlContact.id,
-            locationId,
-            createdAt: new Date(ghlContact.dateAdded),
-            updatedAt: new Date(ghlContact.dateUpdated || ghlContact.dateAdded)
+  // Map GHL fields to MongoDB
+  const fieldsToUpdate = [
+    'email', 'firstName', 'lastName', 'phone', 'tags',
+    'address1', 'city', 'state', 'country', 'postalCode'
+  ];
+  
+  fieldsToUpdate.forEach(field => {
+    if (payload[field] !== undefined) {
+      updateData[field === 'address1' ? 'address' : field] = payload[field];
+    }
+  });
+  
+  await db.collection('contacts').updateOne(
+    { ghlContactId, locationId },
+    { $set: updateData }
+  );
+}
+4. Periodic Sync Pattern
+For data that changes frequently or needs validation.
+javascript// Sync calendars on demand
+async function syncCalendars(db, location) {
+  const response = await axios.get(
+    'https://services.leadconnectorhq.com/calendars/',
+    {
+      headers: {
+        'Authorization': auth.header,
+        'Version': '2021-04-15'
+      },
+      params: { locationId: location.locationId }
+    }
+  );
+  
+  const calendars = response.data.calendars.map(cal => ({
+    id: cal.id,
+    name: cal.name,
+    description: cal.description || '',
+    slotDuration: cal.slotDuration || 30,
+    slotDurationUnit: cal.slotDurationUnit || 'mins',
+    // ... map all fields
+    icon: getCalendarIcon(cal.name),  // Assign icon based on name
+    lastSynced: new Date()
+  }));
+  
+  // Only update if changed
+  const hasChanged = JSON.stringify(location.calendars) !== JSON.stringify(calendars);
+  
+  if (hasChanged) {
+    await db.collection('locations').updateOne(
+      { _id: location._id },
+      { 
+        $set: { 
+          calendars,
+          calendarsUpdatedAt: new Date()
+        }
+      }
+    );
+  }
+}
+Error Handling
+Common GHL API Errors
+javascript// 422 - Validation Error
+{
+  "errors": {
+    "status": ["Invalid status value. Must be one of: open, won, lost, abandoned"],
+    "customFields": ["Invalid custom field ID: xxx"]
+  }
+}
+
+// 401 - Authentication Error
+{
+  "error": "Unauthorized",
+  "message": "Invalid or expired token"
+}
+
+// 429 - Rate Limit
+{
+  "error": "Too Many Requests",
+  "message": "Rate limit exceeded. Please retry after 60 seconds"
+}
+
+// 404 - Not Found
+{
+  "error": "Not Found",
+  "message": "Contact with ID xxx not found"
+}
+Error Handling Strategy
+javascriptasync function handleGHLError(error, context) {
+  const status = error.response?.status;
+  const data = error.response?.data;
+  
+  // Log detailed error info
+  console.error('[GHL Error]', {
+    status,
+    url: error.config?.url,
+    method: error.config?.method,
+    payload: error.config?.data,
+    response: data,
+    context
+  });
+  
+  switch (status) {
+    case 401:
+      // Token expired or invalid
+      if (context.location?.ghlOAuth?.refreshToken) {
+        // Attempt refresh
+        await refreshOAuthToken(context.location);
+        // Retry original request
+        return true;
+      }
+      // Mark location as needing reauth
+      await db.collection('locations').updateOne(
+        { _id: context.location._id },
+        { 
+          $set: { 
+            'ghlOAuth.needsReauth': true,
+            'ghlOAuth.reauthReason': 'Token invalid'
           }
+        }
+      );
+      break;
+      
+    case 422:
+      // Validation error - log details
+      if (data.errors) {
+        Object.entries(data.errors).forEach(([field, errors]) => {
+          console.error(`[Validation] ${field}: ${errors.join(', ')}`);
+        });
+      }
+      break;
+      
+    case 429:
+      // Rate limited - implement backoff
+      const retryAfter = parseInt(error.response.headers['retry-after']) || 60;
+      await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+      return true; // Retry
+      
+    default:
+      // Generic error
+      console.error('[GHL Error] Unhandled error type:', status);
+  }
+  
+  return false; // Don't retry
+}
+Best Practices
+1. Always Map IDs Before GHL Calls
+javascript// Never send MongoDB ObjectIds to GHL
+async function prepareGHLPayload(mongoData, locationId) {
+  const mappedData = { ...mongoData };
+  
+  // Map contact ID
+  if (mongoData.contactId) {
+    const contact = await db.collection('contacts').findOne({
+      _id: new ObjectId(mongoData.contactId)
+    });
+    mappedData.contactId = contact?.ghlContactId;
+  }
+  
+  // Map user ID
+  if (mongoData.userId) {
+    const user = await db.collection('users').findOne({
+      _id: new ObjectId(mongoData.userId)
+    });
+    mappedData.assignedUserId = user?.ghlUserId;
+  }
+  
+  // Add locationId for creation endpoints
+  mappedData.locationId = locationId;
+  
+  return mappedData;
+}
+2. Validate Status Values
+javascriptconst VALID_OPPORTUNITY_STATUSES = ['open', 'won', 'lost', 'abandoned'];
+const VALID_APPOINTMENT_STATUSES = ['scheduled', 'confirmed', 'cancelled', 'showed', 'noshow'];
+
+function validateStatus(status, type) {
+  const validStatuses = type === 'opportunity' 
+    ? VALID_OPPORTUNITY_STATUSES 
+    : VALID_APPOINTMENT_STATUSES;
+    
+  if (!validStatuses.includes(status)) {
+    throw new Error(`Invalid ${type} status: ${status}. Must be one of: ${validStatuses.join(', ')}`);
+  }
+}
+3. Implement Idempotency
+javascript// Check for existing records before creating
+async function createContactIdempotent(contactData, location) {
+  // Check if already exists
+  const existing = await db.collection('contacts').findOne({
+    email: contactData.email,
+    locationId: location.locationId
+  });
+  
+  if (existing) {
+    console.log('Contact already exists:', existing._id);
+    return { exists: true, contact: existing };
+  }
+  
+  // Create new
+  return createContact(contactData, location);
+}
+4. Use Bulk Operations
+javascript// Batch operations for efficiency
+async function bulkSyncContacts(contacts, locationId) {
+  const BATCH_SIZE = 100;
+  
+  for (let i = 0; i < contacts.length; i += BATCH_SIZE) {
+    const batch = contacts.slice(i, i + BATCH_SIZE);
+    
+    const bulkOps = batch.map(contact => ({
+      updateOne: {
+        filter: { 
+          ghlContactId: contact.ghlContactId,
+          locationId 
         },
+        update: { $set: contact },
         upsert: true
       }
     }));
     
     await db.collection('contacts').bulkWrite(bulkOps);
     
-    contactOffset += contactLimit;
+    // Rate limit between batches
+    if (i + BATCH_SIZE < contacts.length) {
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+  }
+}
+5. Monitor Sync Health
+javascript// Track sync metrics
+async function updateSyncMetrics(locationId, entityType, result) {
+  await db.collection('locations').updateOne(
+    { locationId },
+    {
+      $set: {
+        [`syncMetrics.${entityType}.lastSync`]: new Date(),
+        [`syncMetrics.${entityType}.lastResult`]: result
+      },
+      $inc: {
+        [`syncMetrics.${entityType}.${result.success ? 'successCount' : 'errorCount'}`]: 1
+      }
+    }
+  );
+}
+
+// Dashboard query
+async function getSyncHealth(locationId) {
+  const location = await db.collection('locations').findOne({ locationId });
+  const metrics = location.syncMetrics || {};
+  
+  return {
+    contacts: {
+      ...metrics.contacts,
+      synced: await db.collection('contacts').countDocuments({ locationId, ghlContactId: { $exists: true } }),
+      total: await db.collection('contacts').countDocuments({ locationId })
+    },
+    projects: {
+      ...metrics.projects,
+      synced: await db.collection('projects').countDocuments({ locationId, ghlOpportunityId: { $exists: true } }),
+      total: await db.collection('projects').countDocuments({ locationId })
+    }
+  };
+}
+Testing & Debugging
+Test OAuth Flow
+bash# 1. Generate install URL
+https://marketplace.gohighlevel.com/oauth/chooselocation?response_type=code&redirect_uri=https://lpai-backend-omega.vercel.app/api/oauth/callback&client_id=683aa5ce1a9647760b904986-mbc8v930&scope=locations.readonly locations.write contacts.readonly contacts.write opportunities.readonly opportunities.write calendars.readonly calendars.write conversations.readonly conversations.write
+
+# 2. Check token storage
+db.locations.findOne({ locationId: "YOUR_LOCATION_ID" }, { ghlOAuth: 1 })
+
+# 3. Test token refresh
+curl https://lpai-backend-omega.vercel.app/api/cron/refresh-tokens \
+  -H "Authorization: Bearer lpai_cron_2024_xK9mN3pQ7rL5vB8wT6yH2jF4"
+Debug Webhook Processing
+javascript// Check webhook queue
+db.webhook_queue.find({ 
+  status: "pending",
+  type: "ContactCreate" 
+}).sort({ createdAt: -1 }).limit(5)
+
+// Check webhook logs
+db.webhook_logs.find({
+  type: "ContactCreate",
+  locationId: "YOUR_LOCATION_ID"
+}).sort({ receivedAt: -1 }).limit(5)
+
+// Manually trigger processing
+curl https://lpai-backend-omega.vercel.app/api/cron/process-webhooks \
+  -H "Authorization: Bearer lpai_cron_2024_xK9mN3pQ7rL5vB8wT6yH2jF4"
+Common Debugging Queries
+javascript// Find locations with OAuth issues
+db.locations.find({
+  appInstalled: true,
+  $or: [
+    { "ghlOAuth.needsReauth": true },
+    { "ghlOAuth.accessToken": { $exists: false } }
+  ]
+})
+
+// Check sync status
+db.locations.findOne(
+  { locationId: "YOUR_LOCATION_ID" },
+  { 
+    setupResults: 1,
+    lastContactSync: 1,
+    lastAppointmentSync: 1,
+    "ghlOAuth.expiresAt": 1
+  }
+)
+
+// Find failed syncs
+db.projects.find({
+  locationId: "YOUR_LOCATION_ID",
+  ghlOpportunityId: { $exists: false },
+  createdAt: { $lt: new Date(Date.now() - 24*60*60*1000) }
+})
+Migration & Maintenance
+Migrate from API Keys to OAuth
+javascriptasync function migrateToOAuth(locationId) {
+  const location = await db.collection('locations').findOne({ locationId });
+  
+  if (!location.apiKey) {
+    console.log('No API key to migrate');
+    return;
   }
   
-  // 2. Migrate Opportunities to Projects
-  // ... similar pattern
+  // Location must complete OAuth flow
+  console.log(`Location ${locationId} needs to complete OAuth flow`);
+  console.log(`Install URL: https://marketplace.gohighlevel.com/oauth/chooselocation?...`);
+  
+  // After OAuth complete, remove API key
+  await db.collection('locations').updateOne(
+    { locationId },
+    { 
+      $unset: { apiKey: "" },
+      $set: { migratedToOAuth: new Date() }
+    }
+  );
 }
-```
+Cleanup & Maintenance Tasks
+javascript// Remove orphaned GHL references
+async function cleanupOrphanedReferences(locationId) {
+  // Find contacts with GHL IDs that don't exist in GHL
+  const contacts = await db.collection('contacts').find({
+    locationId,
+    ghlContactId: { $exists: true }
+  }).toArray();
+  
+  for (const contact of contacts) {
+    try {
+      await axios.get(
+        `https://services.leadconnectorhq.com/contacts/${contact.ghlContactId}`,
+        { headers: getAuthHeaders(location) }
+      );
+    } catch (error) {
+      if (error.response?.status === 404) {
+        // GHL contact doesn't exist, remove reference
+        await db.collection('contacts').updateOne(
+          { _id: contact._id },
+          { $unset: { ghlContactId: "" } }
+        );
+      }
+    }
+  }
+}
 
-## Troubleshooting
+// Archive old webhook logs
+async function archiveOldWebhooks() {
+  const cutoffDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // 30 days
+  
+  await db.collection('webhook_logs').deleteMany({
+    receivedAt: { $lt: cutoffDate }
+  });
+  
+  await db.collection('webhook_queue').deleteMany({
+    status: 'completed',
+    completedAt: { $lt: cutoffDate }
+  });
+}
+Troubleshooting Guide
+OAuth Issues
+Problem: "Invalid refresh token"
+javascript// Solution: Re-authenticate
+await db.collection('locations').updateOne(
+  { locationId },
+  { 
+    $set: { 
+      'ghlOAuth.needsReauth': true,
+      'ghlOAuth.reauthReason': 'Invalid refresh token'
+    }
+  }
+);
+// User must reinstall app
+Problem: "Token expired but refresh fails"
+javascript// Check refresh token exists
+const location = await db.collection('locations').findOne({ locationId });
+if (!location.ghlOAuth?.refreshToken) {
+  // Need complete reauth
+}
+Sync Issues
+Problem: "Custom field not found"
+javascript// Re-sync custom fields
+await syncCustomFields(db, location);
 
-### Common Issues
+// Verify mapping
+const mapping = location.ghlCustomFields;
+console.log('Custom field mappings:', mapping);
+Problem: "Contact sync creates duplicates"
+javascript// Use compound unique index
+db.contacts.createIndex(
+  { email: 1, locationId: 1 },
+  { unique: true, sparse: true }
+);
 
-1. **"Invalid custom field ID"**
-   - Check locations.ghlCustomFields mapping
-   - Verify field exists in GHL location
+// Use upsert with $or condition
+{ 
+  $or: [
+    { ghlContactId: ghlContact.id },
+    { email: ghlContact.email, locationId }
+  ]
+}
+Webhook Issues
+Problem: "Webhooks not processing"
+javascript// 1. Check queue
+db.webhook_queue.countDocuments({ status: 'pending' })
 
-2. **"Contact not found"**
-   - Ensure using GHL contact ID, not MongoDB ID
-   - Verify contact exists in GHL
+// 2. Check cron logs
+db.cron_logs.find({ endpoint: 'process-webhooks' }).sort({ ranAt: -1 })
 
-3. **"Invalid status value"**
-   - Only use: open, won, lost, abandoned
-   - Check for typos or custom statuses
+// 3. Manually process
+await processWebhookQueue(db);
+Problem: "Duplicate webhook events"
+javascript// Implement deduplication
+const isDuplicate = await db.collection('webhook_hashes').findOne({
+  hash: webhookHash,
+  createdAt: { $gte: new Date(Date.now() - 60000) } // Within 1 minute
+});
 
-4. **Rate limiting**
-   - Implement exponential backoff
-   - Batch operations where possible
-   - Cache frequently accessed data
+if (isDuplicate) {
+  return { action: 'skipped', reason: 'duplicate' };
+}
+Security Considerations
 
-5. **Webhook delivery failures**
-   - Verify webhook URL is publicly accessible
-   - Check webhook signature validation
-   - Monitor webhook queue in GHL
+Token Storage: OAuth tokens are encrypted at rest in MongoDB
+Webhook Verification: All webhooks verified using GHL public key
+Multi-tenant Isolation: All queries filtered by locationId
+Rate Limiting: Implement client-side rate limiting to stay under GHL limits
+Audit Logging: Track all GHL API calls and webhook events
+
+Monitoring Recommendations
+
+Set up alerts for:
+
+OAuth token refresh failures
+High webhook queue depth (>1000 pending)
+Sync error rates >10%
+API rate limit approaches
+
+
+Track metrics:
+
+OAuth token age and refresh success rate
+Webhook processing latency
+Sync completion rates by entity type
+API call volumes by endpoint
+
+
+Regular maintenance:
+
+Clean webhook logs older than 30 days
+Verify OAuth token validity weekly
+Audit custom field mappings monthly
+Review sync error patterns
