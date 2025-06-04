@@ -63,9 +63,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   
   // Log webhook type
   const eventType = req.body.type;
-  if (__DEV__) {
-    console.log(`[Native Webhook ${webhookId}] Received: ${eventType}`);
-  }
+  console.log(`[Native Webhook ${webhookId}] Received: ${eventType}`);
+
 
   try {
     const client = await clientPromise;
@@ -86,14 +85,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Analyze webhook to determine routing
     const routeDecision = analyzeWebhook(req.body);
     
-    if (__DEV__) {
       console.log(`[Native Webhook ${webhookId}] Route decision:`, {
         type: routeDecision.type,
         queue: routeDecision.queueType,
         priority: routeDecision.priority,
         direct: routeDecision.shouldDirectProcess
       });
-    }
+    
 
     // Initialize queue manager
     const queueManager = new QueueManager(db);
@@ -106,9 +104,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         // Process immediately in background
         processMessageDirect(db, webhookId, req.body)
           .then(() => {
-            if (__DEV__) {
-              console.log(`[Native Webhook ${webhookId}] Direct processing completed`);
-            }
+          console.log(`[Native Webhook ${webhookId}] Received: ${eventType}`);
+
           })
           .catch((error) => {
             console.error(`[Native Webhook ${webhookId}] Direct processing failed:`, error);
@@ -128,9 +125,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         receivedAt
       });
       
-      if (__DEV__) {
-        console.log(`[Native Webhook ${webhookId}] Queued successfully`);
-      }
+      console.log(`[Native Webhook ${webhookId}] Received: ${eventType}`);
+
       
     } catch (error: any) {
       if (error.message === 'DUPLICATE_WEBHOOK') {

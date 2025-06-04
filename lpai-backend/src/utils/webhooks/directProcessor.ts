@@ -67,9 +67,7 @@ export async function processMessageDirect(
       }
     );
 
-    if (__DEV__) {
-      console.log(`[Direct Processor] Completed ${payload.type} in ${processingTime}ms`);
-    }
+  console.log(`[Direct Processor] Completed ${payload.type} in ${processingTime}ms`);
 
   } catch (error: any) {
     console.error(`[Direct Processor] Error processing ${payload.type}:`, error);

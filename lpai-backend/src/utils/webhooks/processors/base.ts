@@ -82,9 +82,8 @@ export abstract class BaseProcessor {
    * Process a batch of items
    */
   protected async processBatch(items: QueueItem[]): Promise<void> {
-    if (__DEV__) {
-      console.log(`[${this.config.processorName}] Processing batch of ${items.length} items`);
-    }
+  console.log(`[${this.config.processorName}] Processing batch of ${items.length} items`);
+
     
     // Process items in parallel with concurrency limit
     const concurrency = 5;
@@ -112,10 +111,8 @@ export abstract class BaseProcessor {
       
       this.processedCount++;
       
-      if (__DEV__) {
-        const duration = Date.now() - itemStartTime;
-        console.log(`[${this.config.processorName}] Processed ${item.type} in ${duration}ms`);
-      }
+    const duration = Date.now() - itemStartTime;
+    console.log(`[${this.config.processorName}] Processed ${item.type} in ${duration}ms`);
       
     } catch (error: any) {
       this.errorCount++;
