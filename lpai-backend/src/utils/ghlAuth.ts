@@ -39,7 +39,7 @@ export async function getAuthHeader(location: any): Promise<AuthResult> {
   // Fall back to API key
   if (location.apiKey) {
     return {
-      header: location.apiKey,
+      header: `Bearer ${location.apiKey}`,
       type: 'apikey',
       needsRefresh: false
     };
