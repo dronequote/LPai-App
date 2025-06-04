@@ -4,6 +4,7 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
+    "dev:debug": "NODE_OPTIONS='--inspect' next dev",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -11,7 +12,6 @@
     "seed": "ts-node --project tsconfig.scripts.json scripts/seedUser.ts",
     "seed:contacts": "ts-node scripts/seedContacts.ts",
     "setup-indexes": "node scripts/setup-indexes.js"
-
   },
   "dependencies": {
     "@faker-js/faker": "^9.8.0",
