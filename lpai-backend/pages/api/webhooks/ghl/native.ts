@@ -95,7 +95,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const queueManager = new QueueManager(db);
 
     // Check if we should process directly
-    if (routeDecision.shouldDirectProcess) {
+  /*  if (routeDecision.shouldDirectProcess) {
       const systemHealthy = await isSystemHealthy(db);
       
       if (systemHealthy) {
@@ -110,7 +110,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           });
       }
     }
-
+  */
     // Always queue (even if direct processing) as backup
     try {
       await queueManager.addToQueue({
