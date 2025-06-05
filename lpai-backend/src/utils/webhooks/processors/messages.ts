@@ -229,13 +229,33 @@ export class MessagesProcessor extends BaseProcessor {
   /**
    * Process outbound message
    */
-    private async processOutboundMessage(payload: any, webhookId: string): Promise<void> {
+  private async processOutboundMessage(payload: any, webhookId: string): Promise<void> {
     const { locationId, contactId, conversationId, message, userId, timestamp } = payload;
     
     // Add validation for required fields
     if (!locationId || !contactId || !message) {
       console.warn(`[MessagesProcessor] Missing required fields for outbound message: ${webhookId}`);
       return; // Skip processing if message is missing
+    }
+
+    // Find contact
+    const contact = await this.db.collection('contacts').findOne(
+      { ghlContactId: contactId, locationId },
+      { 
+        projection: { 
+          _id: 1, 
+          firstName: 1, 
+          lastName: 1, 
+          email: 1, 
+          phone: 1,
+          fullName: 1
+        } 
+      }
+    );
+    
+    if (!contact) {
+      console.warn(`[MessagesProcessor] Contact not found for outbound message: ${contactId}`);
+      return;
     }
 
     // Find user who sent it
@@ -269,6 +289,9 @@ export class MessagesProcessor extends BaseProcessor {
           lastMessageType: message.messageType || payload.type,
           lastMessageDirection: 'outbound',
           lastOutboundMessageDate: new Date(),
+          contactName: contact.fullName || `${contact.firstName} ${contact.lastName}`.trim(),
+          contactEmail: contact.email,
+          contactPhone: contact.phone,
           updatedAt: new Date()
         },
         $setOnInsert: {
