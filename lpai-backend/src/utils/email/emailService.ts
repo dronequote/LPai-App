@@ -15,7 +15,7 @@ export class EmailService {
   }): Promise<void> {
     try {
       const { data, error } = await this.resend.emails.send({
-        from: 'LPai Reports <reports@lpai.com>',
+        from: 'LPai Reports <reports@leadprospecting.ai>',
         to: options.to,
         subject: options.subject,
         html: options.html
