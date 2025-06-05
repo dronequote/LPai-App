@@ -1,5 +1,6 @@
-// /pages/api/cron/process-general.ts
+// pages/api/cron/process-general.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
+import clientPromise from '../../../src/lib/mongodb';
 import { GeneralProcessor } from '../../../src/utils/webhooks/processors/general';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -15,8 +16,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const startTime = Date.now();
 
   try {
-    // Create and run processor
-    const processor = new GeneralProcessor();
+    // Get database connection
+    const client = await clientPromise;
+    const db = client.db('lpai');
+    
+    // Create and run processor with database
+    const processor = new GeneralProcessor(db);
     await processor.run();
 
     const runtime = Date.now() - startTime;

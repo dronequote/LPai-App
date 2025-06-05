@@ -1,14 +1,15 @@
 // src/utils/webhooks/processors/messages.ts
 import { BaseProcessor } from './base';
 import { QueueItem } from '../queueManager';
-import { ObjectId } from 'mongodb';
+import { ObjectId, Db } from 'mongodb';
 
 export class MessagesProcessor extends BaseProcessor {
-  constructor() {
+  constructor(db: Db) {
     super({
+      db: db,
       queueType: 'messages',
-      batchSize: 50, // Larger batches for messages
-      maxRuntime: 50000, // 50 seconds
+      batchSize: 50,
+      maxProcessingTime: 50000, // 50 seconds
       processorName: 'MessagesProcessor'
     });
   }
@@ -370,5 +371,15 @@ export class MessagesProcessor extends BaseProcessor {
     };
     
     return typeMap[type] || `Type ${type}`;
+  }
+
+  /**
+   * Helper to find contact
+   */
+  private async findContact(contactId: string, locationId: string): Promise<any> {
+    return await this.db.collection('contacts').findOne(
+      { ghlContactId: contactId, locationId },
+      { projection: { _id: 1, firstName: 1, lastName: 1, email: 1, phone: 1 } }
+    );
   }
 }

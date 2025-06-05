@@ -1,14 +1,15 @@
 // src/utils/webhooks/processors/general.ts
 import { BaseProcessor } from './base';
 import { QueueItem } from '../queueManager';
-import { ObjectId } from 'mongodb';
+import { ObjectId, Db } from 'mongodb';
 
 export class GeneralProcessor extends BaseProcessor {
-  constructor() {
+  constructor(db: Db) {
     super({
+      db: db,
       queueType: 'general',
       batchSize: 100,
-      maxRuntime: 50000, // 50 seconds
+      maxProcessingTime: 50000, // 50 seconds
       processorName: 'GeneralProcessor'
     });
   }
