@@ -1,5 +1,6 @@
 // pages/api/analytics/installs/[locationId]/ui.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
+import clientPromise from '../../../../../src/lib/mongodb';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const { locationId } = req.query;
@@ -8,33 +9,52 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: 'Location ID required' });
   }
 
-  // Fetch install data
-  const installResponse = await fetch(
-    `${process.env.NEXT_PUBLIC_API_URL || 'https://lpai-backend-omega.vercel.app'}/api/analytics/installs/${locationId}`
-  );
-  const installData = await installResponse.json();
+  try {
+    const client = await clientPromise;
+    const db = client.db('lpai');
 
-  // Calculate total time and percentages
-  let totalDuration = 0;
-  let completedSteps = 0;
-  const validSteps = [];
-  
-  if (installData.currentInstall?.steps) {
-    installData.currentInstall.steps.forEach(step => {
-      const duration = step.duration && !isNaN(step.duration) ? step.duration : 0;
-      if (duration > 0) {
-        validSteps.push({ ...step, duration });
-        totalDuration += duration;
-      }
-      if (step.status === 'success') completedSteps++;
-    });
-  }
-  
-  const completionPercentage = installData.currentInstall?.steps?.length > 0 
-    ? Math.round((completedSteps / installData.currentInstall.steps.length) * 100)
-    : 0;
+    // Get all locations with install history for dropdown
+    const allLocations = await db.collection('locations')
+      .find({ 
+        setupCompleted: true 
+      })
+      .project({
+        locationId: 1,
+        name: 1,
+        installedAt: 1,
+        companyId: 1
+      })
+      .sort({ installedAt: -1 })
+      .limit(50)
+      .toArray();
 
-  const html = `
+    // Fetch install data
+    const installResponse = await fetch(
+      `${process.env.NEXT_PUBLIC_API_URL || 'https://lpai-backend-omega.vercel.app'}/api/analytics/installs/${locationId}`
+    );
+    const installData = await installResponse.json();
+
+    // Calculate total time and percentages
+    let totalDuration = 0;
+    let completedSteps = 0;
+    const validSteps = [];
+    
+    if (installData.currentInstall?.steps) {
+      installData.currentInstall.steps.forEach(step => {
+        const duration = step.duration && !isNaN(step.duration) ? step.duration : 0;
+        if (duration > 0) {
+          validSteps.push({ ...step, duration });
+          totalDuration += duration;
+        }
+        if (step.status === 'success') completedSteps++;
+      });
+    }
+    
+    const completionPercentage = installData.currentInstall?.steps?.length > 0 
+      ? Math.round((completedSteps / installData.currentInstall.steps.length) * 100)
+      : 0;
+
+    const html = `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -103,9 +123,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
 
         .grade-badge {
-            background: ${installData.performanceAnalysis.grade === 'A' ? 'linear-gradient(135deg, #10b981, #34d399)' :
-                         installData.performanceAnalysis.grade === 'B' ? 'linear-gradient(135deg, #3b82f6, #60a5fa)' :
-                         installData.performanceAnalysis.grade === 'C' ? 'linear-gradient(135deg, #f59e0b, #fbbf24)' :
+            background: ${installData.performanceAnalysis?.grade === 'A' ? 'linear-gradient(135deg, #10b981, #34d399)' :
+                         installData.performanceAnalysis?.grade === 'B' ? 'linear-gradient(135deg, #3b82f6, #60a5fa)' :
+                         installData.performanceAnalysis?.grade === 'C' ? 'linear-gradient(135deg, #f59e0b, #fbbf24)' :
                          'linear-gradient(135deg, #ef4444, #f87171)'};
             width: 150px;
             height: 150px;
@@ -115,7 +135,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             font-size: 5rem;
             font-weight: 800;
             border-radius: 30px;
-            box-shadow: 0 0 60px ${installData.performanceAnalysis.grade === 'A' ? 'rgba(16, 185, 129, 0.6)' : 'rgba(59, 130, 246, 0.6)'},
+            box-shadow: 0 0 60px ${installData.performanceAnalysis?.grade === 'A' ? 'rgba(16, 185, 129, 0.6)' : 'rgba(59, 130, 246, 0.6)'},
                         inset 0 0 60px rgba(255, 255, 255, 0.1);
             animation: float 3s ease-in-out infinite;
         }
@@ -324,6 +344,40 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         .countdown-ring svg {
             transform: rotate(-90deg);
         }
+
+        .nav-link {
+            transition: all 0.3s ease;
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+        }
+
+        .nav-link:hover {
+            background: rgba(59, 130, 246, 0.2);
+            border-color: rgba(59, 130, 246, 0.5);
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(59, 130, 246, 0.3);
+        }
+
+        .location-dropdown {
+            background: rgba(17, 25, 40, 0.95);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .location-dropdown:hover {
+            border-color: rgba(59, 130, 246, 0.5);
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+        }
+
+        .location-dropdown option {
+            background: #111827;
+            color: white;
+            padding: 8px;
+        }
     </style>
 </head>
 <body class="text-white">
@@ -333,13 +387,41 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             <div class="mb-8 flex justify-between items-center">
                 <div>
                     <h1 class="text-5xl font-bold mb-2 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 bg-clip-text text-transparent">
-                        ${installData.locationName}
+                        ${installData.locationName || 'Unknown Location'}
                     </h1>
                     <p class="text-gray-400">Installation Performance Analytics</p>
                 </div>
-                <div class="live-indicator">
-                    <span class="live-dot"></span>
-                    <span>Live Monitoring</span>
+                <div class="flex items-center gap-4">
+                    <!-- Location Dropdown -->
+                    <select 
+                        class="location-dropdown"
+                        onchange="window.location.href = '/api/analytics/installs/' + this.value + '/ui'"
+                    >
+                        <option value="${locationId}">${installData.locationName || 'Current Location'}</option>
+                        <option disabled>──────────────</option>
+                        ${allLocations
+                          .filter(loc => loc.locationId !== locationId)
+                          .map(loc => `
+                            <option value="${loc.locationId}">
+                                ${loc.name || 'Unnamed'} - ${loc.installedAt ? new Date(loc.installedAt).toLocaleDateString() : 'No date'}
+                            </option>
+                          `).join('')}
+                    </select>
+                    
+                    <!-- Dashboard Link -->
+                    <a href="/api/analytics/dashboard-ui" 
+                       class="nav-link px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                                  d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                        </svg>
+                        Dashboard
+                    </a>
+                    
+                    <div class="live-indicator">
+                        <span class="live-dot"></span>
+                        <span>Live Monitoring</span>
+                    </div>
                 </div>
             </div>
 
@@ -350,14 +432,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                     <h3 class="text-sm text-gray-400 mb-6 uppercase tracking-wider">Performance Grade</h3>
                     <div class="flex items-center justify-center">
                         <div class="grade-badge">
-                            ${installData.performanceAnalysis.grade}
+                            ${installData.performanceAnalysis?.grade || 'N/A'}
                         </div>
                     </div>
                     <div class="text-center mt-6">
-                        <p class="text-3xl font-bold">${installData.performanceAnalysis.score}/100</p>
-                        <p class="text-sm text-gray-400 mt-1">Top ${installData.performanceAnalysis.percentile}%</p>
-                        <p class="text-sm mt-3 ${installData.performanceAnalysis.grade === 'A' ? 'text-green-500' : 'text-blue-500'}">
-                            ${installData.performanceAnalysis.comparison}
+                        <p class="text-3xl font-bold">${installData.performanceAnalysis?.score || 0}/100</p>
+                        <p class="text-sm text-gray-400 mt-1">Top ${installData.performanceAnalysis?.percentile || 0}%</p>
+                        <p class="text-sm mt-3 ${installData.performanceAnalysis?.grade === 'A' ? 'text-green-500' : 'text-blue-500'}">
+                            ${installData.performanceAnalysis?.comparison || 'No comparison data'}
                         </p>
                     </div>
                 </div>
@@ -396,25 +478,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                         <div>
                             <div class="flex justify-between items-center mb-2">
                                 <span class="text-gray-400">Total Installs</span>
-                                <span class="text-2xl font-bold">${installData.installHistory.totalInstalls}</span>
+                                <span class="text-2xl font-bold">${installData.installHistory?.totalInstalls || 0}</span>
                             </div>
                             <div class="h-2 bg-gray-700 rounded-full overflow-hidden">
                                 <div class="h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full" 
-                                     style="width: ${Math.min(installData.installHistory.totalInstalls * 10, 100)}%"></div>
+                                     style="width: ${Math.min((installData.installHistory?.totalInstalls || 0) * 10, 100)}%"></div>
                             </div>
                         </div>
                         <div>
                             <div class="flex justify-between items-center mb-2">
                                 <span class="text-gray-400">Success Rate</span>
                                 <span class="text-2xl font-bold text-green-500">
-                                    ${installData.installHistory.totalInstalls > 0 
+                                    ${installData.installHistory?.totalInstalls > 0 
                                       ? Math.round((installData.installHistory.successfulInstalls / installData.installHistory.totalInstalls) * 100)
                                       : 0}%
                                 </span>
                             </div>
                             <div class="h-2 bg-gray-700 rounded-full overflow-hidden">
                                 <div class="h-full bg-green-500 rounded-full" 
-                                     style="width: ${installData.installHistory.totalInstalls > 0 
+                                     style="width: ${installData.installHistory?.totalInstalls > 0 
                                        ? (installData.installHistory.successfulInstalls / installData.installHistory.totalInstalls) * 100
                                        : 0}%"></div>
                             </div>
@@ -422,7 +504,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                         <div>
                             <div class="flex justify-between items-center">
                                 <span class="text-gray-400">Avg Duration</span>
-                                <span class="text-2xl font-bold">${Math.round(installData.installHistory.averageDuration / 1000)}s</span>
+                                <span class="text-2xl font-bold">${Math.round((installData.installHistory?.averageDuration || 0) / 1000)}s</span>
                             </div>
                         </div>
                     </div>
@@ -435,34 +517,34 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                         <div>
                             <div class="flex justify-between text-sm mb-2">
                                 <span>vs Average</span>
-                                <span class="${installData.comparisonMetrics.vsAverage < 0 ? 'text-green-500' : 'text-red-500'} font-bold">
-                                    ${installData.comparisonMetrics.vsAverage > 0 ? '+' : ''}${installData.comparisonMetrics.vsAverage}%
+                                <span class="${(installData.comparisonMetrics?.vsAverage || 0) < 0 ? 'text-green-500' : 'text-red-500'} font-bold">
+                                    ${(installData.comparisonMetrics?.vsAverage || 0) > 0 ? '+' : ''}${installData.comparisonMetrics?.vsAverage || 0}%
                                 </span>
                             </div>
                             <div class="time-bar">
-                                <div class="time-fill" style="width: ${50 + (installData.comparisonMetrics.vsAverage / 2)}%"></div>
+                                <div class="time-fill" style="width: ${50 + ((installData.comparisonMetrics?.vsAverage || 0) / 2)}%"></div>
                             </div>
                         </div>
                         <div>
                             <div class="flex justify-between text-sm mb-2">
                                 <span>vs Last Week</span>
-                                <span class="${installData.comparisonMetrics.vsLastWeek < 0 ? 'text-green-500' : 'text-red-500'} font-bold">
-                                    ${installData.comparisonMetrics.vsLastWeek > 0 ? '+' : ''}${installData.comparisonMetrics.vsLastWeek}%
+                                <span class="${(installData.comparisonMetrics?.vsLastWeek || 0) < 0 ? 'text-green-500' : 'text-red-500'} font-bold">
+                                    ${(installData.comparisonMetrics?.vsLastWeek || 0) > 0 ? '+' : ''}${installData.comparisonMetrics?.vsLastWeek || 0}%
                                 </span>
                             </div>
                             <div class="time-bar">
-                                <div class="time-fill" style="width: ${50 + (installData.comparisonMetrics.vsLastWeek / 2)}%"></div>
+                                <div class="time-fill" style="width: ${50 + ((installData.comparisonMetrics?.vsLastWeek || 0) / 2)}%"></div>
                             </div>
                         </div>
                         <div>
                             <div class="flex justify-between text-sm mb-2">
                                 <span>vs Similar</span>
-                                <span class="${installData.comparisonMetrics.vsSimilarLocations < 0 ? 'text-green-500' : 'text-red-500'} font-bold">
-                                    ${installData.comparisonMetrics.vsSimilarLocations > 0 ? '+' : ''}${installData.comparisonMetrics.vsSimilarLocations}%
+                                <span class="${(installData.comparisonMetrics?.vsSimilarLocations || 0) < 0 ? 'text-green-500' : 'text-red-500'} font-bold">
+                                    ${(installData.comparisonMetrics?.vsSimilarLocations || 0) > 0 ? '+' : ''}${installData.comparisonMetrics?.vsSimilarLocations || 0}%
                                 </span>
                             </div>
                             <div class="time-bar">
-                                <div class="time-fill" style="width: ${50 + (installData.comparisonMetrics.vsSimilarLocations / 2)}%"></div>
+                                <div class="time-fill" style="width: ${50 + ((installData.comparisonMetrics?.vsSimilarLocations || 0) / 2)}%"></div>
                             </div>
                         </div>
                     </div>
@@ -532,7 +614,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             </div>
 
             <!-- Recommendations -->
-            ${installData.recommendations.length > 0 ? `
+            ${(installData.recommendations || []).length > 0 ? `
             <div class="glass rounded-2xl p-8">
                 <h2 class="text-2xl font-bold mb-6">AI Recommendations</h2>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -618,17 +700,32 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             }
         }
 
-        // Historical Performance Chart
+        // Historical Performance Chart with proper bounds
         const historyCtx = document.getElementById('historyChart')?.getContext('2d');
         if (historyCtx) {
             const historicalData = ${JSON.stringify(installData.historicalTrends || [])};
-            // Filter out invalid data
-            const validHistoricalData = historicalData.filter(h => h.duration && !isNaN(h.duration) && h.duration > 0);
+            
+            // Filter out invalid data and ensure we have numbers
+            const validHistoricalData = historicalData
+                .filter(h => h.duration && !isNaN(h.duration) && h.duration > 0)
+                .map(h => ({
+                    ...h,
+                    duration: Math.max(0, h.duration) // Ensure non-negative
+                }));
             
             if (validHistoricalData.length > 0) {
                 const gradient = historyCtx.createLinearGradient(0, 0, 0, 300);
                 gradient.addColorStop(0, 'rgba(59, 130, 246, 0.5)');
                 gradient.addColorStop(1, 'rgba(59, 130, 246, 0)');
+                
+                // Calculate sensible Y-axis bounds
+                const durations = validHistoricalData.map(h => Math.round(h.duration / 1000));
+                const maxDuration = Math.max(...durations);
+                const minDuration = Math.min(...durations);
+                
+                // Set Y-axis max with some padding
+                const yAxisMax = maxDuration > 0 ? Math.ceil(maxDuration * 1.2) : 30;
+                const yAxisMin = 0; // Always start at 0
                 
                 new Chart(historyCtx, {
                     type: 'line',
@@ -636,7 +733,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                         labels: validHistoricalData.map(h => h.date),
                         datasets: [{
                             label: 'Install Duration',
-                            data: validHistoricalData.map(h => Math.round(h.duration / 1000)),
+                            data: durations,
                             borderColor: 'rgb(59, 130, 246)',
                             backgroundColor: gradient,
                             tension: 0.4,
@@ -677,15 +774,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                         scales: {
                             y: {
                                 beginAtZero: true,
-                                min: 0,
-                                suggestedMax: Math.max(30, Math.max(...validHistoricalData.map(h => Math.round(h.duration / 1000)))) * 1.1,
+                                min: yAxisMin,
+                                max: yAxisMax,
                                 grid: {
                                     color: 'rgba(255, 255, 255, 0.1)'
                                 },
                                 ticks: {
                                     color: 'rgba(255, 255, 255, 0.7)',
-                                    precision: 0, // No decimals!
-                                    stepSize: Math.max(5, Math.ceil(Math.max(...validHistoricalData.map(h => h.duration / 1000)) / 5)),
+                                    stepSize: Math.max(5, Math.ceil(yAxisMax / 6)),
+                                    precision: 0,
                                     callback: function(value) {
                                         return Math.floor(value) + 's';
                                     }
@@ -706,10 +803,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 });
             } else {
                 // Show placeholder text if no data
-                timeCtx.font = '14px Inter';
-                timeCtx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-                timeCtx.textAlign = 'center';
-                timeCtx.fillText('No historical data available', timeCtx.canvas.width / 2, timeCtx.canvas.height / 2);
+                historyCtx.font = '14px Inter';
+                historyCtx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+                historyCtx.textAlign = 'center';
+                historyCtx.fillText('No historical data available', historyCtx.canvas.width / 2, historyCtx.canvas.height / 2);
             }
         }
 
@@ -758,4 +855,48 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   res.setHeader('Content-Type', 'text/html');
   res.status(200).send(html);
+  
+  } catch (error: any) {
+    console.error('[Install Analytics UI] Error:', error);
+    
+    // If we can't fetch data, still show the page with navigation
+    const fallbackHtml = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Install Analytics - Error</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background: #0a0a0a;
+            color: white;
+            font-family: 'Inter', sans-serif;
+        }
+        .glass {
+            background: rgba(17, 25, 40, 0.75);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.125);
+        }
+    </style>
+</head>
+<body>
+    <div class="min-h-screen p-6 flex items-center justify-center">
+        <div class="glass rounded-xl p-8 max-w-md w-full text-center">
+            <h1 class="text-2xl font-bold mb-4">Unable to Load Analytics</h1>
+            <p class="text-gray-400 mb-6">There was an error loading the analytics data.</p>
+            <a href="/api/analytics/dashboard-ui" 
+               class="inline-block px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors">
+                Return to Dashboard
+            </a>
+        </div>
+    </div>
+</body>
+</html>
+    `;
+    
+    res.setHeader('Content-Type', 'text/html');
+    res.status(200).send(fallbackHtml);
+  }
 }

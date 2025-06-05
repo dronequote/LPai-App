@@ -87,6 +87,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       ])
       .toArray();
 
+    // Get a sample location for the navigation link
+    const sampleLocation = await db.collection('locations')
+      .findOne({ setupCompleted: true }, { projection: { locationId: 1 } });
+
     // Generate HTML
     const html = `
 <!DOCTYPE html>
@@ -295,6 +299,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         ::-webkit-scrollbar-thumb:hover {
             background: rgba(59, 130, 246, 0.7);
         }
+
+        .nav-link {
+            transition: all 0.3s ease;
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+        }
+
+        .nav-link:hover {
+            background: rgba(59, 130, 246, 0.2);
+            border-color: rgba(59, 130, 246, 0.5);
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(59, 130, 246, 0.3);
+        }
     </style>
 </head>
 <body class="text-white">
@@ -307,12 +324,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 <h1 class="text-5xl font-bold mb-2 neon-text">Webhook Analytics</h1>
                 <p class="text-gray-400">Real-time system performance monitoring</p>
             </div>
-            <div class="glass rounded-xl p-2 flex gap-2">
-                <button onclick="changeRange('hour')" class="px-4 py-2 rounded-lg transition-all ${range === 'hour' ? 'bg-blue-600' : 'hover:bg-white/10'}">Hour</button>
-                <button onclick="changeRange('today')" class="px-4 py-2 rounded-lg transition-all ${range === 'today' ? 'bg-blue-600' : 'hover:bg-white/10'}">Today</button>
-                <button onclick="changeRange('week')" class="px-4 py-2 rounded-lg transition-all ${range === 'week' ? 'bg-blue-600' : 'hover:bg-white/10'}">Week</button>
-                <button onclick="changeRange('month')" class="px-4 py-2 rounded-lg transition-all ${range === 'month' ? 'bg-blue-600' : 'hover:bg-white/10'}">Month</button>
-                <button onclick="changeRange('all')" class="px-4 py-2 rounded-lg transition-all ${range === 'all' ? 'bg-blue-600' : 'hover:bg-white/10'}">All Time</button>
+            <div class="flex items-center gap-4">
+                ${sampleLocation ? `
+                <a href="/api/analytics/installs/${sampleLocation.locationId}/ui" 
+                   class="nav-link px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                              d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                    </svg>
+                    Install Analytics
+                </a>
+                ` : ''}
+                <div class="glass rounded-xl p-2 flex gap-2">
+                    <button onclick="changeRange('hour')" class="px-4 py-2 rounded-lg transition-all ${range === 'hour' ? 'bg-blue-600' : 'hover:bg-white/10'}">Hour</button>
+                    <button onclick="changeRange('today')" class="px-4 py-2 rounded-lg transition-all ${range === 'today' ? 'bg-blue-600' : 'hover:bg-white/10'}">Today</button>
+                    <button onclick="changeRange('week')" class="px-4 py-2 rounded-lg transition-all ${range === 'week' ? 'bg-blue-600' : 'hover:bg-white/10'}">Week</button>
+                    <button onclick="changeRange('month')" class="px-4 py-2 rounded-lg transition-all ${range === 'month' ? 'bg-blue-600' : 'hover:bg-white/10'}">Month</button>
+                    <button onclick="changeRange('all')" class="px-4 py-2 rounded-lg transition-all ${range === 'all' ? 'bg-blue-600' : 'hover:bg-white/10'}">All Time</button>
+                </div>
             </div>
         </div>
 
@@ -322,22 +351,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 <div class="flex items-center justify-between mb-4">
                     <div>
                         <h3 class="text-sm text-gray-400 mb-1">System Health</h3>
-                        <p class="text-3xl font-bold ${dashboardData.systemHealth.status === 'healthy' ? 'text-green-500' : dashboardData.systemHealth.status === 'degraded' ? 'text-yellow-500' : 'text-red-500'}">
-                            ${dashboardData.systemHealth.status.toUpperCase()}
+                        <p class="text-3xl font-bold ${dashboardData.systemHealth?.status === 'healthy' ? 'text-green-500' : dashboardData.systemHealth?.status === 'degraded' ? 'text-yellow-500' : 'text-red-500'}">
+                            ${dashboardData.systemHealth?.status?.toUpperCase() || 'UNKNOWN'}
                         </p>
                     </div>
                     <div class="relative w-20 h-20 float">
                         <svg class="health-ring w-20 h-20">
                             <circle cx="40" cy="40" r="36" stroke="rgba(255,255,255,0.1)" stroke-width="8" fill="none" />
                             <circle cx="40" cy="40" r="36" 
-                                stroke="${dashboardData.systemHealth.score > 85 ? '#10b981' : dashboardData.systemHealth.score > 70 ? '#f59e0b' : '#ef4444'}" 
+                                stroke="${(dashboardData.systemHealth?.score || 0) > 85 ? '#10b981' : (dashboardData.systemHealth?.score || 0) > 70 ? '#f59e0b' : '#ef4444'}" 
                                 stroke-width="8" 
                                 fill="none"
-                                stroke-dasharray="${dashboardData.systemHealth.score * 2.26} 226"
+                                stroke-dasharray="${(dashboardData.systemHealth?.score || 0) * 2.26} 226"
                                 stroke-linecap="round" />
                         </svg>
                         <div class="absolute inset-0 flex items-center justify-center">
-                            <span class="text-2xl font-bold count-up">${dashboardData.systemHealth.score}</span>
+                            <span class="text-2xl font-bold count-up">${dashboardData.systemHealth?.score || 0}</span>
                         </div>
                     </div>
                 </div>
@@ -345,7 +374,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
             <div class="glass rounded-xl p-6 metric-card slide-in" style="animation-delay: 0.2s">
                 <h3 class="text-sm text-gray-400 mb-1">Messages/Min</h3>
-                <p class="text-3xl font-bold text-blue-500 count-up">${Math.round(dashboardData.performance.lastHour.received / 60)}</p>
+                <p class="text-3xl font-bold text-blue-500 count-up">${Math.round(dashboardData.performance?.lastHour?.received / 60) || 0}</p>
                 <p class="text-sm text-gray-500 mt-2">↑ 12% from last hour</p>
                 <div class="mt-2 h-1 bg-gray-700 rounded-full overflow-hidden">
                     <div class="h-full bg-blue-500 rounded-full loading-shimmer" style="width: 75%"></div>
@@ -354,19 +383,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
             <div class="glass rounded-xl p-6 metric-card slide-in" style="animation-delay: 0.3s">
                 <h3 class="text-sm text-gray-400 mb-1">Success Rate</h3>
-                <p class="text-3xl font-bold text-green-500 count-up">${dashboardData.performance.lastHour.received > 0 ? ((dashboardData.performance.lastHour.processed / dashboardData.performance.lastHour.received) * 100).toFixed(1) : '100.0'}%</p>
-                <p class="text-sm text-gray-500 mt-2">${dashboardData.performance.lastHour.failed} failures</p>
+                <p class="text-3xl font-bold text-green-500 count-up">${dashboardData.performance?.lastHour?.received > 0 ? ((dashboardData.performance.lastHour.processed / dashboardData.performance.lastHour.received) * 100).toFixed(1) : '100.0'}%</p>
+                <p class="text-sm text-gray-500 mt-2">${dashboardData.performance?.lastHour?.failed || 0} failures</p>
                 <div class="mt-2 h-1 bg-gray-700 rounded-full overflow-hidden">
-                    <div class="h-full bg-green-500 rounded-full" style="width: ${dashboardData.performance.lastHour.received > 0 ? ((dashboardData.performance.lastHour.processed / dashboardData.performance.lastHour.received) * 100) : 100}%"></div>
+                    <div class="h-full bg-green-500 rounded-full" style="width: ${dashboardData.performance?.lastHour?.received > 0 ? ((dashboardData.performance.lastHour.processed / dashboardData.performance.lastHour.received) * 100) : 100}%"></div>
                 </div>
             </div>
 
             <div class="glass rounded-xl p-6 metric-card slide-in" style="animation-delay: 0.4s">
                 <h3 class="text-sm text-gray-400 mb-1">Avg Processing</h3>
-                <p class="text-3xl font-bold text-purple-500 count-up">${Math.round(dashboardData.performance.lastHour.avgProcessingTime)}ms</p>
+                <p class="text-3xl font-bold text-purple-500 count-up">${Math.round(dashboardData.performance?.lastHour?.avgProcessingTime || 0)}ms</p>
                 <p class="text-sm text-gray-500 mt-2">SLA: < 2000ms</p>
                 <div class="mt-2 h-1 bg-gray-700 rounded-full overflow-hidden">
-                    <div class="h-full bg-purple-500 rounded-full" style="width: ${Math.min(100, (dashboardData.performance.lastHour.avgProcessingTime / 2000) * 100)}%"></div>
+                    <div class="h-full bg-purple-500 rounded-full" style="width: ${Math.min(100, ((dashboardData.performance?.lastHour?.avgProcessingTime || 0) / 2000) * 100)}%"></div>
                 </div>
             </div>
         </div>
@@ -377,7 +406,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             <div class="glass rounded-xl p-6 slide-in" style="animation-delay: 0.5s">
                 <h2 class="text-xl font-semibold mb-4">Queue Status</h2>
                 <div class="space-y-4">
-                    ${dashboardData.queues.map((queue, index) => `
+                    ${(dashboardData.queues || []).map((queue, index) => `
                         <div class="flex items-center justify-between p-4 rounded-lg bg-white/5 hover:bg-white/10 transition-all rgb-border border">
                             <div>
                                 <h3 class="font-medium capitalize">${queue.name}</h3>
@@ -404,11 +433,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 <canvas id="performanceChart" width="400" height="200"></canvas>
                 <div class="mt-4 grid grid-cols-2 gap-4">
                     <div class="text-center">
-                        <p class="text-2xl font-bold text-blue-500">${dashboardData.performance.last24Hours.received}</p>
+                        <p class="text-2xl font-bold text-blue-500">${dashboardData.performance?.last24Hours?.received || 0}</p>
                         <p class="text-sm text-gray-400">Total Today</p>
                     </div>
                     <div class="text-center">
-                        <p class="text-2xl font-bold text-green-500">$${dashboardData.performance.last24Hours.totalCost}</p>
+                        <p class="text-2xl font-bold text-green-500">$${dashboardData.performance?.last24Hours?.totalCost || '0.00'}</p>
                         <p class="text-sm text-gray-400">Est. Cost</p>
                     </div>
                 </div>
@@ -467,7 +496,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         <div class="glass rounded-xl p-6 slide-in" style="animation-delay: 1.0s">
             <h2 class="text-xl font-semibold mb-4">AI Insights & Recommendations</h2>
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                ${dashboardData.insights.map(insight => `
+                ${(dashboardData.insights || []).map(insight => `
                     <div class="flex items-start gap-3 p-4 rounded-lg bg-white/5 hover:bg-white/10 transition-all">
                         <span class="text-2xl">${insight.startsWith('🚀') ? '🚀' : insight.startsWith('⚡') ? '⚡' : insight.startsWith('⚠️') ? '⚠️' : '💡'}</span>
                         <p class="text-sm">${insight}</p>
@@ -529,18 +558,34 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         gradient.addColorStop(0, 'rgba(59, 130, 246, 0.5)');
         gradient.addColorStop(1, 'rgba(59, 130, 246, 0)');
 
-        // Generate realistic data points
-        const currentRate = ${Math.round(dashboardData.performance.lastHour.received / 60) || 0};
-        const dataPoints = currentRate > 0 
-            ? [
+        // Generate realistic data points with validation
+        const currentRate = ${Math.round(dashboardData.performance?.lastHour?.received / 60) || 0};
+        const dataPoints = [];
+        
+        // Ensure we have valid data points
+        if (currentRate > 0) {
+            dataPoints.push(
                 Math.max(0, currentRate - 15 + Math.random() * 10),
                 Math.max(0, currentRate - 10 + Math.random() * 10),
                 Math.max(0, currentRate - 5 + Math.random() * 10),
                 Math.max(0, currentRate + Math.random() * 5),
                 Math.max(0, currentRate - 3 + Math.random() * 5),
                 currentRate
-              ].map(n => Math.round(n))
-            : [0, 0, 0, 0, 0, 0];
+            );
+        } else {
+            // Default flat line at 0
+            dataPoints.push(0, 0, 0, 0, 0, 0);
+        }
+
+        // Validate all data points
+        const validDataPoints = dataPoints.map(n => {
+            const value = Math.round(n);
+            return (isNaN(value) || value < 0) ? 0 : value;
+        });
+
+        // Calculate sensible Y-axis max
+        const maxDataPoint = Math.max(...validDataPoints);
+        const yAxisMax = maxDataPoint > 0 ? Math.ceil(maxDataPoint * 1.2) : 10;
 
         new Chart(ctx, {
             type: 'line',
@@ -548,7 +593,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 labels: ['5m ago', '4m ago', '3m ago', '2m ago', '1m ago', 'Now'],
                 datasets: [{
                     label: 'Webhooks/min',
-                    data: dataPoints,
+                    data: validDataPoints,
                     borderColor: 'rgb(59, 130, 246)',
                     backgroundColor: gradient,
                     tension: 0.4,
@@ -591,14 +636,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                     y: {
                         beginAtZero: true,
                         min: 0,
-                        suggestedMax: Math.max(10, ...dataPoints) * 1.2,
+                        max: yAxisMax,
                         grid: {
                             color: 'rgba(255, 255, 255, 0.1)'
                         },
                         ticks: {
                             color: 'rgba(255, 255, 255, 0.7)',
-                            stepSize: Math.max(1, Math.ceil(Math.max(...dataPoints) / 5)),
-                            precision: 0 // No decimal places!
+                            stepSize: Math.max(1, Math.ceil(yAxisMax / 5)),
+                            precision: 0,
+                            callback: function(value) {
+                                return Math.floor(value);
+                            }
                         }
                     },
                     x: {
@@ -673,86 +721,80 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             const hour = i.toString().padStart(2, '0') + ':00';
             hours.push(hour);
             const data = hourlyData.find(h => h._id === hour);
-            heatmapValues.push(data ? data.count : 0);
+            const value = data ? data.count : 0;
+            heatmapValues.push((isNaN(value) || value < 0) ? 0 : value);
         }
 
-        // Only create chart if we have some data
-        const hasData = heatmapValues.some(v => v > 0);
+        // Calculate sensible Y-axis max for heatmap
+        const maxHeatmapValue = Math.max(...heatmapValues);
+        const heatmapYMax = maxHeatmapValue > 0 ? Math.ceil(maxHeatmapValue * 1.1) : 10;
         
-        if (hasData) {
-            new Chart(heatmapCtx, {
-                type: 'bar',
-                data: {
-                    labels: hours,
-                    datasets: [{
-                        label: 'Webhooks',
-                        data: heatmapValues,
-                        backgroundColor: heatmapValues.map(v => {
-                            const max = Math.max(...heatmapValues) || 1;
-                            const intensity = Math.min(v / max, 1);
-                            return \`rgba(59, 130, 246, \${0.2 + intensity * 0.8})\`;
-                        }),
-                        borderWidth: 0
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            display: false
-                        },
-                        tooltip: {
-                            backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                            titleColor: '#fff',
-                            bodyColor: '#fff',
-                            borderColor: 'rgb(59, 130, 246)',
-                            borderWidth: 1,
-                            padding: 10,
-                            callbacks: {
-                                label: function(context) {
-                                    return context.parsed.y + ' webhooks';
-                                }
-                            }
-                        }
+        new Chart(heatmapCtx, {
+            type: 'bar',
+            data: {
+                labels: hours,
+                datasets: [{
+                    label: 'Webhooks',
+                    data: heatmapValues,
+                    backgroundColor: heatmapValues.map(v => {
+                        const max = maxHeatmapValue || 1;
+                        const intensity = Math.min(v / max, 1);
+                        return \`rgba(59, 130, 246, \${0.2 + intensity * 0.8})\`;
+                    }),
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
                     },
-                    scales: {
-                        y: {
-                            beginAtZero: true,
-                            min: 0,
-                            suggestedMax: Math.max(10, Math.max(...heatmapValues)) * 1.1,
-                            grid: {
-                                color: 'rgba(255, 255, 255, 0.1)'
-                            },
-                            ticks: {
-                                color: 'rgba(255, 255, 255, 0.7)',
-                                stepSize: Math.max(1, Math.ceil(Math.max(...heatmapValues) / 5)),
-                                precision: 0, // No decimals!
-                                callback: function(value) {
-                                    return Math.floor(value); // Force integers
-                                }
-                            }
-                        },
-                        x: {
-                            grid: {
-                                display: false
-                            },
-                            ticks: {
-                                color: 'rgba(255, 255, 255, 0.7)',
-                                maxRotation: 45,
-                                minRotation: 45
+                    tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        titleColor: '#fff',
+                        bodyColor: '#fff',
+                        borderColor: 'rgb(59, 130, 246)',
+                        borderWidth: 1,
+                        padding: 10,
+                        callbacks: {
+                            label: function(context) {
+                                return context.parsed.y + ' webhooks';
                             }
                         }
                     }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        min: 0,
+                        max: heatmapYMax,
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        },
+                        ticks: {
+                            color: 'rgba(255, 255, 255, 0.7)',
+                            stepSize: Math.max(1, Math.ceil(heatmapYMax / 5)),
+                            precision: 0,
+                            callback: function(value) {
+                                return Math.floor(value);
+                            }
+                        }
+                    },
+                    x: {
+                        grid: {
+                            display: false
+                        },
+                        ticks: {
+                            color: 'rgba(255, 255, 255, 0.7)',
+                            maxRotation: 45,
+                            minRotation: 45
+                        }
+                    }
                 }
-            });
-        } else {
-            // Show "No activity" message
-            heatmapCtx.font = '14px Inter';
-            heatmapCtx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-            heatmapCtx.textAlign = 'center';
-            heatmapCtx.fillText('No activity in the last 24 hours', heatmapCtx.canvas.width / 2, heatmapCtx.canvas.height / 2);
-        }
+            }
+        });
 
         // Date range selector
         function changeRange(newRange) {
@@ -775,6 +817,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             const isFloat = finalValue.includes('.');
             const numericValue = parseFloat(finalValue.replace(/[^0-9.-]/g, ''));
             const suffix = finalValue.replace(/[0-9.-]/g, '');
+            
+            if (isNaN(numericValue)) {
+                el.textContent = '0' + suffix;
+                return;
+            }
+            
             let current = 0;
             const increment = numericValue / 20;
             const timer = setInterval(() => {
