@@ -1,9 +1,3 @@
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  // DISABLED - Using specialized processors instead
-  return res.status(200).json({ 
-    message: "Old webhook processor disabled - using specialized processors",
-    timestamp: new Date().toISOString()
-  });
 // pages/api/cron/process-webhooks.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
