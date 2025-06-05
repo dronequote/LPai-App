@@ -1,30 +1,17 @@
+// pages/api/cron/process-messages.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
-import { BaseProcessor } from '../../../src/utils/webhooks/processors/base';
-
-// Custom processor with db injection
-class MessagesProcessorWithDb extends BaseProcessor {
-  constructor(db: any) {
-    super({
-      db: db,
-      queueType: 'messages',
-      batchSize: 50,
-      maxProcessingTime: 50000,
-      processorName: 'MessagesProcessor'
-    });
-  }
-
-  protected async handleWebhook(item: any): Promise<void> {
-    // Import the actual processor logic
-    const { MessagesProcessor } = await import('../../../src/utils/webhooks/processors/messages');
-    const processor = new MessagesProcessor();
-    // Call the processItem method directly
-    await processor['processItem'](item);
-  }
-}
+import { MessagesProcessor } from '../../../src/utils/webhooks/processors/messages';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  // ... existing auth check ...
+  // Verify cron secret
+  const authHeader = req.headers.authorization;
+  const cronSecret = process.env.CRON_SECRET;
+  const isVercelCron = req.headers['x-vercel-cron'] === '1';
+  
+  if (!isVercelCron && authHeader !== `Bearer ${cronSecret}`) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
 
   const startTime = Date.now();
 
@@ -33,8 +20,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const client = await clientPromise;
     const db = client.db('lpai');
     
-    // Create processor with database
-    const processor = new MessagesProcessorWithDb(db);
+    // Create and run processor with database
+    const processor = new MessagesProcessor(db);
     await processor.run();
 
     const runtime = Date.now() - startTime;
@@ -56,3 +43,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
   }
 }
+
+export const config = {
+  maxDuration: 60
+};

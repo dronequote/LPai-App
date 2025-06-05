@@ -1,5 +1,6 @@
-// /pages/api/cron/process-contacts.ts
+// pages/api/cron/process-contacts.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
+import clientPromise from '../../../src/lib/mongodb';
 import { ContactsProcessor } from '../../../src/utils/webhooks/processors/contacts';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -15,8 +16,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const startTime = Date.now();
 
   try {
-    // Create and run processor
-    const processor = new ContactsProcessor();
+    // Get database connection
+    const client = await clientPromise;
+    const db = client.db('lpai');
+    
+    // Create and run processor with database
+    const processor = new ContactsProcessor(db);
     await processor.run();
 
     const runtime = Date.now() - startTime;

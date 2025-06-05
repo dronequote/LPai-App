@@ -1,14 +1,15 @@
 // src/utils/webhooks/processors/contacts.ts
 import { BaseProcessor } from './base';
 import { QueueItem } from '../queueManager';
-import { ObjectId } from 'mongodb';
+import { ObjectId, Db } from 'mongodb';
 
 export class ContactsProcessor extends BaseProcessor {
-  constructor() {
+  constructor(db: Db) {
     super({
+      db: db,
       queueType: 'contacts',
       batchSize: 50,
-      maxRuntime: 50000, // 50 seconds
+      maxProcessingTime: 50000, // 50 seconds
       processorName: 'ContactsProcessor'
     });
   }

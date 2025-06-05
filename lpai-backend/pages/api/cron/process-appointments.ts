@@ -1,5 +1,6 @@
-// /pages/api/cron/process-appointments.ts
+// pages/api/cron/process-appointments.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
+import clientPromise from '../../../src/lib/mongodb';
 import { AppointmentsProcessor } from '../../../src/utils/webhooks/processors/appointments';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -15,8 +16,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const startTime = Date.now();
 
   try {
-    // Create and run processor
-    const processor = new AppointmentsProcessor();
+    // Get database connection
+    const client = await clientPromise;
+    const db = client.db('lpai');
+    
+    // Create and run processor with database
+    const processor = new AppointmentsProcessor(db);
     await processor.run();
 
     const runtime = Date.now() - startTime;
