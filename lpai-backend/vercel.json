@@ -1,23 +1,47 @@
 {
   "crons": [
-  {
-    "path": "/api/cron/process-webhooks",
-    "schedule": "* * * * *"
-  },
-  {
-    "path": "/api/cron/refresh-tokens",
-    "schedule": "0 */6 * * *"
-  },
-  {
-    "path": "/api/cron/process-critical",
-    "schedule": "* * * * *"
-  },
-  {
-    "path": "/api/cron/process-messages",
-    "schedule": "* * * * *"
-  }
-],
-"functions": {
+    {
+      "path": "/api/cron/process-webhooks",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/refresh-tokens",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/process-critical",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/process-messages",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/process-appointments",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/process-contacts",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/process-financial",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/process-general",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/process-install-queue",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/daily-report",
+      "schedule": "0 8 * * *"
+    }
+  ],
+  "functions": {
     "pages/api/cron/process-webhooks.ts": {
       "maxDuration": 60
     },

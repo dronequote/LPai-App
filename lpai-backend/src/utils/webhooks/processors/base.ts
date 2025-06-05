@@ -1,276 +1,303 @@
 // src/utils/webhooks/processors/base.ts
-import { Db } from 'mongodb';
-import { QueueManager, QueueItem } from '../queueManager';
-import clientPromise from '../../../lib/mongodb';
+import { Db, ObjectId } from 'mongodb';
+import { WebhookAnalytics } from '../../analytics/webhookAnalytics';
 
 export interface ProcessorConfig {
+  db: Db;
   queueType: string;
-  batchSize: number;
-  maxRuntime: number; // milliseconds
   processorName: string;
+  batchSize?: number;
+  maxProcessingTime?: number; // in ms
+}
+
+export interface QueueItem {
+  _id: ObjectId;
+  webhookId: string;
+  type: string;
+  payload: any;
+  locationId: string;
+  attempts: number;
+  status: string;
+  queueType: string;
+  priority: number;
+  receivedAt: Date;
+  processingStarted?: Date;
+  lastError?: string;
 }
 
 export abstract class BaseProcessor {
   protected db: Db;
-  protected queueManager: QueueManager;
-  protected config: ProcessorConfig;
-  protected processorId: string;
-  protected startTime: number;
-  protected processedCount: number = 0;
-  protected errorCount: number = 0;
+  protected queueType: string;
+  protected processorName: string;
+  protected batchSize: number;
+  protected maxProcessingTime: number;
+  protected isProcessing: boolean = false;
+  protected analytics: WebhookAnalytics;
 
   constructor(config: ProcessorConfig) {
-    this.config = config;
-    this.processorId = `${config.processorName}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    this.startTime = Date.now();
+    this.db = config.db;
+    this.queueType = config.queueType;
+    this.processorName = config.processorName;
+    this.batchSize = config.batchSize || 50;
+    this.maxProcessingTime = config.maxProcessingTime || 50000; // 50 seconds default
+    this.analytics = new WebhookAnalytics(this.db);
   }
 
   /**
-   * Initialize database connection
+   * Start processing loop
    */
-  protected async initialize(): Promise<void> {
-    const client = await clientPromise;
-    this.db = client.db('lpai');
-    this.queueManager = new QueueManager(this.db);
-    
-    console.log(`[${this.config.processorName}] Initialized processor ${this.processorId}`);
-  }
+  async start(): Promise<void> {
+    if (this.isProcessing) {
+      console.log(`[${this.processorName}] Already processing`);
+      return;
+    }
 
-  /**
-   * Main processing loop
-   */
-  async run(): Promise<void> {
+    this.isProcessing = true;
+    const startTime = Date.now();
+    let processedCount = 0;
+    let errorCount = 0;
+
+    console.log(`[${this.processorName}] Starting processing`);
+
     try {
-      await this.initialize();
-      
-      // Log processor start
-      await this.logProcessorStart();
-      
-      // Process until timeout
-      while (this.shouldContinue()) {
-        const items = await this.queueManager.getNextBatch(
-          this.config.queueType,
-          this.config.batchSize
-        );
+      while (this.isProcessing && (Date.now() - startTime) < this.maxProcessingTime) {
+        const batch = await this.fetchBatch();
         
-        if (items.length === 0) {
-          // No items, wait a bit
+        if (batch.length === 0) {
+          // No items to process, wait a bit
           await this.sleep(1000);
           continue;
         }
-        
-        // Process batch
-        await this.processBatch(items);
-        
-        // Check if we should yield to prevent hogging resources
-        if (this.processedCount % 100 === 0 && this.processedCount > 0) {
-          await this.sleep(100); // Brief pause every 100 items
+
+        console.log(`[${this.processorName}] Processing batch of ${batch.length} items`);
+
+        // Process items in parallel with error handling
+        const results = await Promise.allSettled(
+          batch.map(item => this.processItem(item))
+        );
+
+        // Count successes and failures
+        results.forEach((result, index) => {
+          if (result.status === 'fulfilled') {
+            processedCount++;
+          } else {
+            errorCount++;
+            console.error(`[${this.processorName}] Failed to process ${batch[index].webhookId}:`, result.reason);
+          }
+        });
+
+        // Check if we should continue
+        if ((Date.now() - startTime) >= this.maxProcessingTime) {
+          console.log(`[${this.processorName}] Max processing time reached`);
+          break;
         }
       }
-      
-      // Log processor completion
-      await this.logProcessorEnd();
-      
-    } catch (error: any) {
-      console.error(`[${this.config.processorName}] Fatal error:`, error);
-      await this.logProcessorError(error);
-      throw error;
+    } catch (error) {
+      console.error(`[${this.processorName}] Fatal error in processing loop:`, error);
+    } finally {
+      this.isProcessing = false;
+      console.log(`[${this.processorName}] Completed - Processed: ${processedCount}, Errors: ${errorCount}`);
     }
   }
 
   /**
-   * Process a batch of items
+   * Stop processing
    */
-  protected async processBatch(items: QueueItem[]): Promise<void> {
-  console.log(`[${this.config.processorName}] Processing batch of ${items.length} items`);
+  stop(): void {
+    console.log(`[${this.processorName}] Stopping processor`);
+    this.isProcessing = false;
+  }
 
+  /**
+   * Fetch batch of items to process
+   */
+  protected async fetchBatch(): Promise<QueueItem[]> {
+    const now = new Date();
     
-    // Process items in parallel with concurrency limit
-    const concurrency = 5;
-    for (let i = 0; i < items.length; i += concurrency) {
-      const batch = items.slice(i, i + concurrency);
-      
-      await Promise.all(
-        batch.map(item => this.processItemSafe(item))
-      );
+    // Find items ready for processing
+    const items = await this.db.collection('webhook_queue')
+      .find({
+        queueType: this.queueType,
+        status: 'pending',
+        processAfter: { $lte: now },
+        $or: [
+          { lockedUntil: { $exists: false } },
+          { lockedUntil: { $lte: now } }
+        ]
+      })
+      .sort({ priority: 1, receivedAt: 1 })
+      .limit(this.batchSize)
+      .toArray();
+
+    if (items.length === 0) {
+      return [];
     }
+
+    // Lock items for processing
+    const itemIds = items.map(item => item._id);
+    const lockUntil = new Date(now.getTime() + 5 * 60 * 1000); // 5 minute lock
+
+    await this.db.collection('webhook_queue').updateMany(
+      { _id: { $in: itemIds } },
+      {
+        $set: {
+          status: 'processing',
+          processingStarted: now,
+          lockedUntil: lockUntil,
+          processorId: this.processorName
+        }
+      }
+    );
+
+    return items as QueueItem[];
   }
 
   /**
-   * Process single item with error handling
+   * Process a single item
    */
-  protected async processItemSafe(item: QueueItem): Promise<void> {
-    const itemStartTime = Date.now();
+  protected async processItem(item: QueueItem): Promise<void> {
+    const startTime = Date.now();
     
     try {
-      // Call the implementation-specific processing
-      await this.processItem(item);
+      console.log(`[${this.processorName}] Processing ${item.type} webhook ${item.webhookId}`);
       
-      // Mark as complete
-      await this.queueManager.markComplete(item.webhookId);
+      // Record processing started
+      await this.analytics.recordProcessingStarted(item.webhookId);
       
-      this.processedCount++;
+      // Call the implementation-specific handler
+      await this.handleWebhook(item);
       
-    const duration = Date.now() - itemStartTime;
-    console.log(`[${this.config.processorName}] Processed ${item.type} in ${duration}ms`);
+      // Mark as completed
+      await this.markCompleted(item);
+      
+      // Record processing completed
+      await this.analytics.recordProcessingCompleted(item.webhookId, true);
+      
+      const duration = Date.now() - startTime;
+      console.log(`[${this.processorName}] Completed ${item.webhookId} in ${duration}ms`);
       
     } catch (error: any) {
-      this.errorCount++;
+      const duration = Date.now() - startTime;
+      console.error(`[${this.processorName}] Error processing ${item.webhookId} after ${duration}ms:`, error);
       
-      console.error(`[${this.config.processorName}] Error processing ${item.webhookId}:`, error);
+      // Record processing failed
+      await this.analytics.recordProcessingCompleted(item.webhookId, false, error.message);
       
-      // Mark as failed with retry
-      await this.queueManager.markFailed(
-        item.webhookId,
-        error.message || 'Unknown error'
-      );
-      
-      // Log specific error for monitoring
-      await this.logItemError(item, error);
+      await this.markFailed(item, error);
+      throw error; // Re-throw to be caught by Promise.allSettled
     }
   }
 
   /**
    * Abstract method - must be implemented by subclasses
    */
-  protected abstract processItem(item: QueueItem): Promise<void>;
+  protected abstract handleWebhook(item: QueueItem): Promise<void>;
 
   /**
-   * Check if processor should continue running
+   * Mark item as completed
    */
-  protected shouldContinue(): boolean {
-    const runtime = Date.now() - this.startTime;
-    return runtime < this.config.maxRuntime;
+  protected async markCompleted(item: QueueItem): Promise<void> {
+    await this.db.collection('webhook_queue').updateOne(
+      { _id: item._id },
+      {
+        $set: {
+          status: 'completed',
+          processingCompleted: new Date(),
+          processingDuration: Date.now() - (item.processingStarted?.getTime() || Date.now())
+        },
+        $unset: {
+          lockedUntil: '',
+          processorId: ''
+        }
+      }
+    );
   }
 
   /**
-   * Helper sleep function
+   * Mark item as failed
+   */
+  protected async markFailed(item: QueueItem, error: Error): Promise<void> {
+    const nextRetry = this.calculateNextRetry(item.attempts);
+    
+    await this.db.collection('webhook_queue').updateOne(
+      { _id: item._id },
+      {
+        $set: {
+          status: 'failed',
+          lastError: error.message,
+          failedAt: new Date(),
+          processAfter: nextRetry
+        },
+        $inc: { attempts: 1 },
+        $unset: {
+          lockedUntil: '',
+          processorId: '',
+          processingStarted: ''
+        }
+      }
+    );
+  }
+
+  /**
+   * Calculate next retry time with exponential backoff
+   */
+  protected calculateNextRetry(attempts: number): Date {
+    const baseDelay = 60 * 1000; // 1 minute
+    const maxDelay = 60 * 60 * 1000; // 1 hour
+    const delay = Math.min(baseDelay * Math.pow(2, attempts), maxDelay);
+    return new Date(Date.now() + delay);
+  }
+
+  /**
+   * Helper to sleep
    */
   protected sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   /**
-   * Log processor start
+   * Get location details
    */
-  protected async logProcessorStart(): Promise<void> {
-    await this.db.collection('processor_logs').insertOne({
-      processorId: this.processorId,
-      processorName: this.config.processorName,
-      queueType: this.config.queueType,
-      event: 'start',
-      timestamp: new Date(),
-      metadata: {
-        batchSize: this.config.batchSize,
-        maxRuntime: this.config.maxRuntime
-      }
+  protected async getLocation(locationId: string): Promise<any> {
+    return await this.db.collection('locations').findOne({ locationId });
+  }
+
+  /**
+   * Get contact by GHL ID
+   */
+  protected async getContactByGhlId(ghlContactId: string, locationId: string): Promise<any> {
+    return await this.db.collection('contacts').findOne({
+      ghlContactId,
+      locationId
     });
   }
 
   /**
-   * Log processor end
+   * Get or create contact
    */
-  protected async logProcessorEnd(): Promise<void> {
-    const runtime = Date.now() - this.startTime;
+  protected async getOrCreateContact(contactData: any, locationId: string): Promise<any> {
+    const existing = await this.getContactByGhlId(contactData.id || contactData.contactId, locationId);
     
-    await this.db.collection('processor_logs').insertOne({
-      processorId: this.processorId,
-      processorName: this.config.processorName,
-      queueType: this.config.queueType,
-      event: 'end',
-      timestamp: new Date(),
-      metadata: {
-        runtime,
-        processedCount: this.processedCount,
-        errorCount: this.errorCount,
-        averageTime: this.processedCount > 0 ? runtime / this.processedCount : 0,
-        successRate: this.processedCount > 0 
-          ? ((this.processedCount - this.errorCount) / this.processedCount) * 100 
-          : 0
-      }
-    });
-    
-    console.log(`[${this.config.processorName}] Completed:`, {
-      processed: this.processedCount,
-      errors: this.errorCount,
-      runtime: `${(runtime / 1000).toFixed(1)}s`,
-      rate: `${(this.processedCount / (runtime / 1000)).toFixed(1)}/sec`
-    });
-  }
+    if (existing) {
+      return existing;
+    }
 
-  /**
-   * Log processor error
-   */
-  protected async logProcessorError(error: Error): Promise<void> {
-    await this.db.collection('processor_logs').insertOne({
-      processorId: this.processorId,
-      processorName: this.config.processorName,
-      queueType: this.config.queueType,
-      event: 'error',
-      timestamp: new Date(),
-      error: {
-        message: error.message,
-        stack: error.stack
-      }
-    });
-  }
+    // Create new contact
+    const newContact = {
+      _id: new ObjectId(),
+      ghlContactId: contactData.id || contactData.contactId,
+      locationId,
+      email: contactData.email,
+      firstName: contactData.firstName,
+      lastName: contactData.lastName,
+      phone: contactData.phone,
+      fullName: `${contactData.firstName || ''} ${contactData.lastName || ''}`.trim(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      source: 'webhook'
+    };
 
-  /**
-   * Log item processing error
-   */
-  protected async logItemError(item: QueueItem, error: Error): Promise<void> {
-    await this.db.collection('webhook_errors').insertOne({
-      webhookId: item.webhookId,
-      processorId: this.processorId,
-      processorName: this.config.processorName,
-      queueType: this.config.queueType,
-      webhookType: item.type,
-      attempt: item.attempts,
-      timestamp: new Date(),
-      error: {
-        message: error.message,
-        stack: error.stack
-      },
-      item: {
-        locationId: item.locationId,
-        companyId: item.companyId,
-        priority: item.priority
-      }
-    });
-  }
-
-  /**
-   * Helper to get related records efficiently
-   */
-  protected async findContact(ghlContactId: string, locationId: string) {
-    return await this.db.collection('contacts').findOne(
-      { ghlContactId, locationId },
-      { 
-        projection: { 
-          _id: 1, 
-          firstName: 1, 
-          lastName: 1, 
-          email: 1, 
-          phone: 1 
-        } 
-      }
-    );
-  }
-
-  /**
-   * Helper to find location
-   */
-  protected async findLocation(locationId: string) {
-    return await this.db.collection('locations').findOne(
-      { locationId },
-      { 
-        projection: { 
-          _id: 1, 
-          name: 1, 
-          companyId: 1,
-          ghlOAuth: 1
-        } 
-      }
-    );
+    await this.db.collection('contacts').insertOne(newContact);
+    return newContact;
   }
 }
