@@ -89,7 +89,7 @@ export class FinancialProcessor extends BaseProcessor {
     console.log(`[FinancialProcessor] Creating invoice ${invoice.id}`);
     
     // Start session for atomic operations
-    const session = this.db.client.startSession();
+    const session = this.client.startSession();
     
     try {
       await session.withTransaction(async () => {

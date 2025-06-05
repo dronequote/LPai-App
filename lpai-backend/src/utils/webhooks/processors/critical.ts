@@ -110,8 +110,7 @@ export class CriticalProcessor extends BaseProcessor {
     const { locationId, companyId, userId, companyName, planId, webhookId, timestamp } = params;
 
     // Use a session for atomic operations
-    const session = this.db.client.startSession();
-
+  const session = this.client.startSession();
     try {
       await session.withTransaction(async () => {
         // Update or create location record

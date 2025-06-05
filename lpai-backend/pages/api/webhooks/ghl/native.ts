@@ -65,7 +65,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const eventType = req.body.type;
   console.log(`[Native Webhook ${webhookId}] Received: ${eventType}`);
 
-
   try {
     const client = await clientPromise;
     const db = client.db('lpai');
@@ -85,13 +84,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Analyze webhook to determine routing
     const routeDecision = analyzeWebhook(req.body);
     
-      console.log(`[Native Webhook ${webhookId}] Route decision:`, {
-        type: routeDecision.type,
-        queue: routeDecision.queueType,
-        priority: routeDecision.priority,
-        direct: routeDecision.shouldDirectProcess
-      });
-    
+    console.log(`[Native Webhook ${webhookId}] Route decision:`, {
+      type: routeDecision.type,
+      queue: routeDecision.queueType,
+      priority: routeDecision.priority,
+      direct: routeDecision.shouldDirectProcess
+    });
 
     // Initialize queue manager
     const queueManager = new QueueManager(db);
@@ -104,8 +102,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         // Process immediately in background
         processMessageDirect(db, webhookId, req.body)
           .then(() => {
-          console.log(`[Native Webhook ${webhookId}] Received: ${eventType}`);
-
+            console.log(`[Native Webhook ${webhookId}] Direct processing completed`);
           })
           .catch((error) => {
             console.error(`[Native Webhook ${webhookId}] Direct processing failed:`, error);
@@ -125,8 +122,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         receivedAt
       });
       
-      console.log(`[Native Webhook ${webhookId}] Received: ${eventType}`);
-
+      console.log(`[Native Webhook ${webhookId}] Queued successfully`);
       
     } catch (error: any) {
       if (error.message === 'DUPLICATE_WEBHOOK') {
