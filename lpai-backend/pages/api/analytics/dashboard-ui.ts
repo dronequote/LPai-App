@@ -457,7 +457,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             <!-- 24 Hour Heatmap -->
             <div class="glass rounded-xl p-6 slide-in" style="animation-delay: 0.9s">
                 <h2 class="text-xl font-semibold mb-4">24 Hour Activity Heatmap</h2>
-                <canvas id="heatmapChart" width="400" height="200"></canvas>
+                <div style="height: 200px; position: relative;">
+                    <canvas id="heatmapChart"></canvas>
+                </div>
             </div>
         </div>
 
@@ -595,7 +597,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                         },
                         ticks: {
                             color: 'rgba(255, 255, 255, 0.7)',
-                            stepSize: Math.max(1, Math.ceil(Math.max(...dataPoints) / 5))
+                            stepSize: Math.max(1, Math.ceil(Math.max(...dataPoints) / 5)),
+                            precision: 0 // No decimal places!
                         }
                     },
                     x: {
@@ -717,12 +720,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                         y: {
                             beginAtZero: true,
                             min: 0,
+                            suggestedMax: Math.max(10, Math.max(...heatmapValues)) * 1.1,
                             grid: {
                                 color: 'rgba(255, 255, 255, 0.1)'
                             },
                             ticks: {
                                 color: 'rgba(255, 255, 255, 0.7)',
-                                stepSize: Math.max(1, Math.ceil(Math.max(...heatmapValues) / 5))
+                                stepSize: Math.max(1, Math.ceil(Math.max(...heatmapValues) / 5)),
+                                precision: 0, // No decimals!
+                                callback: function(value) {
+                                    return Math.floor(value); // Force integers
+                                }
                             }
                         },
                         x: {

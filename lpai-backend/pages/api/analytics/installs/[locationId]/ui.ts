@@ -677,13 +677,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                         scales: {
                             y: {
                                 beginAtZero: true,
+                                min: 0,
+                                suggestedMax: Math.max(30, Math.max(...validHistoricalData.map(h => Math.round(h.duration / 1000)))) * 1.1,
                                 grid: {
                                     color: 'rgba(255, 255, 255, 0.1)'
                                 },
                                 ticks: {
                                     color: 'rgba(255, 255, 255, 0.7)',
+                                    precision: 0, // No decimals!
+                                    stepSize: Math.max(5, Math.ceil(Math.max(...validHistoricalData.map(h => h.duration / 1000)) / 5)),
                                     callback: function(value) {
-                                        return value + 's';
+                                        return Math.floor(value) + 's';
                                     }
                                 }
                             },
