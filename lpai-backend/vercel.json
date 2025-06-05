@@ -1,10 +1,6 @@
 {
   "crons": [
     {
-      "path": "/api/cron/process-webhooks",
-      "schedule": "* * * * *"
-    },
-    {
       "path": "/api/cron/refresh-tokens",
       "schedule": "0 */6 * * *"
     },
