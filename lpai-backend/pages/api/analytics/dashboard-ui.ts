@@ -312,6 +312,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             transform: translateY(-2px);
             box-shadow: 0 5px 20px rgba(59, 130, 246, 0.3);
         }
+
+        /* Chart container constraints */
+        .chart-container {
+            position: relative;
+            height: 200px;
+            max-height: 200px;
+            overflow: hidden;
+        }
+
+        canvas {
+            max-height: 200px !important;
+        }
     </style>
 </head>
 <body class="text-white">
@@ -430,7 +442,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             <!-- Performance Trend -->
             <div class="glass rounded-xl p-6 slide-in" style="animation-delay: 0.6s">
                 <h2 class="text-xl font-semibold mb-4">Performance Trend</h2>
-                <canvas id="performanceChart" width="400" height="200"></canvas>
+                <div class="chart-container">
+                    <canvas id="performanceChart"></canvas>
+                </div>
                 <div class="mt-4 grid grid-cols-2 gap-4">
                     <div class="text-center">
                         <p class="text-2xl font-bold text-blue-500">${dashboardData.performance?.last24Hours?.received || 0}</p>
@@ -446,7 +460,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             <!-- Webhook Types -->
             <div class="glass rounded-xl p-6 slide-in" style="animation-delay: 0.7s">
                 <h2 class="text-xl font-semibold mb-4">Webhook Types (${range})</h2>
-                <canvas id="webhookTypesChart" width="400" height="200"></canvas>
+                <div class="chart-container">
+                    <canvas id="webhookTypesChart"></canvas>
+                </div>
                 <div class="mt-4 max-h-40 overflow-y-auto">
                     ${webhookTypes.map((type, index) => `
                         <div class="flex justify-between items-center py-2 border-b border-gray-700">
@@ -486,7 +502,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             <!-- 24 Hour Heatmap -->
             <div class="glass rounded-xl p-6 slide-in" style="animation-delay: 0.9s">
                 <h2 class="text-xl font-semibold mb-4">24 Hour Activity Heatmap</h2>
-                <div style="height: 200px; position: relative;">
+                <div class="chart-container">
                     <canvas id="heatmapChart"></canvas>
                 </div>
             </div>
@@ -637,8 +653,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                         beginAtZero: true,
                         min: 0,
                         max: yAxisMax,
+                        suggestedMin: 0,
+                        suggestedMax: yAxisMax,
                         grid: {
-                            color: 'rgba(255, 255, 255, 0.1)'
+                            color: 'rgba(255, 255, 255, 0.1)',
+                            drawBorder: false
                         },
                         ticks: {
                             color: 'rgba(255, 255, 255, 0.7)',
@@ -646,12 +665,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                             precision: 0,
                             callback: function(value) {
                                 return Math.floor(value);
-                            }
-                        }
+                            },
+                            includeBounds: true,
+                            count: 6
+                        },
+                        grace: 0
                     },
                     x: {
                         grid: {
-                            display: false
+                            display: false,
+                            drawBorder: false
                         },
                         ticks: {
                             color: 'rgba(255, 255, 255, 0.7)'
@@ -770,8 +793,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                         beginAtZero: true,
                         min: 0,
                         max: heatmapYMax,
+                        suggestedMin: 0,
+                        suggestedMax: heatmapYMax,
                         grid: {
-                            color: 'rgba(255, 255, 255, 0.1)'
+                            color: 'rgba(255, 255, 255, 0.1)',
+                            drawBorder: false
                         },
                         ticks: {
                             color: 'rgba(255, 255, 255, 0.7)',
@@ -779,12 +805,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                             precision: 0,
                             callback: function(value) {
                                 return Math.floor(value);
-                            }
-                        }
+                            },
+                            includeBounds: true,
+                            count: 6
+                        },
+                        grace: 0
                     },
                     x: {
                         grid: {
-                            display: false
+                            display: false,
+                            drawBorder: false
                         },
                         ticks: {
                             color: 'rgba(255, 255, 255, 0.7)',
