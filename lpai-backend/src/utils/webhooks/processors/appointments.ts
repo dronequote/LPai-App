@@ -78,7 +78,7 @@ export class AppointmentsProcessor extends BaseProcessor {
     }
     
     // Start session for atomic operations
-    const session = this.db.client.startSession();
+    const session = this.client.startSession();
     
     try {
       await session.withTransaction(async () => {

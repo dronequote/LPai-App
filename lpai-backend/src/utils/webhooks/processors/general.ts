@@ -187,7 +187,7 @@ export class GeneralProcessor extends BaseProcessor {
         if (opportunity.customFields) updateData.customFields = opportunity.customFields;
     }
     
-    const session = this.db.client.startSession();
+    const session = this.client.startSession();
     
     try {
       await session.withTransaction(async () => {
