@@ -1,6 +1,6 @@
 // pages/api/analytics/installs/[locationId].ts
 import type { NextApiRequest, NextApiResponse } from 'next';
-import clientPromise from '../../../../../src/lib/mongodb';
+import clientPromise from '../../../../src/lib/mongodb';
 
 interface InstallStep {
   name: string;
@@ -205,7 +205,35 @@ function analyzeSetupSteps(setupResults: any): InstallStep[] {
     const stepData = setupResults.steps[stepName];
     if (!stepData) return;
 
-    const duration = stepData.duration || estimateStepDuration(stepName, stepData);
+    // Parse duration - handle the "223ms" format
+    let duration = 0;
+    if (setupResults.duration && typeof setupResults.duration === 'string') {
+      // If we have the total duration string like "27.079s", parse it
+      const totalSeconds = parseFloat(setupResults.duration.replace('s', ''));
+      // Estimate based on step complexity
+      duration = estimateStepDuration(stepName, stepData);
+    } else if (stepData.duration) {
+      // If step has its own duration
+      if (typeof stepData.duration === 'string') {
+        // Handle "223ms" or "1.5s" format
+        if (stepData.duration.includes('ms')) {
+          duration = parseInt(stepData.duration.replace('ms', ''));
+        } else if (stepData.duration.includes('s')) {
+          duration = parseFloat(stepData.duration.replace('s', '')) * 1000;
+        }
+      } else if (typeof stepData.duration === 'number') {
+        duration = stepData.duration;
+      }
+    } else {
+      // Fallback to estimate
+      duration = estimateStepDuration(stepName, stepData);
+    }
+
+    // Ensure duration is a valid number
+    if (isNaN(duration) || duration <= 0) {
+      duration = estimateStepDuration(stepName, stepData);
+    }
+
     const stepStart = new Date(startTime.getTime() + cumulativeTime);
     const stepEnd = new Date(stepStart.getTime() + duration);
 

@@ -588,11 +588,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 scales: {
                     y: {
                         beginAtZero: true,
+                        min: 0,
+                        suggestedMax: Math.max(10, ...dataPoints) * 1.2,
                         grid: {
                             color: 'rgba(255, 255, 255, 0.1)'
                         },
                         ticks: {
-                            color: 'rgba(255, 255, 255, 0.7)'
+                            color: 'rgba(255, 255, 255, 0.7)',
+                            stepSize: Math.max(1, Math.ceil(Math.max(...dataPoints) / 5))
                         }
                     },
                     x: {
@@ -611,42 +614,50 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const typesCtx = document.getElementById('webhookTypesChart').getContext('2d');
         const webhookTypesData = ${JSON.stringify(webhookTypes)};
         
-        new Chart(typesCtx, {
-            type: 'doughnut',
-            data: {
-                labels: webhookTypesData.map(t => t._id || 'Unknown'),
-                datasets: [{
-                    data: webhookTypesData.map(t => t.count),
-                    backgroundColor: [
-                        'rgba(59, 130, 246, 0.8)',
-                        'rgba(139, 92, 246, 0.8)',
-                        'rgba(236, 72, 153, 0.8)',
-                        'rgba(16, 185, 129, 0.8)',
-                        'rgba(245, 158, 11, 0.8)',
-                        'rgba(239, 68, 68, 0.8)',
-                        'rgba(107, 114, 128, 0.8)'
-                    ],
-                    borderWidth: 0
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        display: false
-                    },
-                    tooltip: {
-                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                        titleColor: '#fff',
-                        bodyColor: '#fff',
-                        borderColor: 'rgb(59, 130, 246)',
-                        borderWidth: 1,
-                        padding: 10
+        if (webhookTypesData && webhookTypesData.length > 0) {
+            new Chart(typesCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: webhookTypesData.map(t => t._id || 'Unknown'),
+                    datasets: [{
+                        data: webhookTypesData.map(t => t.count),
+                        backgroundColor: [
+                            'rgba(59, 130, 246, 0.8)',
+                            'rgba(139, 92, 246, 0.8)',
+                            'rgba(236, 72, 153, 0.8)',
+                            'rgba(16, 185, 129, 0.8)',
+                            'rgba(245, 158, 11, 0.8)',
+                            'rgba(239, 68, 68, 0.8)',
+                            'rgba(107, 114, 128, 0.8)'
+                        ],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                            titleColor: '#fff',
+                            bodyColor: '#fff',
+                            borderColor: 'rgb(59, 130, 246)',
+                            borderWidth: 1,
+                            padding: 10
+                        }
                     }
                 }
-            }
-        });
+            });
+        } else {
+            // Show "No data" message
+            typesCtx.font = '14px Inter';
+            typesCtx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+            typesCtx.textAlign = 'center';
+            typesCtx.fillText('No webhook data for selected period', typesCtx.canvas.width / 2, typesCtx.canvas.height / 2);
+        }
 
         // 24 Hour Heatmap
         const heatmapCtx = document.getElementById('heatmapChart').getContext('2d');
@@ -662,64 +673,78 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             heatmapValues.push(data ? data.count : 0);
         }
 
-        new Chart(heatmapCtx, {
-            type: 'bar',
-            data: {
-                labels: hours,
-                datasets: [{
-                    label: 'Webhooks',
-                    data: heatmapValues,
-                    backgroundColor: heatmapValues.map(v => {
-                        const intensity = Math.min(v / Math.max(...heatmapValues), 1);
-                        return \`rgba(59, 130, 246, \${0.2 + intensity * 0.8})\`;
-                    }),
-                    borderWidth: 0
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        display: false
+        // Only create chart if we have some data
+        const hasData = heatmapValues.some(v => v > 0);
+        
+        if (hasData) {
+            new Chart(heatmapCtx, {
+                type: 'bar',
+                data: {
+                    labels: hours,
+                    datasets: [{
+                        label: 'Webhooks',
+                        data: heatmapValues,
+                        backgroundColor: heatmapValues.map(v => {
+                            const max = Math.max(...heatmapValues) || 1;
+                            const intensity = Math.min(v / max, 1);
+                            return \`rgba(59, 130, 246, \${0.2 + intensity * 0.8})\`;
+                        }),
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                            titleColor: '#fff',
+                            bodyColor: '#fff',
+                            borderColor: 'rgb(59, 130, 246)',
+                            borderWidth: 1,
+                            padding: 10,
+                            callbacks: {
+                                label: function(context) {
+                                    return context.parsed.y + ' webhooks';
+                                }
+                            }
+                        }
                     },
-                    tooltip: {
-                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                        titleColor: '#fff',
-                        bodyColor: '#fff',
-                        borderColor: 'rgb(59, 130, 246)',
-                        borderWidth: 1,
-                        padding: 10,
-                        callbacks: {
-                            label: function(context) {
-                                return context.parsed.y + ' webhooks';
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            min: 0,
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.1)'
+                            },
+                            ticks: {
+                                color: 'rgba(255, 255, 255, 0.7)',
+                                stepSize: Math.max(1, Math.ceil(Math.max(...heatmapValues) / 5))
+                            }
+                        },
+                        x: {
+                            grid: {
+                                display: false
+                            },
+                            ticks: {
+                                color: 'rgba(255, 255, 255, 0.7)',
+                                maxRotation: 45,
+                                minRotation: 45
                             }
                         }
                     }
-                },
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        grid: {
-                            color: 'rgba(255, 255, 255, 0.1)'
-                        },
-                        ticks: {
-                            color: 'rgba(255, 255, 255, 0.7)'
-                        }
-                    },
-                    x: {
-                        grid: {
-                            display: false
-                        },
-                        ticks: {
-                            color: 'rgba(255, 255, 255, 0.7)',
-                            maxRotation: 45,
-                            minRotation: 45
-                        }
-                    }
                 }
-            }
-        });
+            });
+        } else {
+            // Show "No activity" message
+            heatmapCtx.font = '14px Inter';
+            heatmapCtx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+            heatmapCtx.textAlign = 'center';
+            heatmapCtx.fillText('No activity in the last 24 hours', heatmapCtx.canvas.width / 2, heatmapCtx.canvas.height / 2);
+        }
 
         // Date range selector
         function changeRange(newRange) {
