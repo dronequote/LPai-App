@@ -225,14 +225,13 @@ export class MessagesProcessor extends BaseProcessor {
   /**
    * Process outbound message
    */
-  private async processOutboundMessage(payload: any, webhookId: string): Promise<void> {
+    private async processOutboundMessage(payload: any, webhookId: string): Promise<void> {
     const { locationId, contactId, conversationId, message, userId, timestamp } = payload;
     
-    // Find contact (cached if possible)
-    const contact = await this.findContact(contactId, locationId);
-    if (!contact) {
-      console.warn(`[MessagesProcessor] Contact not found for outbound message: ${contactId}`);
-      return;
+    // Add validation for required fields
+    if (!locationId || !contactId || !message) {
+      console.warn(`[MessagesProcessor] Missing required fields for outbound message: ${webhookId}`);
+      return; // Skip processing if message is missing
     }
 
     // Find user who sent it
