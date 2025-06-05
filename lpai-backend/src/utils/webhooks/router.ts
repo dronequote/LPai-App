@@ -16,6 +16,47 @@ export interface RouteResult {
   priority: number;
   webhookType: string;
 }
+// Add these functions to router.ts
+
+export function analyzeWebhook(payload: any): any {
+  const type = payload.type;
+  
+  // Determine routing based on webhook type
+  let queueType = 'general';
+  let priority = 5;
+  let shouldDirectProcess = false;
+  
+  switch (type) {
+    case 'INSTALL':
+    case 'UNINSTALL':
+      queueType = 'critical';
+      priority = 1;
+      break;
+    case 'InboundMessage':
+    case 'OutboundMessage':
+      queueType = 'messages';
+      priority = 2;
+      shouldDirectProcess = true; // Direct process for low latency
+      break;
+    // ... other cases
+  }
+  
+  return {
+    type,
+    queueType,
+    priority,
+    shouldDirectProcess,
+    isRecognized: true // or check if type is known
+  };
+}
+
+export async function isSystemHealthy(db: Db): Promise<boolean> {
+  // Check queue depths, processing rates, etc.
+  const queueDepth = await db.collection('webhook_queue')
+    .countDocuments({ status: 'pending' });
+  
+  return queueDepth < 1000; // Example threshold
+}
 
 export class WebhookRouter {
   private db: Db;
@@ -26,6 +67,7 @@ export class WebhookRouter {
     this.analytics = new WebhookAnalytics(db);
   }
 
+  
   /**
    * Route webhook to appropriate queue
    */
