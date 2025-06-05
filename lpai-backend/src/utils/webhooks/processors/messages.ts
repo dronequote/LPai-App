@@ -1,14 +1,15 @@
 // src/utils/webhooks/processors/messages.ts
 import { BaseProcessor } from './base';
 import { QueueItem } from '../queueManager';
-import { ObjectId } from 'mongodb';
+import { ObjectId, Db } from 'mongodb';
 
 export class MessagesProcessor extends BaseProcessor {
-  constructor() {
+  constructor(db: Db) {
     super({
+      db: db,
       queueType: 'messages',
-      batchSize: 50, // Larger batches for messages
-      maxRuntime: 50000, // 50 seconds
+      batchSize: 50,
+      maxProcessingTime: 50000, // 50 seconds
       processorName: 'MessagesProcessor'
     });
   }
@@ -33,6 +34,10 @@ export class MessagesProcessor extends BaseProcessor {
         
       case 'ConversationUnreadUpdate':
         await this.processConversationUpdate(payload, webhookId);
+        break;
+        
+      case 'LCEmailStats':
+        await this.processLCEmailStats(payload, webhookId);
         break;
         
       default:
@@ -225,13 +230,33 @@ export class MessagesProcessor extends BaseProcessor {
   /**
    * Process outbound message
    */
-    private async processOutboundMessage(payload: any, webhookId: string): Promise<void> {
+  private async processOutboundMessage(payload: any, webhookId: string): Promise<void> {
     const { locationId, contactId, conversationId, message, userId, timestamp } = payload;
     
     // Add validation for required fields
     if (!locationId || !contactId || !message) {
       console.warn(`[MessagesProcessor] Missing required fields for outbound message: ${webhookId}`);
       return; // Skip processing if message is missing
+    }
+
+    // Find contact
+    const contact = await this.db.collection('contacts').findOne(
+      { ghlContactId: contactId, locationId },
+      { 
+        projection: { 
+          _id: 1, 
+          firstName: 1, 
+          lastName: 1, 
+          email: 1, 
+          phone: 1,
+          fullName: 1
+        } 
+      }
+    );
+    
+    if (!contact) {
+      console.warn(`[MessagesProcessor] Contact not found for outbound message: ${contactId}`);
+      return;
     }
 
     // Find user who sent it
@@ -265,6 +290,9 @@ export class MessagesProcessor extends BaseProcessor {
           lastMessageType: message.messageType || payload.type,
           lastMessageDirection: 'outbound',
           lastOutboundMessageDate: new Date(),
+          contactName: contact.fullName || `${contact.firstName} ${contact.lastName}`.trim(),
+          contactEmail: contact.email,
+          contactPhone: contact.phone,
           updatedAt: new Date()
         },
         $setOnInsert: {
@@ -333,6 +361,59 @@ export class MessagesProcessor extends BaseProcessor {
         }
       }
     );
+  }
+
+  /**
+   * Process LC Email Stats
+   */
+  private async processLCEmailStats(payload: any, webhookId: string): Promise<void> {
+    const { locationId, event, id, timestamp, message } = payload;
+    
+    console.log(`[MessagesProcessor] Processing LCEmailStats event: ${event}`);
+    
+    if (!locationId || !event || !id) {
+      console.warn(`[MessagesProcessor] Missing required fields for LCEmailStats`);
+      return;
+    }
+
+    // Store email event stats
+    await this.db.collection('email_stats').insertOne({
+      _id: new ObjectId(),
+      webhookId,
+      locationId,
+      emailId: id,
+      event: event, // 'delivered', 'opened', 'clicked', 'bounced', etc.
+      timestamp: new Date(timestamp || Date.now()),
+      recipient: message?.recipient || payload.recipient,
+      recipientDomain: message?.['recipient-domain'] || payload['recipient-domain'],
+      primaryDomain: message?.['primary-dkim'] || payload['primary-dkim'],
+      tags: message?.tags || payload.tags || [],
+      recipientProvider: message?.['recipient-provider'] || payload['recipient-provider'],
+      campaigns: message?.campaigns || payload.campaigns || [],
+      deliveryStatus: message?.['delivery-status'] || payload['delivery-status'],
+      envelope: message?.envelope || payload.envelope,
+      lcOperations: message?.['lc-operations'] || payload['lc-operations'],
+      logLevel: message?.['log-level'] || payload['log-level'],
+      metadata: payload,
+      processedAt: new Date(),
+      processedBy: 'queue'
+    });
+
+    // Update conversation/message with email status if we can find it
+    if (id) {
+      await this.db.collection('messages').updateOne(
+        { emailMessageId: id },
+        { 
+          $set: { 
+            emailStatus: event,
+            emailStatusUpdatedAt: new Date(),
+            [`emailEvents.${event}`]: new Date(timestamp || Date.now())
+          }
+        }
+      );
+    }
+
+    console.log(`[MessagesProcessor] LCEmailStats processed: ${event} for ${id}`);
   }
 
   /**
