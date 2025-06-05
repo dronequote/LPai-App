@@ -12,7 +12,7 @@ export interface WebhookData {
 }
 
 export function generateTrackingId(): string {
-return `track_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  return `track_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
 export interface RouteResult {
@@ -20,7 +20,6 @@ export interface RouteResult {
   priority: number;
   webhookType: string;
 }
-// Add these functions to router.ts
 
 export function analyzeWebhook(payload: any): any {
   const type = payload.type;
@@ -31,18 +30,122 @@ export function analyzeWebhook(payload: any): any {
   let shouldDirectProcess = false;
   
   switch (type) {
+    // Critical events - highest priority
     case 'INSTALL':
     case 'UNINSTALL':
+    case 'PLAN_CHANGE':
+    case 'EXTERNAL_AUTH_CONNECTED':
       queueType = 'critical';
       priority = 1;
       break;
+
+    // Message events - high priority with direct processing option
     case 'InboundMessage':
     case 'OutboundMessage':
+    case 'ConversationUnreadUpdate':
+    case 'ConversationProviderOutboundMessage':
+    case 'LCEmailStats':
       queueType = 'messages';
       priority = 2;
-      shouldDirectProcess = true; // Direct process for low latency
+      shouldDirectProcess = type === 'InboundMessage' || type === 'OutboundMessage';
       break;
-    // ... other cases
+
+    // Contact events
+    case 'ContactCreate':
+    case 'ContactUpdate':
+    case 'ContactDelete':
+    case 'ContactDndUpdate':
+    case 'ContactTagUpdate':
+    case 'NoteCreate':    // Process with contacts
+    case 'NoteUpdate':    // Process with contacts
+    case 'NoteDelete':    // Process with contacts
+    case 'TaskCreate':    // Process with contacts
+    case 'TaskComplete':  // Process with contacts
+    case 'TaskDelete':    // Process with contacts
+      queueType = 'contacts';
+      priority = 3;
+      break;
+
+    // Appointment events
+    case 'AppointmentCreate':
+    case 'AppointmentUpdate':
+    case 'AppointmentDelete':
+      queueType = 'appointments';
+      priority = 3;
+      break;
+
+    // Opportunity/Project events
+    case 'OpportunityCreate':
+    case 'OpportunityUpdate':
+    case 'OpportunityDelete':
+    case 'OpportunityStatusUpdate':
+    case 'OpportunityStageUpdate':
+    case 'OpportunityAssignedToUpdate':
+    case 'OpportunityMonetaryValueUpdate':
+      queueType = 'general'; // Could create 'opportunities' queue if volume is high
+      priority = 4;
+      break;
+
+    // Financial events
+    case 'InvoiceCreate':
+    case 'InvoiceUpdate':
+    case 'InvoiceDelete':
+    case 'InvoiceSent':
+    case 'InvoicePaid':
+    case 'InvoicePartiallyPaid':
+    case 'InvoiceVoid':
+    case 'OrderCreate':
+    case 'OrderStatusUpdate':
+    case 'ProductCreate':
+    case 'ProductUpdate':
+    case 'ProductDelete':
+    case 'PriceCreate':
+    case 'PriceUpdate':
+    case 'PriceDelete':
+      queueType = 'financial';
+      priority = 3;
+      break;
+
+    // User & Location events
+    case 'UserCreate':
+    case 'LocationCreate':
+    case 'LocationUpdate':
+      queueType = 'general';
+      priority = 4;
+      break;
+
+    // Campaign events
+    case 'CampaignStatusUpdate':
+      queueType = 'general';
+      priority = 5;
+      break;
+
+    // Custom Object events
+    case 'ObjectSchemaCreate':
+    case 'UpdateCustomObject':
+    case 'RecordCreate':
+    case 'RecordUpdate':
+    case 'DeleteRecord':
+      queueType = 'general';
+      priority = 5;
+      break;
+
+    // Association/Relation events
+    case 'AssociationCreated':
+    case 'AssociationUpdated':
+    case 'AssociationDeleted':
+    case 'RelationCreate':
+    case 'RelationDelete':
+      queueType = 'general';
+      priority = 5;
+      break;
+
+    // Everything else goes to general queue
+    default:
+      console.warn(`[Router] Unknown webhook type: ${type}`);
+      queueType = 'general';
+      priority = 5;
+      break;
   }
   
   return {
@@ -50,16 +153,42 @@ export function analyzeWebhook(payload: any): any {
     queueType,
     priority,
     shouldDirectProcess,
-    isRecognized: true // or check if type is known
+    isRecognized: true // We now recognize all webhook types
   };
 }
 
 export async function isSystemHealthy(db: Db): Promise<boolean> {
-  // Check queue depths, processing rates, etc.
-  const queueDepth = await db.collection('webhook_queue')
-    .countDocuments({ status: 'pending' });
-  
-  return queueDepth < 1000; // Example threshold
+  try {
+    // Check overall queue depth
+    const totalQueueDepth = await db.collection('webhook_queue')
+      .countDocuments({ status: 'pending' });
+    
+    // Check critical queue depth specifically
+    const criticalQueueDepth = await db.collection('webhook_queue')
+      .countDocuments({ 
+        status: 'pending',
+        queueType: 'critical'
+      });
+    
+    // Check for stuck webhooks (pending for more than 5 minutes)
+    const stuckWebhooks = await db.collection('webhook_queue')
+      .countDocuments({
+        status: 'pending',
+        queuedAt: { $lte: new Date(Date.now() - 5 * 60 * 1000) }
+      });
+    
+    // System is healthy if:
+    // - Total queue depth is reasonable
+    // - No critical webhooks are backing up
+    // - No webhooks are stuck
+    return totalQueueDepth < 5000 && 
+           criticalQueueDepth < 50 && 
+           stuckWebhooks < 100;
+           
+  } catch (error) {
+    console.error('[Router] Error checking system health:', error);
+    return false; // Assume unhealthy if we can't check
+  }
 }
 
 export class WebhookRouter {
@@ -71,7 +200,6 @@ export class WebhookRouter {
     this.analytics = new WebhookAnalytics(db);
   }
 
-  
   /**
    * Route webhook to appropriate queue
    */
@@ -79,60 +207,13 @@ export class WebhookRouter {
     const { type, payload } = webhookData;
     let route: RouteResult;
 
-    // Determine routing based on webhook type
-    switch (type) {
-      // Critical events - highest priority
-      case 'INSTALL':
-      case 'UNINSTALL':
-      case 'PLAN_CHANGE':
-        route = { queueType: 'critical', priority: 1, webhookType: type };
-        break;
-
-      // Message events - high priority
-      case 'InboundMessage':
-      case 'OutboundMessage':
-        route = { queueType: 'messages', priority: 2, webhookType: type };
-        break;
-
-      // Appointment events
-      case 'AppointmentCreate':
-      case 'AppointmentUpdate':
-      case 'AppointmentDelete':
-        route = { queueType: 'appointments', priority: 3, webhookType: type };
-        break;
-
-      // Contact events
-      case 'ContactCreate':
-      case 'ContactUpdate':
-      case 'ContactDelete':
-      case 'ContactDndUpdate':
-      case 'ContactTagUpdate':
-        route = { queueType: 'contacts', priority: 4, webhookType: type };
-        break;
-
-      // Financial events
-      case 'InvoiceCreate':
-      case 'InvoiceUpdate':
-      case 'InvoicePaid':
-      case 'InvoicePartiallyPaid':
-      case 'InvoiceVoid':
-      case 'InvoiceDelete':
-      case 'OrderCreate':
-      case 'OrderStatusUpdate':
-      case 'ProductCreate':
-      case 'ProductUpdate':
-      case 'ProductDelete':
-      case 'PriceCreate':
-      case 'PriceUpdate':
-      case 'PriceDelete':
-        route = { queueType: 'financial', priority: 3, webhookType: type };
-        break;
-
-      // Everything else goes to general queue
-      default:
-        route = { queueType: 'general', priority: 5, webhookType: type };
-        break;
-    }
+    // Use the analyzeWebhook function for consistency
+    const analysis = analyzeWebhook(payload);
+    route = {
+      queueType: analysis.queueType,
+      priority: analysis.priority,
+      webhookType: type
+    };
 
     // Record webhook received in analytics
     await this.analytics.recordWebhookReceived(
