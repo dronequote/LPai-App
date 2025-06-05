@@ -46,7 +46,7 @@ export abstract class BaseProcessor {
   /**
    * Start processing loop
    */
-  async start(): Promise<void> {
+  async run(): Promise<void> {
     if (this.isProcessing) {
       console.log(`[${this.processorName}] Already processing`);
       return;
