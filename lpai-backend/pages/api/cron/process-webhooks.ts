@@ -58,17 +58,42 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           );
           return { skipped: true };
         }
-        
-        // Route to appropriate processor based on source
-        if (webhook.source === 'native') {
-          // Use native webhook processor for marketplace app webhooks
-          return processNativeWebhook(db, webhook);
-        } else {
-          // Use old processor for workflow webhooks (can remove later)
-          return processWebhook(db, webhook);
+    // Skip webhooks that should be handled by specialized processors
+    const specializedTypes = [
+      'ContactCreate', 'ContactUpdate', 'ContactDelete', 'ContactDndUpdate', 'ContactTagUpdate',
+      'NoteCreate', 'NoteUpdate', 'NoteDelete', 
+      'TaskCreate', 'TaskComplete', 'TaskDelete',
+      'AppointmentCreate', 'AppointmentUpdate', 'AppointmentDelete',
+      'InboundMessage', 'OutboundMessage', 'ConversationUnreadUpdate',
+      'OpportunityCreate', 'OpportunityUpdate', 'OpportunityDelete',
+      'InvoiceCreate', 'InvoiceUpdate', 'InvoicePaid',
+      // Add more as needed
+    ];
+    
+    if (specializedTypes.includes(webhook.type || webhook.payload?.type)) {
+      // Skip - let specialized processor handle it
+      await db.collection('webhook_queue').updateOne(
+        { _id: webhook._id },
+        { 
+          $set: { 
+            status: 'pending', // Keep as pending for specialized processor
+            skipReason: 'Handled by specialized processor'
+          } 
         }
-      })
-    );
+      );
+      return { skipped: true };
+    }
+    
+    // Route to appropriate processor based on source
+    if (webhook.source === 'native') {
+      // Use native webhook processor for marketplace app webhooks
+      return processNativeWebhook(db, webhook);
+    } else {
+      // Use old processor for workflow webhooks (can remove later)
+      return processWebhook(db, webhook);
+    }
+  })
+);
     
     // Count results
     const processed = results.length;
