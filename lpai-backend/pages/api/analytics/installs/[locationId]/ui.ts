@@ -17,12 +17,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // Calculate total time and percentages
   let totalDuration = 0;
   let completedSteps = 0;
+  const validSteps = [];
+  
   if (installData.currentInstall?.steps) {
     installData.currentInstall.steps.forEach(step => {
-      totalDuration += step.duration || 0;
+      const duration = step.duration && !isNaN(step.duration) ? step.duration : 0;
+      if (duration > 0) {
+        validSteps.push({ ...step, duration });
+        totalDuration += duration;
+      }
       if (step.status === 'success') completedSteps++;
     });
   }
+  
   const completionPercentage = installData.currentInstall?.steps?.length > 0 
     ? Math.round((completedSteps / installData.currentInstall.steps.length) * 100)
     : 0;
@@ -475,8 +482,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 
                 <div class="step-progress">
                     ${installData.currentInstall.steps.map((step, index) => {
-                        const stepPercentage = totalDuration > 0 ? (step.duration / totalDuration) * 100 : 0;
+                        const duration = step.duration && !isNaN(step.duration) ? step.duration : 0;
+                        const stepPercentage = totalDuration > 0 && duration > 0 ? (duration / totalDuration) * 100 : 0;
                         const icon = step.status === 'success' ? '✓' : '✗';
+                        const durationSeconds = duration > 0 ? (duration / 1000).toFixed(1) : '0.0';
                         return `
                         <div class="step-item" style="animation-delay: ${index * 0.1}s">
                             <div class="step-dot ${step.status}">
@@ -488,13 +497,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                                         <h4 class="font-semibold text-lg">${step.name}</h4>
                                         <p class="text-sm text-gray-400">
                                             ${step.status === 'success' 
-                                              ? `Completed in ${(step.duration / 1000).toFixed(1)}s` 
+                                              ? `Completed in ${durationSeconds}s` 
                                               : step.error || 'Failed'}
                                         </p>
                                     </div>
                                     <div class="text-right">
                                         <p class="text-2xl font-bold ${step.status === 'success' ? 'text-green-500' : 'text-red-500'}">
-                                            ${(step.duration / 1000).toFixed(1)}s
+                                            ${durationSeconds}s
                                         </p>
                                         <p class="text-sm text-gray-400">${stepPercentage.toFixed(1)}% of total</p>
                                     </div>
@@ -550,140 +559,154 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const timeCtx = document.getElementById('timeChart')?.getContext('2d');
         if (timeCtx && ${installData.currentInstall ? 'true' : 'false'}) {
             const stepData = ${JSON.stringify(installData.currentInstall?.steps || [])};
+            // Filter out invalid data
+            const validStepData = stepData.filter(s => s.duration && !isNaN(s.duration) && s.duration > 0);
             
-            new Chart(timeCtx, {
-                type: 'doughnut',
-                data: {
-                    labels: stepData.map(s => s.name),
-                    datasets: [{
-                        data: stepData.map(s => Math.round(s.duration / 1000)),
-                        backgroundColor: [
-                            'rgba(59, 130, 246, 0.8)',
-                            'rgba(139, 92, 246, 0.8)',
-                            'rgba(236, 72, 153, 0.8)',
-                            'rgba(16, 185, 129, 0.8)',
-                            'rgba(245, 158, 11, 0.8)',
-                            'rgba(239, 68, 68, 0.8)',
-                            'rgba(107, 114, 128, 0.8)',
-                            'rgba(99, 102, 241, 0.8)',
-                            'rgba(168, 85, 247, 0.8)',
-                            'rgba(236, 72, 153, 0.8)',
-                            'rgba(248, 113, 113, 0.8)',
-                            'rgba(251, 191, 36, 0.8)'
-                        ],
-                        borderWidth: 0,
-                        borderRadius: 5
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            position: 'right',
-                            labels: {
-                                color: 'rgba(255, 255, 255, 0.7)',
-                                padding: 15,
-                                font: { size: 11 }
-                            }
-                        },
-                        tooltip: {
-                            backgroundColor: 'rgba(0, 0, 0, 0.9)',
-                            titleColor: '#fff',
-                            bodyColor: '#fff',
-                            borderColor: 'rgba(59, 130, 246, 0.5)',
-                            borderWidth: 1,
-                            padding: 12,
-                            callbacks: {
-                                label: function(context) {
-                                    return context.label + ': ' + context.parsed + 's';
+            if (validStepData.length > 0) {
+                new Chart(timeCtx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: validStepData.map(s => s.name),
+                        datasets: [{
+                            data: validStepData.map(s => Math.round(s.duration / 1000)),
+                            backgroundColor: [
+                                'rgba(59, 130, 246, 0.8)',
+                                'rgba(139, 92, 246, 0.8)',
+                                'rgba(236, 72, 153, 0.8)',
+                                'rgba(16, 185, 129, 0.8)',
+                                'rgba(245, 158, 11, 0.8)',
+                                'rgba(239, 68, 68, 0.8)',
+                                'rgba(107, 114, 128, 0.8)',
+                                'rgba(99, 102, 241, 0.8)',
+                                'rgba(168, 85, 247, 0.8)',
+                                'rgba(236, 72, 153, 0.8)',
+                                'rgba(248, 113, 113, 0.8)',
+                                'rgba(251, 191, 36, 0.8)'
+                            ],
+                            borderWidth: 0,
+                            borderRadius: 5
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: 'right',
+                                labels: {
+                                    color: 'rgba(255, 255, 255, 0.7)',
+                                    padding: 15,
+                                    font: { size: 11 }
+                                }
+                            },
+                            tooltip: {
+                                backgroundColor: 'rgba(0, 0, 0, 0.9)',
+                                titleColor: '#fff',
+                                bodyColor: '#fff',
+                                borderColor: 'rgba(59, 130, 246, 0.5)',
+                                borderWidth: 1,
+                                padding: 12,
+                                callbacks: {
+                                    label: function(context) {
+                                        return context.label + ': ' + context.parsed + 's';
+                                    }
                                 }
                             }
                         }
                     }
-                }
-            });
+                });
+            }
         }
 
         // Historical Performance Chart
         const historyCtx = document.getElementById('historyChart')?.getContext('2d');
         if (historyCtx) {
             const historicalData = ${JSON.stringify(installData.historicalTrends || [])};
+            // Filter out invalid data
+            const validHistoricalData = historicalData.filter(h => h.duration && !isNaN(h.duration) && h.duration > 0);
             
-            const gradient = historyCtx.createLinearGradient(0, 0, 0, 300);
-            gradient.addColorStop(0, 'rgba(59, 130, 246, 0.5)');
-            gradient.addColorStop(1, 'rgba(59, 130, 246, 0)');
-            
-            new Chart(historyCtx, {
-                type: 'line',
-                data: {
-                    labels: historicalData.map(h => h.date),
-                    datasets: [{
-                        label: 'Install Duration',
-                        data: historicalData.map(h => Math.round(h.duration / 1000)),
-                        borderColor: 'rgb(59, 130, 246)',
-                        backgroundColor: gradient,
-                        tension: 0.4,
-                        fill: true,
-                        borderWidth: 2,
-                        pointBackgroundColor: 'rgb(59, 130, 246)',
-                        pointBorderColor: '#fff',
-                        pointBorderWidth: 2,
-                        pointRadius: 4,
-                        pointHoverRadius: 6
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    interaction: {
-                        mode: 'index',
-                        intersect: false,
+            if (validHistoricalData.length > 0) {
+                const gradient = historyCtx.createLinearGradient(0, 0, 0, 300);
+                gradient.addColorStop(0, 'rgba(59, 130, 246, 0.5)');
+                gradient.addColorStop(1, 'rgba(59, 130, 246, 0)');
+                
+                new Chart(historyCtx, {
+                    type: 'line',
+                    data: {
+                        labels: validHistoricalData.map(h => h.date),
+                        datasets: [{
+                            label: 'Install Duration',
+                            data: validHistoricalData.map(h => Math.round(h.duration / 1000)),
+                            borderColor: 'rgb(59, 130, 246)',
+                            backgroundColor: gradient,
+                            tension: 0.4,
+                            fill: true,
+                            borderWidth: 2,
+                            pointBackgroundColor: 'rgb(59, 130, 246)',
+                            pointBorderColor: '#fff',
+                            pointBorderWidth: 2,
+                            pointRadius: 4,
+                            pointHoverRadius: 6
+                        }]
                     },
-                    plugins: {
-                        legend: {
-                            display: false
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: {
+                            mode: 'index',
+                            intersect: false,
                         },
-                        tooltip: {
-                            backgroundColor: 'rgba(0, 0, 0, 0.9)',
-                            titleColor: '#fff',
-                            bodyColor: '#fff',
-                            borderColor: 'rgba(59, 130, 246, 0.5)',
-                            borderWidth: 1,
-                            padding: 12,
-                            callbacks: {
-                                label: function(context) {
-                                    return context.parsed.y + ' seconds';
-                                }
-                            }
-                        }
-                    },
-                    scales: {
-                        y: {
-                            beginAtZero: true,
-                            grid: {
-                                color: 'rgba(255, 255, 255, 0.1)'
-                            },
-                            ticks: {
-                                color: 'rgba(255, 255, 255, 0.7)',
-                                callback: function(value) {
-                                    return value + 's';
-                                }
-                            }
-                        },
-                        x: {
-                            grid: {
+                        plugins: {
+                            legend: {
                                 display: false
                             },
-                            ticks: {
-                                color: 'rgba(255, 255, 255, 0.7)',
-                                maxRotation: 45,
-                                minRotation: 45
+                            tooltip: {
+                                backgroundColor: 'rgba(0, 0, 0, 0.9)',
+                                titleColor: '#fff',
+                                bodyColor: '#fff',
+                                borderColor: 'rgba(59, 130, 246, 0.5)',
+                                borderWidth: 1,
+                                padding: 12,
+                                callbacks: {
+                                    label: function(context) {
+                                        return context.parsed.y + ' seconds';
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                grid: {
+                                    color: 'rgba(255, 255, 255, 0.1)'
+                                },
+                                ticks: {
+                                    color: 'rgba(255, 255, 255, 0.7)',
+                                    callback: function(value) {
+                                        return value + 's';
+                                    }
+                                }
+                            },
+                            x: {
+                                grid: {
+                                    display: false
+                                },
+                                ticks: {
+                                    color: 'rgba(255, 255, 255, 0.7)',
+                                    maxRotation: 45,
+                                    minRotation: 45
+                                }
                             }
                         }
                     }
-                }
-            });
+                });
+            } else {
+                // Show placeholder text if no data
+                timeCtx.font = '14px Inter';
+                timeCtx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+                timeCtx.textAlign = 'center';
+                timeCtx.fillText('No historical data available', timeCtx.canvas.width / 2, timeCtx.canvas.height / 2);
+            }
         }
 
         // Animate progress fills on load
