@@ -378,6 +378,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             color: white;
             padding: 8px;
         }
+
+        /* Chart container constraints */
+        .chart-container {
+            position: relative;
+            height: 300px;
+            max-height: 300px;
+            overflow: hidden;
+        }
+
+        canvas {
+            max-height: 300px !important;
+        }
     </style>
 </head>
 <body class="text-white">
@@ -604,12 +616,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
                 <div class="glass rounded-2xl p-8">
                     <h2 class="text-xl font-semibold mb-6">Time Distribution</h2>
-                    <canvas id="timeChart" width="400" height="300"></canvas>
+                    <div class="chart-container">
+                        <canvas id="timeChart"></canvas>
+                    </div>
                 </div>
                 
                 <div class="glass rounded-2xl p-8">
                     <h2 class="text-xl font-semibold mb-6">Historical Performance</h2>
-                    <canvas id="historyChart" width="400" height="300"></canvas>
+                    <div class="chart-container">
+                        <canvas id="historyChart"></canvas>
+                    </div>
                 </div>
             </div>
 
@@ -776,8 +792,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                                 beginAtZero: true,
                                 min: yAxisMin,
                                 max: yAxisMax,
+                                suggestedMin: yAxisMin,
+                                suggestedMax: yAxisMax,
                                 grid: {
-                                    color: 'rgba(255, 255, 255, 0.1)'
+                                    color: 'rgba(255, 255, 255, 0.1)',
+                                    drawBorder: false
                                 },
                                 ticks: {
                                     color: 'rgba(255, 255, 255, 0.7)',
@@ -785,12 +804,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                                     precision: 0,
                                     callback: function(value) {
                                         return Math.floor(value) + 's';
-                                    }
-                                }
+                                    },
+                                    includeBounds: true,
+                                    count: 7
+                                },
+                                grace: 0
                             },
                             x: {
                                 grid: {
-                                    display: false
+                                    display: false,
+                                    drawBorder: false
                                 },
                                 ticks: {
                                     color: 'rgba(255, 255, 255, 0.7)',
