@@ -11,6 +11,10 @@ export interface WebhookData {
   timestamp?: Date;
 }
 
+export function generateTrackingId(): string {
+return `track_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
 export interface RouteResult {
   queueType: string;
   priority: number;
