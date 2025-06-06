@@ -4,8 +4,7 @@ import clientPromise from '../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
 import axios from 'axios';
 
-// @ts-ignore
-export default async function handler(req, res) {
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
     const client = await clientPromise;
     const db = client.db('lpai');
   const { projectId, locationId, title, amount, type, amountType, amountValue } = req.body;
@@ -22,7 +21,7 @@ export default async function handler(req, res) {
     amountValue,
     status: 'pending',
     createdAt: new Date(),
-    createdBy: req.user._id
+    createdBy: ''
   };
   
   await db.collection('invoices').insertOne(invoice);
