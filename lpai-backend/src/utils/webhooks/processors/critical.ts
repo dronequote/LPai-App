@@ -6,12 +6,11 @@ import { ObjectId, Db } from 'mongodb';
 export class CriticalProcessor extends BaseProcessor {
   constructor(db?: Db) {
     super({
-      db: db,
       queueType: 'critical',
       batchSize: 10, // Smaller batches for critical items
       maxRuntime: 50000, // 50 seconds
       processorName: 'CriticalProcessor'
-    });
+    }, db);
   }
 
   /**
