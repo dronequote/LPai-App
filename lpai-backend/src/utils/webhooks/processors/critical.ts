@@ -1,11 +1,12 @@
 // src/utils/webhooks/processors/critical.ts
 import { BaseProcessor } from './base';
 import { QueueItem } from '../queueManager';
-import { ObjectId } from 'mongodb';
+import { ObjectId, Db } from 'mongodb';
 
 export class CriticalProcessor extends BaseProcessor {
-  constructor() {
+  constructor(db?: Db) {
     super({
+      db: db,
       queueType: 'critical',
       batchSize: 10, // Smaller batches for critical items
       maxRuntime: 50000, // 50 seconds

@@ -36,7 +36,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // Create and run processor
-    const processor = new CriticalProcessor();
+    const processor = new CriticalProcessor(db);
     await processor.run();
 
     // Check if there are more items to process
