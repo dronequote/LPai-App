@@ -504,54 +504,60 @@ export class ContactsProcessor extends BaseProcessor {
   }
 
   /**
-   * Process note update
-   */
-  private async processNoteUpdate(payload: any, webhookId: string): Promise<void> {
-    // Handle nested structure
-    let noteData;
-    let locationId;
-    
-    if (payload.webhookPayload) {
-      // Native webhook format
-      noteData = payload.webhookPayload;
-      locationId = payload.locationId || noteData.locationId;
-    } else {
-      // Direct format
-      noteData = payload;
-      locationId = payload.locationId;
-    }
-    
-    // Check if note is nested or at root level
-    const note = noteData.note || noteData;
-    
-    console.log(`[ContactsProcessor] Updating note:`, {
-      noteId: note?.id,
-      locationId,
-      webhookId
-    });
-    
-    if (!note?.id || !locationId) {
-      console.warn(`[ContactsProcessor] Missing note data, skipping`);
-      return;
-    }
-    
-    const result = await this.db.collection('notes').updateOne(
-      { ghlNoteId: note.id, locationId },
-      { 
-        $set: { 
-          body: note.body || '',
-          updatedAt: new Date(),
-          updatedByWebhook: webhookId,
-          processedBy: 'queue'
-        } 
-      }
-    );
-    
-    console.log(`[ContactsProcessor] Note update result:`, {
-      matched: result.matchedCount,
-      modified: result.modifiedCount
-    });
+ * Process note update
+ */
+private async processNoteUpdate(payload: any, webhookId: string): Promise<void> {
+  // Handle nested structure
+  let noteData;
+  let locationId;
+  
+  if (payload.webhookPayload) {
+    // Native webhook format
+    noteData = payload.webhookPayload;
+    locationId = payload.locationId || noteData.locationId;
+  } else {
+    // Direct format
+    noteData = payload;
+    locationId = payload.locationId;
   }
+  
+  // Check if note is nested or at root level
+  const note = noteData.note || noteData;
+  
+  console.log(`[ContactsProcessor] Updating note:`, {
+    noteId: note?.id,
+    locationId,
+    webhookId
+  });
+  
+  if (!note?.id || !locationId) {
+    console.warn(`[ContactsProcessor] Missing note data, skipping`);
+    return;
+  }
+  
+  const result = await this.db.collection('notes').updateOne(
+    { ghlNoteId: note.id, locationId },
+    { 
+      $set: { 
+        body: note.body || '',
+        updatedAt: new Date(),
+        updatedByWebhook: webhookId,
+        processedBy: 'queue'
+      } 
+    }
+  );
+  
+  console.log(`[ContactsProcessor] Note update result:`, {
+    matched: result.matchedCount,
+    modified: result.modifiedCount
+  });
+  
+  // If note doesn't exist, create it
+  if (result.matchedCount === 0) {
+    console.log(`[ContactsProcessor] Note not found, creating new one`);
+    await this.processNoteCreate(payload, webhookId);
+  }
+}
 
   /**
    * Process note delete

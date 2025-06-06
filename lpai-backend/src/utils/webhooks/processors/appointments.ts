@@ -5,14 +5,11 @@ import { ObjectId, Db } from 'mongodb';
 
 export class AppointmentsProcessor extends BaseProcessor {
   constructor(db?: Db) {
-  constructor(db?: Db) {
     super({
       queueType: 'appointments',
       batchSize: 50,
       maxRuntime: 50000,
-      maxRuntime: 50000,
       processorName: 'AppointmentsProcessor'
-    }, db);
     }, db);
   }
 
@@ -69,28 +66,8 @@ export class AppointmentsProcessor extends BaseProcessor {
     }
     
     const { appointment } = appointmentData;
-    // Handle nested structure
-    let appointmentData;
-    let locationId;
-    
-    if (payload.webhookPayload) {
-      // Native webhook format
-      appointmentData = payload.webhookPayload;
-      locationId = payload.locationId || appointmentData.locationId;
-    } else {
-      // Direct format
-      appointmentData = payload;
-      locationId = payload.locationId;
-    }
-    
-    const { appointment } = appointmentData;
     
     if (!appointment?.id || !locationId) {
-      console.error(`[AppointmentsProcessor] Missing required appointment data:`, {
-        appointmentId: appointment?.id,
-        locationId: !!locationId,
-        webhookId
-      });
       console.error(`[AppointmentsProcessor] Missing required appointment data:`, {
         appointmentId: appointment?.id,
         locationId: !!locationId,
@@ -134,7 +111,6 @@ export class AppointmentsProcessor extends BaseProcessor {
               calendarId: appointment.calendarId,
               groupId: appointment.groupId,
               appointmentStatus: appointment.appointmentStatus || appointment.status,
-              appointmentStatus: appointment.appointmentStatus || appointment.status,
               title: appointment.title || 'Appointment',
               assignedUserId: appointment.assignedUserId,
               users: appointment.users || [],
@@ -143,8 +119,6 @@ export class AppointmentsProcessor extends BaseProcessor {
               startTime: appointment.startTime ? new Date(appointment.startTime) : null,
               endTime: appointment.endTime ? new Date(appointment.endTime) : null,
               dateAdded: appointment.dateAdded ? new Date(appointment.dateAdded) : new Date(),
-              address: appointment.address || appointment.location || '',
-              timezone: appointment.timezone || appointment.selectedTimezone || 'UTC',
               address: appointment.address || appointment.location || '',
               timezone: appointment.timezone || appointment.selectedTimezone || 'UTC',
               lastWebhookUpdate: new Date(),
@@ -222,28 +196,8 @@ export class AppointmentsProcessor extends BaseProcessor {
     }
     
     const { appointment } = appointmentData;
-    // Handle nested structure
-    let appointmentData;
-    let locationId;
-    
-    if (payload.webhookPayload) {
-      // Native webhook format
-      appointmentData = payload.webhookPayload;
-      locationId = payload.locationId || appointmentData.locationId;
-    } else {
-      // Direct format
-      appointmentData = payload;
-      locationId = payload.locationId;
-    }
-    
-    const { appointment } = appointmentData;
     
     if (!appointment?.id || !locationId) {
-      console.error(`[AppointmentsProcessor] Missing required appointment data:`, {
-        appointmentId: appointment?.id,
-        locationId: !!locationId,
-        webhookId
-      });
       console.error(`[AppointmentsProcessor] Missing required appointment data:`, {
         appointmentId: appointment?.id,
         locationId: !!locationId,
@@ -263,8 +217,6 @@ export class AppointmentsProcessor extends BaseProcessor {
     
     // Update fields that might change
     const fieldsToUpdate = [
-      'title', 'assignedUserId', 'users',
-      'notes', 'source', 'groupId', 'timezone'
       'title', 'assignedUserId', 'users',
       'notes', 'source', 'groupId', 'timezone'
     ];
@@ -289,24 +241,9 @@ export class AppointmentsProcessor extends BaseProcessor {
       updateData.address = appointment.location;
     }
     
-    // Handle status fields (can be in different places)
-    if (appointment.appointmentStatus !== undefined) {
-      updateData.appointmentStatus = appointment.appointmentStatus;
-    } else if (appointment.status !== undefined) {
-      updateData.appointmentStatus = appointment.status;
-    }
-    
-    // Handle address/location field
-    if (appointment.address !== undefined) {
-      updateData.address = appointment.address;
-    } else if (appointment.location !== undefined) {
-      updateData.address = appointment.location;
-    }
-    
     // Handle date fields
     if (appointment.startTime) updateData.startTime = new Date(appointment.startTime);
     if (appointment.endTime) updateData.endTime = new Date(appointment.endTime);
-    if (appointment.dateAdded) updateData.dateAdded = new Date(appointment.dateAdded);
     if (appointment.dateAdded) updateData.dateAdded = new Date(appointment.dateAdded);
     
     const result = await this.db.collection('appointments').updateOne(
@@ -320,15 +257,8 @@ export class AppointmentsProcessor extends BaseProcessor {
       fieldsUpdated: Object.keys(updateData).length
     });
     
-    console.log(`[AppointmentsProcessor] Update result:`, {
-      matched: result.matchedCount,
-      modified: result.modifiedCount,
-      fieldsUpdated: Object.keys(updateData).length
-    });
-    
     if (result.matchedCount === 0) {
       // Appointment doesn't exist, create it
-      console.log(`[AppointmentsProcessor] Appointment not found, creating new one`);
       console.log(`[AppointmentsProcessor] Appointment not found, creating new one`);
       await this.processAppointmentCreate(payload, webhookId);
     }
@@ -353,28 +283,8 @@ export class AppointmentsProcessor extends BaseProcessor {
     }
     
     const { appointment } = appointmentData;
-    // Handle nested structure
-    let appointmentData;
-    let locationId;
-    
-    if (payload.webhookPayload) {
-      // Native webhook format
-      appointmentData = payload.webhookPayload;
-      locationId = payload.locationId || appointmentData.locationId;
-    } else {
-      // Direct format
-      appointmentData = payload;
-      locationId = payload.locationId;
-    }
-    
-    const { appointment } = appointmentData;
     
     if (!appointment?.id || !locationId) {
-      console.error(`[AppointmentsProcessor] Missing required appointment data:`, {
-        appointmentId: appointment?.id,
-        locationId: !!locationId,
-        webhookId
-      });
       console.error(`[AppointmentsProcessor] Missing required appointment data:`, {
         appointmentId: appointment?.id,
         locationId: !!locationId,
@@ -385,7 +295,6 @@ export class AppointmentsProcessor extends BaseProcessor {
     
     console.log(`[AppointmentsProcessor] Deleting appointment ${appointment.id}`);
     
-    const result = await this.db.collection('appointments').updateOne(
     const result = await this.db.collection('appointments').updateOne(
       { ghlAppointmentId: appointment.id, locationId },
       { 
@@ -431,45 +340,6 @@ export class AppointmentsProcessor extends BaseProcessor {
                 appointmentId: appointment.id,
                 webhookId
                   }
-              }
-            }
-          }
-        );
-      }
-    }
-    
-    console.log(`[AppointmentsProcessor] Delete result:`, {
-      matched: result.matchedCount,
-      modified: result.modifiedCount
-    });
-    
-    // Update project timeline if appointment was linked to a contact
-    const appointment = await this.db.collection('appointments').findOne({
-      ghlAppointmentId: appointmentData.appointment.id,
-      locationId
-    });
-    
-    if (appointment?.contactId) {
-      const project = await this.db.collection('projects').findOne({
-        contactId: appointment.contactId,
-        locationId: locationId,
-        status: { $in: ['open', 'quoted', 'won', 'in_progress'] }
-      });
-      
-      if (project) {
-        await this.db.collection('projects').updateOne(
-          { _id: project._id },
-          {
-            $push: {
-              timeline: {
-                id: new ObjectId().toString(),
-                event: 'appointment_cancelled',
-                description: `${appointment.title || 'Appointment'} cancelled`,
-                timestamp: new Date().toISOString(),
-                metadata: {
-                  appointmentId: appointmentData.appointment.id,
-                  webhookId
-                }
               }
             }
           }

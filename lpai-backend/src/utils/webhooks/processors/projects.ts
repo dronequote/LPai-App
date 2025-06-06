@@ -169,184 +169,120 @@ export class ProjectsProcessor extends BaseProcessor {
     });
   }
 
-  /**
-   * Process opportunity update
-   */
-  private async processOpportunityUpdate(payload: any, webhookId: string): Promise<void> {
-    // Handle nested structure
-    let opportunityData;
-    let locationId;
-    
-    if (payload.webhookPayload) {
-      // Native webhook format
-      opportunityData = payload.webhookPayload;
-      locationId = payload.locationId || opportunityData.locationId;
-    } else {
-      // Direct format
-      opportunityData = payload;
-      locationId = payload.locationId;
-    }
-    
-    const opportunity = opportunityData;
-    
-    console.log(`[ProjectsProcessor] Updating project:`, {
-      id: opportunity.id,
-      locationId,
-      webhookId
-    });
-    
-    if (!opportunity.id || !locationId) {
-      console.error(`[ProjectsProcessor] Missing required opportunity data:`, {
-        id: !!opportunity.id,
-        locationId: !!locationId,
-        webhookId
-      });
-      throw new Error('Missing required opportunity data');
-    }
-    
-    const updateData: any = {
-      lastWebhookUpdate: new Date(),
-      updatedAt: new Date(),
-      processedBy: 'queue',
-      webhookId
-    };
-    
-    // Update fields that might change
-    const fieldsToUpdate = [
-      'name', 'title', 'status', 'monetaryValue', 'value',
-      'pipelineId', 'pipelineStageId', 'stageId',
-      'pipelineName', 'pipelineStageName',
-      'assignedTo', 'userId', 'assignedUserId',
-      'source', 'contactSource', 'tags', 'customFields', 'notes'
-    ];
-    
-    fieldsToUpdate.forEach(field => {
-      if (opportunity[field] !== undefined) {
-        switch (field) {
-          case 'name':
-          case 'title':
-            updateData.title = opportunity[field];
-            break;
-          case 'monetaryValue':
-          case 'value':
-            updateData.monetaryValue = opportunity[field];
-            break;
-          case 'pipelineStageId':
-          case 'stageId':
-            updateData.pipelineStageId = opportunity[field];
-            break;
-          case 'assignedTo':
-          case 'userId':
-          case 'assignedUserId':
-            updateData.assignedTo = opportunity[field];
-            break;
-          case 'source':
-          case 'contactSource':
-            updateData.source = opportunity[field];
-            break;
-          case 'status':
-            updateData.status = this.mapGHLStatusToProjectStatus(opportunity[field]);
-            break;
-          default:
-            updateData[field] = opportunity[field];
-        }
-      }
-    });
-    
-    const result = await this.db.collection('projects').findOneAndUpdate(
-      { ghlOpportunityId: opportunity.id, locationId },
-      { 
-        $set: updateData,
-        $push: {
-          timeline: {
-            id: new ObjectId().toString(),
-            event: 'project_updated',
-            description: 'Project details updated',
-            timestamp: new Date().toISOString(),
-            metadata: { 
-              webhookId,
-              changes: Object.keys(updateData).filter(k => !['lastWebhookUpdate', 'updatedAt', 'processedBy', 'webhookId'].includes(k))
-            }
-          }
-        }
-      },
-      { returnDocument: 'after' }
-    );
-    
-    console.log(`[ProjectsProcessor] Project update result:`, {
-      found: !!result.value,
-      fieldsUpdated: Object.keys(updateData).length
-    });
-    
-    if (!result.value) {
-      console.log(`[ProjectsProcessor] Project not found, creating new one`);
-      await this.processOpportunityCreate(payload, webhookId);
-    }
+ /**
+ * Process opportunity update
+ */
+private async processOpportunityUpdate(payload: any, webhookId: string): Promise<void> {
+  // Handle nested structure
+  let opportunityData;
+  let locationId;
+  
+  if (payload.webhookPayload) {
+    // Native webhook format
+    opportunityData = payload.webhookPayload;
+    locationId = payload.locationId || opportunityData.locationId;
+  } else {
+    // Direct format
+    opportunityData = payload;
+    locationId = payload.locationId;
   }
-
-  /**
-   * Process opportunity delete
-   */
-  private async processOpportunityDelete(payload: any, webhookId: string): Promise<void> {
-    // Handle nested structure
-    let opportunityData;
-    let locationId;
-    
-    if (payload.webhookPayload) {
-      // Native webhook format
-      opportunityData = payload.webhookPayload;
-      locationId = payload.locationId || opportunityData.locationId;
-    } else {
-      // Direct format
-      opportunityData = payload;
-      locationId = payload.locationId;
-    }
-    
-    const opportunity = opportunityData;
-    
-    console.log(`[ProjectsProcessor] Deleting project:`, {
-      id: opportunity.id,
-      locationId,
+  
+  const opportunity = opportunityData;
+  
+  console.log(`[ProjectsProcessor] Updating project:`, {
+    id: opportunity.id,
+    locationId,
+    webhookId
+  });
+  
+  if (!opportunity.id || !locationId) {
+    console.error(`[ProjectsProcessor] Missing required opportunity data:`, {
+      id: !!opportunity.id,
+      locationId: !!locationId,
       webhookId
     });
-    
-    if (!opportunity.id || !locationId) {
-      console.error(`[ProjectsProcessor] Missing required opportunity data:`, {
-        id: !!opportunity.id,
-        locationId: !!locationId,
-        webhookId
-      });
-      throw new Error('Missing required opportunity data');
+    throw new Error('Missing required opportunity data');
+  }
+  
+  const updateData: any = {
+    lastWebhookUpdate: new Date(),
+    updatedAt: new Date(),
+    processedBy: 'queue',
+    webhookId
+  };
+  
+  // Update fields that might change
+  const fieldsToUpdate = [
+    'name', 'title', 'status', 'monetaryValue', 'value',
+    'pipelineId', 'pipelineStageId', 'stageId',
+    'pipelineName', 'pipelineStageName',
+    'assignedTo', 'userId', 'assignedUserId',
+    'source', 'contactSource', 'tags', 'customFields', 'notes'
+  ];
+  
+  fieldsToUpdate.forEach(field => {
+    if (opportunity[field] !== undefined) {
+      switch (field) {
+        case 'name':
+        case 'title':
+          updateData.title = opportunity[field];
+          break;
+        case 'monetaryValue':
+        case 'value':
+          updateData.monetaryValue = opportunity[field];
+          break;
+        case 'pipelineStageId':
+        case 'stageId':
+          updateData.pipelineStageId = opportunity[field];
+          break;
+        case 'assignedTo':
+        case 'userId':
+        case 'assignedUserId':
+          updateData.assignedTo = opportunity[field];
+          break;
+        case 'source':
+        case 'contactSource':
+          updateData.source = opportunity[field];
+          break;
+        case 'status':
+          updateData.status = this.mapGHLStatusToProjectStatus(opportunity[field]);
+          break;
+        default:
+          updateData[field] = opportunity[field];
+      }
     }
-    
-    const result = await this.db.collection('projects').updateOne(
-      { ghlOpportunityId: opportunity.id, locationId },
-      { 
-        $set: { 
-          deleted: true,
-          deletedAt: new Date(),
-          deletedByWebhook: webhookId,
-          status: 'deleted',
-          processedBy: 'queue'
-        },
-        $push: {
-          timeline: {
-            id: new ObjectId().toString(),
-            event: 'project_deleted',
-            description: 'Project deleted',
-            timestamp: new Date().toISOString(),
-            metadata: { webhookId }
+  });
+  
+  const result = await this.db.collection('projects').findOneAndUpdate(
+    { ghlOpportunityId: opportunity.id, locationId },
+    { 
+      $set: updateData,
+      $push: {
+        timeline: {
+          id: new ObjectId().toString(),
+          event: 'project_updated',
+          description: 'Project details updated',
+          timestamp: new Date().toISOString(),
+          metadata: { 
+            webhookId,
+            changes: Object.keys(updateData).filter(k => !['lastWebhookUpdate', 'updatedAt', 'processedBy', 'webhookId'].includes(k))
           }
         }
       }
-    );
-    
-    console.log(`[ProjectsProcessor] Project delete result:`, {
-      matched: result.matchedCount,
-      modified: result.modifiedCount
-    });
+    },
+    { returnDocument: 'after' }
+  );
+  
+  console.log(`[ProjectsProcessor] Project update result:`, {
+    found: !!result,
+    fieldsUpdated: Object.keys(updateData).length
+  });
+  
+  if (!result) {
+    console.log(`[ProjectsProcessor] Project not found, creating new one`);
+    await this.processOpportunityCreate(payload, webhookId);
   }
-
+}
   /**
    * Process opportunity status update
    */
