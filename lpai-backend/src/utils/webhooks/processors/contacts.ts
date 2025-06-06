@@ -4,14 +4,13 @@ import { QueueItem } from '../queueManager';
 import { ObjectId, Db } from 'mongodb';
 
 export class ContactsProcessor extends BaseProcessor {
-  constructor(db: Db) {
+  constructor(db?: Db) {
     super({
-      db: db,
       queueType: 'contacts',
       batchSize: 50,
-      maxProcessingTime: 50000, // 50 seconds
+      maxRuntime: 50000,
       processorName: 'ContactsProcessor'
-    });
+    }, db);
   }
 
   /**
@@ -90,7 +89,21 @@ export class ContactsProcessor extends BaseProcessor {
    * Process contact create
    */
   private async processContactCreate(payload: any, webhookId: string): Promise<void> {
-    const { locationId, id, email, firstName, lastName, phone } = payload;
+    // Handle nested structure
+    let contactData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      contactData = payload.webhookPayload;
+      locationId = payload.locationId || contactData.locationId;
+    } else {
+      // Direct format
+      contactData = payload;
+      locationId = payload.locationId;
+    }
+    
+    const { id, email, firstName, lastName, phone } = contactData;
     
     console.log(`[ContactsProcessor] Creating contact:`, {
       id,
@@ -100,6 +113,11 @@ export class ContactsProcessor extends BaseProcessor {
     });
     
     if (!id || !locationId) {
+      console.error(`[ContactsProcessor] Missing required contact data:`, {
+        id: !!id,
+        locationId: !!locationId,
+        webhookId
+      });
       throw new Error('Missing required contact data');
     }
     
@@ -114,21 +132,21 @@ export class ContactsProcessor extends BaseProcessor {
           lastName: lastName || '',
           phone: phone || '',
           fullName: `${firstName || ''} ${lastName || ''}`.trim() || 'Unknown',
-          tags: payload.tags || [],
-          source: payload.source || payload.contactSource || 'webhook',
-          dateOfBirth: payload.dateOfBirth ? new Date(payload.dateOfBirth) : null,
-          address1: payload.address1 || '',
-          city: payload.city || '',
-          state: payload.state || '',
-          country: payload.country || '',
-          postalCode: payload.postalCode || '',
-          companyName: payload.companyName || '',
-          website: payload.website || '',
-          timezone: payload.timezone || '',
-          dnd: payload.dnd || false,
-          dndSettings: payload.dndSettings || {},
-          customFields: payload.customFields || [],
-          type: payload.type || payload.contactType || 'lead',
+          tags: contactData.tags || [],
+          source: contactData.source || contactData.contactSource || 'webhook',
+          dateOfBirth: contactData.dateOfBirth ? new Date(contactData.dateOfBirth) : null,
+          address1: contactData.address1 || '',
+          city: contactData.city || '',
+          state: contactData.state || '',
+          country: contactData.country || '',
+          postalCode: contactData.postalCode || '',
+          companyName: contactData.companyName || '',
+          website: contactData.website || '',
+          timezone: contactData.timezone || '',
+          dnd: contactData.dnd || false,
+          dndSettings: contactData.dndSettings || {},
+          customFields: contactData.customFields || [],
+          type: contactData.type || contactData.contactType || 'lead',
           lastWebhookUpdate: new Date(),
           updatedAt: new Date(),
           processedBy: 'queue',
@@ -154,7 +172,21 @@ export class ContactsProcessor extends BaseProcessor {
    * Process contact update
    */
   private async processContactUpdate(payload: any, webhookId: string): Promise<void> {
-    const { locationId, id } = payload;
+    // Handle nested structure
+    let contactData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      contactData = payload.webhookPayload;
+      locationId = payload.locationId || contactData.locationId;
+    } else {
+      // Direct format
+      contactData = payload;
+      locationId = payload.locationId;
+    }
+    
+    const { id } = contactData;
     
     console.log(`[ContactsProcessor] Updating contact:`, {
       id,
@@ -163,6 +195,11 @@ export class ContactsProcessor extends BaseProcessor {
     });
     
     if (!id || !locationId) {
+      console.error(`[ContactsProcessor] Missing required contact data:`, {
+        id: !!id,
+        locationId: !!locationId,
+        webhookId
+      });
       throw new Error('Missing required contact data');
     }
     
@@ -182,21 +219,21 @@ export class ContactsProcessor extends BaseProcessor {
     ];
     
     fieldsToUpdate.forEach(field => {
-      if (payload[field] !== undefined) {
-        updateData[field] = payload[field];
+      if (contactData[field] !== undefined) {
+        updateData[field] = contactData[field];
       }
     });
     
     // Update fullName if name fields changed
-    if (payload.firstName !== undefined || payload.lastName !== undefined) {
-      const firstName = payload.firstName !== undefined ? payload.firstName : '';
-      const lastName = payload.lastName !== undefined ? payload.lastName : '';
+    if (contactData.firstName !== undefined || contactData.lastName !== undefined) {
+      const firstName = contactData.firstName !== undefined ? contactData.firstName : '';
+      const lastName = contactData.lastName !== undefined ? contactData.lastName : '';
       updateData.fullName = `${firstName} ${lastName}`.trim() || 'Unknown';
     }
     
     // Handle date fields
-    if (payload.dateOfBirth !== undefined) {
-      updateData.dateOfBirth = payload.dateOfBirth ? new Date(payload.dateOfBirth) : null;
+    if (contactData.dateOfBirth !== undefined) {
+      updateData.dateOfBirth = contactData.dateOfBirth ? new Date(contactData.dateOfBirth) : null;
     }
     
     const result = await this.db.collection('contacts').updateOne(
@@ -220,7 +257,21 @@ export class ContactsProcessor extends BaseProcessor {
    * Process contact delete
    */
   private async processContactDelete(payload: any, webhookId: string): Promise<void> {
-    const { locationId, id } = payload;
+    // Handle nested structure
+    let contactData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      contactData = payload.webhookPayload;
+      locationId = payload.locationId || contactData.locationId;
+    } else {
+      // Direct format
+      contactData = payload;
+      locationId = payload.locationId;
+    }
+    
+    const { id } = contactData;
     
     console.log(`[ContactsProcessor] Deleting contact:`, {
       id,
@@ -229,6 +280,11 @@ export class ContactsProcessor extends BaseProcessor {
     });
     
     if (!id || !locationId) {
+      console.error(`[ContactsProcessor] Missing required contact data:`, {
+        id: !!id,
+        locationId: !!locationId,
+        webhookId
+      });
       throw new Error('Missing required contact data');
     }
     
@@ -254,7 +310,21 @@ export class ContactsProcessor extends BaseProcessor {
    * Process contact DND update
    */
   private async processContactDndUpdate(payload: any, webhookId: string): Promise<void> {
-    const { locationId, id, dnd, dndSettings } = payload;
+    // Handle nested structure
+    let contactData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      contactData = payload.webhookPayload;
+      locationId = payload.locationId || contactData.locationId;
+    } else {
+      // Direct format
+      contactData = payload;
+      locationId = payload.locationId;
+    }
+    
+    const { id, dnd, dndSettings } = contactData;
     
     console.log(`[ContactsProcessor] Starting DND Update:`, {
       locationId,
@@ -265,6 +335,11 @@ export class ContactsProcessor extends BaseProcessor {
     });
     
     if (!id || !locationId) {
+      console.error(`[ContactsProcessor] Missing required contact data:`, {
+        id: !!id,
+        locationId: !!locationId,
+        webhookId
+      });
       throw new Error('Missing required contact data');
     }
     
@@ -314,7 +389,21 @@ export class ContactsProcessor extends BaseProcessor {
    * Process contact tag update
    */
   private async processContactTagUpdate(payload: any, webhookId: string): Promise<void> {
-    const { locationId, id, tags } = payload;
+    // Handle nested structure
+    let contactData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      contactData = payload.webhookPayload;
+      locationId = payload.locationId || contactData.locationId;
+    } else {
+      // Direct format
+      contactData = payload;
+      locationId = payload.locationId;
+    }
+    
+    const { id, tags } = contactData;
     
     console.log(`[ContactsProcessor] Updating tags:`, {
       locationId,
@@ -324,6 +413,11 @@ export class ContactsProcessor extends BaseProcessor {
     });
     
     if (!id || !locationId) {
+      console.error(`[ContactsProcessor] Missing required contact data:`, {
+        id: !!id,
+        locationId: !!locationId,
+        webhookId
+      });
       throw new Error('Missing required contact data');
     }
     
@@ -351,7 +445,24 @@ export class ContactsProcessor extends BaseProcessor {
    * Process note create
    */
   private async processNoteCreate(payload: any, webhookId: string): Promise<void> {
-    const { locationId, note, contactId } = payload;
+    // Handle nested structure
+    let noteData;
+    let locationId;
+    let contactId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      noteData = payload.webhookPayload;
+      locationId = payload.locationId || noteData.locationId;
+      contactId = noteData.contactId;
+    } else {
+      // Direct format
+      noteData = payload;
+      locationId = payload.locationId;
+      contactId = payload.contactId;
+    }
+    
+    const { note } = noteData;
     
     console.log(`[ContactsProcessor] Creating note:`, {
       noteId: note?.id,
@@ -390,7 +501,21 @@ export class ContactsProcessor extends BaseProcessor {
    * Process note update
    */
   private async processNoteUpdate(payload: any, webhookId: string): Promise<void> {
-    const { locationId, note } = payload;
+    // Handle nested structure
+    let noteData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      noteData = payload.webhookPayload;
+      locationId = payload.locationId || noteData.locationId;
+    } else {
+      // Direct format
+      noteData = payload;
+      locationId = payload.locationId;
+    }
+    
+    const { note } = noteData;
     
     console.log(`[ContactsProcessor] Updating note:`, {
       noteId: note?.id,
@@ -425,7 +550,21 @@ export class ContactsProcessor extends BaseProcessor {
    * Process note delete
    */
   private async processNoteDelete(payload: any, webhookId: string): Promise<void> {
-    const { locationId, note } = payload;
+    // Handle nested structure
+    let noteData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      noteData = payload.webhookPayload;
+      locationId = payload.locationId || noteData.locationId;
+    } else {
+      // Direct format
+      noteData = payload;
+      locationId = payload.locationId;
+    }
+    
+    const { note } = noteData;
     
     console.log(`[ContactsProcessor] Deleting note:`, {
       noteId: note?.id,
@@ -460,7 +599,24 @@ export class ContactsProcessor extends BaseProcessor {
    * Process task create
    */
   private async processTaskCreate(payload: any, webhookId: string): Promise<void> {
-    const { locationId, task, contactId } = payload;
+    // Handle nested structure
+    let taskData;
+    let locationId;
+    let contactId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      taskData = payload.webhookPayload;
+      locationId = payload.locationId || taskData.locationId;
+      contactId = taskData.contactId;
+    } else {
+      // Direct format
+      taskData = payload;
+      locationId = payload.locationId;
+      contactId = payload.contactId;
+    }
+    
+    const { task } = taskData;
     
     console.log(`[ContactsProcessor] Creating task:`, {
       taskId: task?.id,
@@ -504,7 +660,21 @@ export class ContactsProcessor extends BaseProcessor {
    * Process task complete
    */
   private async processTaskComplete(payload: any, webhookId: string): Promise<void> {
-    const { locationId, task } = payload;
+    // Handle nested structure
+    let taskData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      taskData = payload.webhookPayload;
+      locationId = payload.locationId || taskData.locationId;
+    } else {
+      // Direct format
+      taskData = payload;
+      locationId = payload.locationId;
+    }
+    
+    const { task } = taskData;
     
     console.log(`[ContactsProcessor] Completing task:`, {
       taskId: task?.id,
@@ -539,7 +709,21 @@ export class ContactsProcessor extends BaseProcessor {
    * Process task delete
    */
   private async processTaskDelete(payload: any, webhookId: string): Promise<void> {
-    const { locationId, task } = payload;
+    // Handle nested structure
+    let taskData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      taskData = payload.webhookPayload;
+      locationId = payload.locationId || taskData.locationId;
+    } else {
+      // Direct format
+      taskData = payload;
+      locationId = payload.locationId;
+    }
+    
+    const { task } = taskData;
     
     console.log(`[ContactsProcessor] Deleting task:`, {
       taskId: task?.id,

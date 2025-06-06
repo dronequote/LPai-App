@@ -55,9 +55,29 @@ export class MessagesProcessor extends BaseProcessor {
    * Process inbound message (SMS/Email/WhatsApp)
    */
   private async processInboundMessage(payload: any, webhookId: string): Promise<void> {
-    const { locationId, contactId, conversationId, message, timestamp } = payload;
+    // Handle the nested structure - check if this is a native webhook format
+    let locationId, contactId, conversationId, message, timestamp;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format - extract from webhookPayload
+      const webhookData = payload.webhookPayload;
+      locationId = payload.locationId || webhookData.locationId;
+      contactId = webhookData.contactId;
+      conversationId = webhookData.conversationId;
+      message = webhookData.message;
+      timestamp = webhookData.timestamp || payload.timestamp;
+    } else {
+      // Direct format
+      ({ locationId, contactId, conversationId, message, timestamp } = payload);
+    }
     
     if (!locationId || !contactId || !message) {
+      console.error(`[MessagesProcessor] Missing required fields for inbound message:`, {
+        locationId: !!locationId,
+        contactId: !!contactId,
+        message: !!message,
+        webhookId
+      });
       throw new Error('Missing required fields for inbound message');
     }
 
@@ -230,12 +250,41 @@ export class MessagesProcessor extends BaseProcessor {
    * Process outbound message
    */
   private async processOutboundMessage(payload: any, webhookId: string): Promise<void> {
-    const { locationId, contactId, conversationId, message, userId, timestamp } = payload;
+    // Handle the nested structure
+    let locationId, contactId, conversationId, message, userId, timestamp;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      const webhookData = payload.webhookPayload;
+      locationId = payload.locationId || webhookData.locationId;
+      contactId = webhookData.contactId;
+      conversationId = webhookData.conversationId;
+      message = webhookData;  // For outbound, the whole webhookPayload is the message
+      userId = webhookData.userId;
+      timestamp = webhookData.timestamp || payload.timestamp;
+      
+      // Extract message details from webhookData
+      if (!message.body && webhookData.body) {
+        message = {
+          body: webhookData.body,
+          type: webhookData.direction === 'outbound' ? 1 : 3, // Default to SMS
+          messageType: webhookData.messageType,
+          dateAdded: webhookData.dateAdded
+        };
+      }
+    } else {
+      // Direct format
+      ({ locationId, contactId, conversationId, message, userId, timestamp } = payload);
+    }
     
     // Add validation for required fields
-    if (!locationId || !contactId || !message) {
-      console.warn(`[MessagesProcessor] Missing required fields for outbound message: ${webhookId}`);
-      return; // Skip processing if message is missing
+    if (!locationId || !contactId) {
+      console.warn(`[MessagesProcessor] Missing required fields for outbound message:`, {
+        locationId: !!locationId,
+        contactId: !!contactId,
+        webhookId
+      });
+      return; // Skip processing if fields are missing
     }
 
     // Find contact
@@ -270,7 +319,7 @@ export class MessagesProcessor extends BaseProcessor {
       }
     }
 
-    const conversationType = this.getConversationType(message.type);
+    const conversationType = message?.type ? this.getConversationType(message.type) : 'TYPE_PHONE';
 
     // Update conversation
     await this.db.collection('conversations').updateOne(
@@ -285,8 +334,8 @@ export class MessagesProcessor extends BaseProcessor {
           contactId: contact._id.toString(),
           type: conversationType,
           lastMessageDate: new Date(timestamp || Date.now()),
-          lastMessageBody: message.body?.substring(0, 200) || '',
-          lastMessageType: message.messageType || payload.type,
+          lastMessageBody: message?.body?.substring(0, 200) || '',
+          lastMessageType: message?.messageType || payload.type,
           lastMessageDirection: 'outbound',
           lastOutboundMessageDate: new Date(),
           contactName: contact.fullName || `${contact.firstName} ${contact.lastName}`.trim(),
@@ -306,16 +355,16 @@ export class MessagesProcessor extends BaseProcessor {
     // Insert message
     const messageDoc: any = {
       _id: new ObjectId(),
-      ghlMessageId: message.id,
+      ghlMessageId: message?.id || new ObjectId().toString(),
       conversationId: conversationId,
       ghlConversationId: conversationId,
       locationId,
       contactId: contact._id.toString(),
       userId: senderId,
-      type: message.type,
-      messageType: message.messageType || this.getMessageTypeName(message.type),
+      type: message?.type || 1,
+      messageType: message?.messageType || this.getMessageTypeName(message?.type || 1),
       direction: 'outbound',
-      dateAdded: new Date(message.dateAdded || timestamp || Date.now()),
+      dateAdded: new Date(message?.dateAdded || timestamp || Date.now()),
       read: true, // Outbound messages are always "read"
       createdAt: new Date(),
       processedBy: 'queue',
@@ -323,20 +372,25 @@ export class MessagesProcessor extends BaseProcessor {
     };
 
     // Handle message content based on type
-    switch (message.type) {
-      case 1: // SMS
-        messageDoc.body = message.body || '';
-        messageDoc.status = message.status || 'sent';
-        break;
-      case 3: // Email
-        if (message.meta?.email?.messageIds?.[0]) {
-          messageDoc.emailMessageId = message.meta.email.messageIds[0];
-          messageDoc.needsContentFetch = true;
-        }
-        messageDoc.subject = message.subject || '';
-        break;
-      default:
-        messageDoc.body = message.body || '';
+    if (message) {
+      switch (message.type) {
+        case 1: // SMS
+          messageDoc.body = message.body || '';
+          messageDoc.status = message.status || 'sent';
+          break;
+        case 3: // Email
+          if (message.meta?.email?.messageIds?.[0]) {
+            messageDoc.emailMessageId = message.meta.email.messageIds[0];
+            messageDoc.needsContentFetch = true;
+          }
+          messageDoc.subject = message.subject || '';
+          break;
+        default:
+          messageDoc.body = message.body || '';
+      }
+    } else {
+      // Fallback for messages without proper structure
+      messageDoc.body = payload.webhookPayload?.body || '';
     }
 
     await this.db.collection('messages').insertOne(messageDoc);
@@ -346,7 +400,22 @@ export class MessagesProcessor extends BaseProcessor {
    * Process conversation unread update
    */
   private async processConversationUpdate(payload: any, webhookId: string): Promise<void> {
-    const { locationId, conversationId, unreadCount } = payload;
+    // Handle nested structure
+    let locationId, conversationId, unreadCount;
+    
+    if (payload.webhookPayload) {
+      const webhookData = payload.webhookPayload;
+      locationId = payload.locationId || webhookData.locationId;
+      conversationId = webhookData.conversationId;
+      unreadCount = webhookData.unreadCount;
+    } else {
+      ({ locationId, conversationId, unreadCount } = payload);
+    }
+    
+    if (!locationId || !conversationId) {
+      console.warn(`[MessagesProcessor] Missing required fields for conversation update`);
+      return;
+    }
     
     await this.db.collection('conversations').updateOne(
       {
@@ -366,12 +435,32 @@ export class MessagesProcessor extends BaseProcessor {
    * Process LC Email Stats
    */
   private async processLCEmailStats(payload: any, webhookId: string): Promise<void> {
-    const { locationId, event, id, timestamp, message } = payload;
+    // Handle nested structure for LCEmailStats
+    let locationId, event, id, timestamp, message;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format - the whole webhookPayload contains the email data
+      const webhookData = payload.webhookPayload;
+      locationId = payload.locationId;
+      event = webhookData.event || webhookData['log-level']; // Sometimes event is in log-level
+      id = webhookData.id || webhookData['email_message_id'];
+      timestamp = webhookData.timestamp || payload.timestamp;
+      message = webhookData.message || webhookData;
+    } else {
+      // Direct format
+      ({ locationId, event, id, timestamp, message } = payload);
+    }
     
     console.log(`[MessagesProcessor] Processing LCEmailStats event: ${event}`);
+    console.log(`[MessagesProcessor] LCEmailStats data:`, { locationId, event, id });
     
     if (!locationId || !event || !id) {
-      console.warn(`[MessagesProcessor] Missing required fields for LCEmailStats`);
+      console.warn(`[MessagesProcessor] Missing required fields for LCEmailStats:`, {
+        locationId: !!locationId,
+        event: !!event,
+        id: !!id,
+        webhookPayload: payload.webhookPayload
+      });
       return;
     }
 
@@ -383,16 +472,16 @@ export class MessagesProcessor extends BaseProcessor {
       emailId: id,
       event: event, // 'delivered', 'opened', 'clicked', 'bounced', etc.
       timestamp: new Date(timestamp || Date.now()),
-      recipient: message?.recipient || payload.recipient,
-      recipientDomain: message?.['recipient-domain'] || payload['recipient-domain'],
-      primaryDomain: message?.['primary-dkim'] || payload['primary-dkim'],
-      tags: message?.tags || payload.tags || [],
-      recipientProvider: message?.['recipient-provider'] || payload['recipient-provider'],
-      campaigns: message?.campaigns || payload.campaigns || [],
-      deliveryStatus: message?.['delivery-status'] || payload['delivery-status'],
-      envelope: message?.envelope || payload.envelope,
-      lcOperations: message?.['lc-operations'] || payload['lc-operations'],
-      logLevel: message?.['log-level'] || payload['log-level'],
+      recipient: message?.recipient || payload.webhookPayload?.recipient,
+      recipientDomain: message?.['recipient-domain'] || payload.webhookPayload?.['recipient-domain'],
+      primaryDomain: message?.['primary-dkim'] || payload.webhookPayload?.['primary-dkim'],
+      tags: message?.tags || payload.webhookPayload?.tags || [],
+      recipientProvider: message?.['recipient-provider'] || payload.webhookPayload?.['recipient-provider'],
+      campaigns: message?.campaigns || payload.webhookPayload?.campaigns || [],
+      deliveryStatus: message?.['delivery-status'] || payload.webhookPayload?.['delivery-status'],
+      envelope: message?.envelope || payload.webhookPayload?.envelope,
+      lcOperations: message?.['lc-operations'] || payload.webhookPayload?.['lc-operations'],
+      logLevel: message?.['log-level'] || payload.webhookPayload?.['log-level'],
       metadata: payload,
       processedAt: new Date(),
       processedBy: 'queue'

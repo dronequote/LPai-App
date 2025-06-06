@@ -4,14 +4,13 @@ import { QueueItem } from '../queueManager';
 import { ObjectId, Db } from 'mongodb';
 
 export class GeneralProcessor extends BaseProcessor {
-  constructor(db: Db) {
+  constructor(db?: Db) {
     super({
-      db: db,
       queueType: 'general',
       batchSize: 100,
-      maxProcessingTime: 50000, // 50 seconds
+      maxRuntime: 50000,
       processorName: 'GeneralProcessor'
-    });
+    }, db);
   }
 
   /**
@@ -56,9 +55,29 @@ export class GeneralProcessor extends BaseProcessor {
    * Process opportunity events
    */
   private async processOpportunityEvent(type: string, payload: any, webhookId: string): Promise<void> {
-    const { locationId, opportunity } = payload;
+    // Handle nested structure
+    let opportunityData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      opportunityData = payload.webhookPayload;
+      locationId = payload.locationId || opportunityData.locationId;
+    } else {
+      // Direct format
+      opportunityData = payload;
+      locationId = payload.locationId;
+    }
+    
+    const { opportunity } = opportunityData;
     
     if (!opportunity?.id || !locationId) {
+      console.error(`[GeneralProcessor] Missing required opportunity data:`, {
+        opportunityId: opportunity?.id,
+        locationId: !!locationId,
+        type,
+        webhookId
+      });
       throw new Error('Missing required opportunity data');
     }
     
@@ -115,12 +134,12 @@ export class GeneralProcessor extends BaseProcessor {
           locationId,
           contactId,
           ghlContactId: opportunity.contactId,
-          title: opportunity.name || 'Untitled Project',
+          title: opportunity.name || opportunity.title || 'Untitled Project',
           status: this.mapGHLStatusToProjectStatus(opportunity.status),
-          monetaryValue: opportunity.monetaryValue || 0,
+          monetaryValue: opportunity.monetaryValue || opportunity.value || 0,
           pipelineId: opportunity.pipelineId,
-          pipelineStageId: opportunity.pipelineStageId,
-          assignedTo: opportunity.assignedTo,
+          pipelineStageId: opportunity.pipelineStageId || opportunity.stageId,
+          assignedTo: opportunity.assignedTo || opportunity.userId,
           source: opportunity.source || 'webhook',
           tags: opportunity.tags || [],
           customFields: opportunity.customFields || {},
@@ -165,26 +184,30 @@ export class GeneralProcessor extends BaseProcessor {
     // Map specific updates based on event type
     switch (eventType) {
       case 'OpportunityStageUpdate':
-        updateData.pipelineStageId = opportunity.pipelineStageId;
+        updateData.pipelineStageId = opportunity.pipelineStageId || opportunity.stageId;
         break;
       case 'OpportunityStatusUpdate':
         updateData.status = this.mapGHLStatusToProjectStatus(opportunity.status);
         break;
       case 'OpportunityMonetaryValueUpdate':
-        updateData.monetaryValue = opportunity.monetaryValue || 0;
+        updateData.monetaryValue = opportunity.monetaryValue || opportunity.value || 0;
         break;
       case 'OpportunityAssignedToUpdate':
-        updateData.assignedTo = opportunity.assignedTo;
+        updateData.assignedTo = opportunity.assignedTo || opportunity.userId;
         break;
       default:
         // General update - update all fields
-        if (opportunity.name) updateData.title = opportunity.name;
-        if (opportunity.status) updateData.status = this.mapGHLStatusToProjectStatus(opportunity.status);
+        if (opportunity.name !== undefined) updateData.title = opportunity.name;
+        if (opportunity.title !== undefined && opportunity.name === undefined) updateData.title = opportunity.title;
+        if (opportunity.status !== undefined) updateData.status = this.mapGHLStatusToProjectStatus(opportunity.status);
         if (opportunity.monetaryValue !== undefined) updateData.monetaryValue = opportunity.monetaryValue;
-        if (opportunity.pipelineStageId) updateData.pipelineStageId = opportunity.pipelineStageId;
-        if (opportunity.assignedTo) updateData.assignedTo = opportunity.assignedTo;
-        if (opportunity.tags) updateData.tags = opportunity.tags;
-        if (opportunity.customFields) updateData.customFields = opportunity.customFields;
+        if (opportunity.value !== undefined && opportunity.monetaryValue === undefined) updateData.monetaryValue = opportunity.value;
+        if (opportunity.pipelineStageId !== undefined) updateData.pipelineStageId = opportunity.pipelineStageId;
+        if (opportunity.stageId !== undefined && opportunity.pipelineStageId === undefined) updateData.pipelineStageId = opportunity.stageId;
+        if (opportunity.assignedTo !== undefined) updateData.assignedTo = opportunity.assignedTo;
+        if (opportunity.userId !== undefined && opportunity.assignedTo === undefined) updateData.assignedTo = opportunity.userId;
+        if (opportunity.tags !== undefined) updateData.tags = opportunity.tags;
+        if (opportunity.customFields !== undefined) updateData.customFields = opportunity.customFields;
     }
     
     const session = this.client.startSession();
@@ -243,7 +266,21 @@ export class GeneralProcessor extends BaseProcessor {
    * Process task event
    */
   private async processTaskEvent(type: string, payload: any, webhookId: string): Promise<void> {
-    const { locationId, task } = payload;
+    // Handle nested structure
+    let taskData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      taskData = payload.webhookPayload;
+      locationId = payload.locationId || taskData.locationId;
+    } else {
+      // Direct format
+      taskData = payload;
+      locationId = payload.locationId;
+    }
+    
+    const { task } = taskData;
     
     console.log(`[GeneralProcessor] Processing ${type}`);
     
@@ -261,10 +298,10 @@ export class GeneralProcessor extends BaseProcessor {
               ghlTaskId: task.id,
               locationId,
               contactId: task.contactId,
-              title: task.title || 'Task',
-              description: task.description || '',
+              title: task.title || task.name || 'Task',
+              description: task.description || task.body || '',
               dueDate: task.dueDate ? new Date(task.dueDate) : null,
-              assignedTo: task.assignedTo,
+              assignedTo: task.assignedTo || task.userId,
               status: task.completed ? 'completed' : 'pending',
               priority: task.priority || 'normal',
               lastWebhookUpdate: new Date(),
@@ -315,7 +352,21 @@ export class GeneralProcessor extends BaseProcessor {
    * Process note event
    */
   private async processNoteEvent(type: string, payload: any, webhookId: string): Promise<void> {
-    const { locationId, note } = payload;
+    // Handle nested structure
+    let noteData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      noteData = payload.webhookPayload;
+      locationId = payload.locationId || noteData.locationId;
+    } else {
+      // Direct format
+      noteData = payload;
+      locationId = payload.locationId;
+    }
+    
+    const { note } = noteData;
     
     console.log(`[GeneralProcessor] Processing ${type}`);
     
@@ -332,8 +383,8 @@ export class GeneralProcessor extends BaseProcessor {
           locationId,
           contactId: note.contactId,
           opportunityId: note.opportunityId,
-          body: note.body || '',
-          createdBy: note.userId,
+          body: note.body || note.content || '',
+          createdBy: note.userId || note.createdBy,
           createdAt: new Date(),
           createdByWebhook: webhookId,
           processedBy: 'queue'
@@ -362,11 +413,26 @@ export class GeneralProcessor extends BaseProcessor {
   private async processCampaignEvent(type: string, payload: any, webhookId: string): Promise<void> {
     console.log(`[GeneralProcessor] Processing ${type}`);
     
+    // Handle nested structure
+    let campaignData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      campaignData = payload.webhookPayload;
+      locationId = payload.locationId || campaignData.locationId;
+    } else {
+      // Direct format
+      campaignData = payload;
+      locationId = payload.locationId;
+    }
+    
     // Store campaign events for analytics
     await this.db.collection('campaign_events').insertOne({
       _id: new ObjectId(),
       type,
-      payload,
+      payload: campaignData,
+      locationId,
       webhookId,
       processedAt: new Date(),
       processedBy: 'queue'
@@ -377,7 +443,21 @@ export class GeneralProcessor extends BaseProcessor {
    * Process user event
    */
   private async processUserEvent(type: string, payload: any, webhookId: string): Promise<void> {
-    const { locationId, user } = payload;
+    // Handle nested structure
+    let userData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      userData = payload.webhookPayload;
+      locationId = payload.locationId || userData.locationId;
+    } else {
+      // Direct format
+      userData = payload;
+      locationId = payload.locationId;
+    }
+    
+    const { user } = userData;
     
     console.log(`[GeneralProcessor] Processing ${type}`);
     
@@ -390,7 +470,7 @@ export class GeneralProcessor extends BaseProcessor {
             locationId,
             name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Unknown',
             email: user.email,
-            role: user.role || user.type,
+            role: user.role || user.type || user.permissions?.[0],
             permissions: user.permissions || [],
             phone: user.phone,
             lastWebhookUpdate: new Date(),
@@ -414,17 +494,33 @@ export class GeneralProcessor extends BaseProcessor {
   private async processLocationEvent(type: string, payload: any, webhookId: string): Promise<void> {
     console.log(`[GeneralProcessor] Processing ${type}`);
     
-    if (type === 'LocationUpdate' && payload.id) {
+    // Handle nested structure
+    let locationData;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      locationData = payload.webhookPayload;
+    } else {
+      // Direct format
+      locationData = payload;
+    }
+    
+    if (type === 'LocationUpdate' && locationData.id) {
       await this.db.collection('locations').updateOne(
-        { locationId: payload.id },
+        { locationId: locationData.id },
         {
           $set: {
-            name: payload.name,
-            email: payload.email,
-            phone: payload.phone,
-            address: payload.address,
-            website: payload.website,
-            timezone: payload.timezone,
+            name: locationData.name,
+            email: locationData.email,
+            phone: locationData.phone,
+            address: locationData.address || locationData.address1,
+            city: locationData.city,
+            state: locationData.state,
+            country: locationData.country,
+            postalCode: locationData.postalCode || locationData.zip,
+            website: locationData.website,
+            timezone: locationData.timezone,
+            businessHours: locationData.businessHours,
             lastWebhookUpdate: new Date(),
             processedBy: 'queue',
             webhookId
@@ -440,11 +536,26 @@ export class GeneralProcessor extends BaseProcessor {
   private async processCustomObjectEvent(type: string, payload: any, webhookId: string): Promise<void> {
     console.log(`[GeneralProcessor] Processing ${type}`);
     
+    // Handle nested structure
+    let customObjectData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      customObjectData = payload.webhookPayload;
+      locationId = payload.locationId || customObjectData.locationId;
+    } else {
+      // Direct format
+      customObjectData = payload;
+      locationId = payload.locationId;
+    }
+    
     // Store custom object events
     await this.db.collection('custom_object_events').insertOne({
       _id: new ObjectId(),
       type,
-      payload,
+      payload: customObjectData,
+      locationId,
       webhookId,
       processedAt: new Date(),
       processedBy: 'queue'
@@ -457,11 +568,26 @@ export class GeneralProcessor extends BaseProcessor {
   private async processAssociationEvent(type: string, payload: any, webhookId: string): Promise<void> {
     console.log(`[GeneralProcessor] Processing ${type}`);
     
+    // Handle nested structure
+    let associationData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      associationData = payload.webhookPayload;
+      locationId = payload.locationId || associationData.locationId;
+    } else {
+      // Direct format
+      associationData = payload;
+      locationId = payload.locationId;
+    }
+    
     // Store association events
     await this.db.collection('association_events').insertOne({
       _id: new ObjectId(),
       type,
-      payload,
+      payload: associationData,
+      locationId,
       webhookId,
       processedAt: new Date(),
       processedBy: 'queue'
@@ -472,10 +598,25 @@ export class GeneralProcessor extends BaseProcessor {
    * Store unhandled event
    */
   private async storeUnhandledEvent(type: string, payload: any, webhookId: string): Promise<void> {
+    // Handle nested structure
+    let eventData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      eventData = payload.webhookPayload;
+      locationId = payload.locationId || eventData.locationId;
+    } else {
+      // Direct format
+      eventData = payload;
+      locationId = payload.locationId;
+    }
+    
     await this.db.collection('unhandled_webhooks').insertOne({
       _id: new ObjectId(),
       type,
-      payload,
+      payload: eventData,
+      locationId,
       webhookId,
       processedAt: new Date(),
       processedBy: 'queue'
@@ -507,7 +648,7 @@ export class GeneralProcessor extends BaseProcessor {
       case 'OpportunityStatusUpdate':
         return `Status changed to ${data.status}`;
       case 'OpportunityMonetaryValueUpdate':
-        return `Value updated to $${data.monetaryValue || 0}`;
+        return `Value updated to $${data.monetaryValue || data.value || 0}`;
       case 'OpportunityAssignedToUpdate':
         return `Assigned to user`;
       default:
