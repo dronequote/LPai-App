@@ -4,14 +4,13 @@ import { QueueItem } from '../queueManager';
 import { ObjectId, Db } from 'mongodb';
 
 export class FinancialProcessor extends BaseProcessor {
-  constructor(db: Db) {
+  constructor(db?: Db) {
     super({
-      db: db,
       queueType: 'financial',
       batchSize: 30,
-      maxProcessingTime: 50000, // 50 seconds
+      maxRuntime: 50000,
       processorName: 'FinancialProcessor'
-    });
+    }, db);
   }
 
   /**
@@ -80,9 +79,28 @@ export class FinancialProcessor extends BaseProcessor {
    * Process invoice create
    */
   private async processInvoiceCreate(payload: any, webhookId: string): Promise<void> {
-    const { locationId, invoice } = payload;
+    // Handle nested structure
+    let invoiceData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      invoiceData = payload.webhookPayload;
+      locationId = payload.locationId || invoiceData.locationId;
+    } else {
+      // Direct format
+      invoiceData = payload;
+      locationId = payload.locationId;
+    }
+    
+    const { invoice } = invoiceData;
     
     if (!invoice?.id || !locationId) {
+      console.error(`[FinancialProcessor] Missing required invoice data:`, {
+        invoiceId: invoice?.id,
+        locationId: !!locationId,
+        webhookId
+      });
       throw new Error('Missing required invoice data');
     }
     
@@ -100,18 +118,18 @@ export class FinancialProcessor extends BaseProcessor {
               ghlInvoiceId: invoice.id,
               locationId,
               contactId: invoice.contactId,
-              invoiceNumber: invoice.invoiceNumber,
+              invoiceNumber: invoice.invoiceNumber || invoice.number,
               status: invoice.status || 'draft',
-              amount: invoice.amount || 0,
+              amount: invoice.amount || invoice.total || 0,
               amountPaid: invoice.amountPaid || 0,
-              amountDue: invoice.amountDue || invoice.amount || 0,
+              amountDue: invoice.amountDue || invoice.amount || invoice.total || 0,
               currency: invoice.currency || 'USD',
               dueDate: invoice.dueDate ? new Date(invoice.dueDate) : null,
               issueDate: invoice.issueDate ? new Date(invoice.issueDate) : new Date(),
-              items: invoice.items || [],
+              items: invoice.items || invoice.lineItems || [],
               taxes: invoice.taxes || [],
               discounts: invoice.discounts || [],
-              notes: invoice.notes || '',
+              notes: invoice.notes || invoice.description || '',
               terms: invoice.terms || '',
               metadata: invoice.metadata || {},
               lastWebhookUpdate: new Date(),
@@ -142,9 +160,28 @@ export class FinancialProcessor extends BaseProcessor {
    * Process invoice update
    */
   private async processInvoiceUpdate(payload: any, webhookId: string): Promise<void> {
-    const { locationId, invoice } = payload;
+    // Handle nested structure
+    let invoiceData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      invoiceData = payload.webhookPayload;
+      locationId = payload.locationId || invoiceData.locationId;
+    } else {
+      // Direct format
+      invoiceData = payload;
+      locationId = payload.locationId;
+    }
+    
+    const { invoice } = invoiceData;
     
     if (!invoice?.id || !locationId) {
+      console.error(`[FinancialProcessor] Missing required invoice data:`, {
+        invoiceId: invoice?.id,
+        locationId: !!locationId,
+        webhookId
+      });
       throw new Error('Missing required invoice data');
     }
     
@@ -159,8 +196,7 @@ export class FinancialProcessor extends BaseProcessor {
     
     // Update fields that might change
     const fieldsToUpdate = [
-      'status', 'amount', 'amountPaid', 'amountDue', 'currency',
-      'dueDate', 'items', 'taxes', 'discounts', 'notes', 'terms'
+      'status', 'currency', 'notes', 'terms', 'metadata'
     ];
     
     fieldsToUpdate.forEach(field => {
@@ -169,8 +205,21 @@ export class FinancialProcessor extends BaseProcessor {
       }
     });
     
+    // Handle amount fields
+    if (invoice.amount !== undefined) updateData.amount = invoice.amount;
+    if (invoice.total !== undefined && invoice.amount === undefined) updateData.amount = invoice.total;
+    if (invoice.amountPaid !== undefined) updateData.amountPaid = invoice.amountPaid;
+    if (invoice.amountDue !== undefined) updateData.amountDue = invoice.amountDue;
+    
+    // Handle array fields
+    if (invoice.items !== undefined) updateData.items = invoice.items;
+    if (invoice.lineItems !== undefined && invoice.items === undefined) updateData.items = invoice.lineItems;
+    if (invoice.taxes !== undefined) updateData.taxes = invoice.taxes;
+    if (invoice.discounts !== undefined) updateData.discounts = invoice.discounts;
+    
     // Handle date fields
     if (invoice.dueDate) updateData.dueDate = new Date(invoice.dueDate);
+    if (invoice.issueDate) updateData.issueDate = new Date(invoice.issueDate);
     
     const result = await this.db.collection('invoices').updateOne(
       { ghlInvoiceId: invoice.id, locationId },
@@ -178,6 +227,7 @@ export class FinancialProcessor extends BaseProcessor {
     );
     
     if (result.matchedCount === 0) {
+      console.log(`[FinancialProcessor] Invoice not found, creating new one`);
       await this.processInvoiceCreate(payload, webhookId);
     }
   }
@@ -186,9 +236,28 @@ export class FinancialProcessor extends BaseProcessor {
    * Process invoice delete
    */
   private async processInvoiceDelete(payload: any, webhookId: string): Promise<void> {
-    const { locationId, invoice } = payload;
+    // Handle nested structure
+    let invoiceData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      invoiceData = payload.webhookPayload;
+      locationId = payload.locationId || invoiceData.locationId;
+    } else {
+      // Direct format
+      invoiceData = payload;
+      locationId = payload.locationId;
+    }
+    
+    const { invoice } = invoiceData;
     
     console.log(`[FinancialProcessor] Deleting invoice ${invoice?.id}`);
+    
+    if (!invoice?.id || !locationId) {
+      console.warn(`[FinancialProcessor] Missing invoice data for delete`);
+      return;
+    }
     
     await this.db.collection('invoices').updateOne(
       { ghlInvoiceId: invoice.id, locationId },
@@ -208,9 +277,28 @@ export class FinancialProcessor extends BaseProcessor {
    * Process invoice void
    */
   private async processInvoiceVoid(payload: any, webhookId: string): Promise<void> {
-    const { locationId, invoice } = payload;
+    // Handle nested structure
+    let invoiceData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      invoiceData = payload.webhookPayload;
+      locationId = payload.locationId || invoiceData.locationId;
+    } else {
+      // Direct format
+      invoiceData = payload;
+      locationId = payload.locationId;
+    }
+    
+    const { invoice } = invoiceData;
     
     console.log(`[FinancialProcessor] Voiding invoice ${invoice?.id}`);
+    
+    if (!invoice?.id || !locationId) {
+      console.warn(`[FinancialProcessor] Missing invoice data for void`);
+      return;
+    }
     
     await this.db.collection('invoices').updateOne(
       { ghlInvoiceId: invoice.id, locationId },
@@ -230,9 +318,28 @@ export class FinancialProcessor extends BaseProcessor {
    * Process invoice paid
    */
   private async processInvoicePaid(payload: any, webhookId: string): Promise<void> {
-    const { locationId, invoice } = payload;
+    // Handle nested structure
+    let invoiceData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      invoiceData = payload.webhookPayload;
+      locationId = payload.locationId || invoiceData.locationId;
+    } else {
+      // Direct format
+      invoiceData = payload;
+      locationId = payload.locationId;
+    }
+    
+    const { invoice } = invoiceData;
     
     console.log(`[FinancialProcessor] Marking invoice ${invoice?.id} as paid`);
+    
+    if (!invoice?.id || !locationId) {
+      console.warn(`[FinancialProcessor] Missing invoice data for paid status`);
+      return;
+    }
     
     const session = this.db.client.startSession();
     
@@ -244,7 +351,7 @@ export class FinancialProcessor extends BaseProcessor {
             $set: { 
               status: 'paid',
               paidAt: new Date(),
-              amountPaid: invoice.amount || invoice.amountPaid,
+              amountPaid: invoice.amount || invoice.total || invoice.amountPaid,
               amountDue: 0,
               paymentDetails: invoice.paymentDetails || {},
               lastWebhookUpdate: new Date(),
@@ -269,9 +376,28 @@ export class FinancialProcessor extends BaseProcessor {
    * Process invoice partially paid
    */
   private async processInvoicePartiallyPaid(payload: any, webhookId: string): Promise<void> {
-    const { locationId, invoice } = payload;
+    // Handle nested structure
+    let invoiceData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      invoiceData = payload.webhookPayload;
+      locationId = payload.locationId || invoiceData.locationId;
+    } else {
+      // Direct format
+      invoiceData = payload;
+      locationId = payload.locationId;
+    }
+    
+    const { invoice } = invoiceData;
     
     console.log(`[FinancialProcessor] Recording partial payment for invoice ${invoice?.id}`);
+    
+    if (!invoice?.id || !locationId) {
+      console.warn(`[FinancialProcessor] Missing invoice data for partial payment`);
+      return;
+    }
     
     await this.db.collection('invoices').updateOne(
       { ghlInvoiceId: invoice.id, locationId },
@@ -279,7 +405,7 @@ export class FinancialProcessor extends BaseProcessor {
         $set: { 
           status: 'partially_paid',
           amountPaid: invoice.amountPaid || 0,
-          amountDue: invoice.amountDue || (invoice.amount - invoice.amountPaid),
+          amountDue: invoice.amountDue || (invoice.amount - (invoice.amountPaid || 0)),
           lastPaymentDate: new Date(),
           lastWebhookUpdate: new Date(),
           processedBy: 'queue',
@@ -302,9 +428,28 @@ export class FinancialProcessor extends BaseProcessor {
    * Process order create
    */
   private async processOrderCreate(payload: any, webhookId: string): Promise<void> {
-    const { locationId, order } = payload;
+    // Handle nested structure
+    let orderData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      orderData = payload.webhookPayload;
+      locationId = payload.locationId || orderData.locationId;
+    } else {
+      // Direct format
+      orderData = payload;
+      locationId = payload.locationId;
+    }
+    
+    const { order } = orderData;
     
     if (!order?.id || !locationId) {
+      console.error(`[FinancialProcessor] Missing required order data:`, {
+        orderId: order?.id,
+        locationId: !!locationId,
+        webhookId
+      });
       throw new Error('Missing required order data');
     }
     
@@ -317,11 +462,11 @@ export class FinancialProcessor extends BaseProcessor {
           ghlOrderId: order.id,
           locationId,
           contactId: order.contactId,
-          orderNumber: order.orderNumber,
+          orderNumber: order.orderNumber || order.number,
           status: order.status || 'pending',
-          amount: order.amount || 0,
+          amount: order.amount || order.total || 0,
           currency: order.currency || 'USD',
-          items: order.items || [],
+          items: order.items || order.lineItems || [],
           shippingAddress: order.shippingAddress || {},
           billingAddress: order.billingAddress || {},
           paymentStatus: order.paymentStatus || 'pending',
@@ -347,9 +492,28 @@ export class FinancialProcessor extends BaseProcessor {
    * Process order status update
    */
   private async processOrderStatusUpdate(payload: any, webhookId: string): Promise<void> {
-    const { locationId, order } = payload;
+    // Handle nested structure
+    let orderData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      orderData = payload.webhookPayload;
+      locationId = payload.locationId || orderData.locationId;
+    } else {
+      // Direct format
+      orderData = payload;
+      locationId = payload.locationId;
+    }
+    
+    const { order } = orderData;
     
     console.log(`[FinancialProcessor] Updating order ${order?.id} status to ${order?.status}`);
+    
+    if (!order?.id || !locationId) {
+      console.warn(`[FinancialProcessor] Missing order data for status update`);
+      return;
+    }
     
     await this.db.collection('orders').updateOne(
       { ghlOrderId: order.id, locationId },
@@ -373,11 +537,26 @@ export class FinancialProcessor extends BaseProcessor {
   private async processProductEvent(type: string, payload: any, webhookId: string): Promise<void> {
     console.log(`[FinancialProcessor] Processing ${type}`);
     
+    // Handle nested structure
+    let productData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      productData = payload.webhookPayload;
+      locationId = payload.locationId || productData.locationId;
+    } else {
+      // Direct format
+      productData = payload;
+      locationId = payload.locationId;
+    }
+    
     // Store product events for future use
     await this.db.collection('product_events').insertOne({
       _id: new ObjectId(),
       type,
-      payload,
+      payload: productData,
+      locationId,
       webhookId,
       processedAt: new Date(),
       processedBy: 'queue'
@@ -390,11 +569,26 @@ export class FinancialProcessor extends BaseProcessor {
   private async processPriceEvent(type: string, payload: any, webhookId: string): Promise<void> {
     console.log(`[FinancialProcessor] Processing ${type}`);
     
+    // Handle nested structure
+    let priceData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      // Native webhook format
+      priceData = payload.webhookPayload;
+      locationId = payload.locationId || priceData.locationId;
+    } else {
+      // Direct format
+      priceData = payload;
+      locationId = payload.locationId;
+    }
+    
     // Store price events for future use
     await this.db.collection('price_events').insertOne({
       _id: new ObjectId(),
       type,
-      payload,
+      payload: priceData,
+      locationId,
       webhookId,
       processedAt: new Date(),
       processedBy: 'queue'
@@ -427,11 +621,11 @@ export class FinancialProcessor extends BaseProcessor {
             timeline: {
               id: new ObjectId().toString(),
               event: event,
-              description: `Invoice ${data.invoiceNumber || data.id} - ${event.replace('_', ' ')}`,
+              description: `Invoice ${data.invoiceNumber || data.number || data.id} - ${event.replace('_', ' ')}`,
               timestamp: new Date().toISOString(),
               metadata: {
                 invoiceId: data.id,
-                amount: data.amount,
+                amount: data.amount || data.total,
                 status: data.status
               }
             }
