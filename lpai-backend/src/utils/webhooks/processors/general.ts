@@ -457,22 +457,33 @@ export class GeneralProcessor extends BaseProcessor {
       locationId = payload.locationId;
     }
     
-    const { user } = userData;
+    // Check if user is nested or at root level (GHL sends at root)
+    const user = userData.user || userData;
     
     console.log(`[GeneralProcessor] Processing ${type}`);
     
     if (type === 'UserCreate' && user && locationId) {
+      console.log(`[GeneralProcessor] Creating user:`, {
+        id: user.id,
+        email: user.email,
+        locationId,
+        webhookId
+      });
+      
       await this.db.collection('users').updateOne(
         { ghlUserId: user.id, locationId },
         {
           $set: {
             ghlUserId: user.id,
             locationId,
+            firstName: user.firstName || '',
+            lastName: user.lastName || '',
             name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Unknown',
             email: user.email,
-            role: user.role || user.type || user.permissions?.[0],
+            role: user.role || user.type || (user.permissions?.[0] ? user.permissions[0] : 'user'),
             permissions: user.permissions || [],
-            phone: user.phone,
+            phone: user.phone || '',
+            extension: user.extension || null,
             lastWebhookUpdate: new Date(),
             processedBy: 'queue',
             webhookId
@@ -485,6 +496,8 @@ export class GeneralProcessor extends BaseProcessor {
         },
         { upsert: true }
       );
+      
+      console.log(`[GeneralProcessor] User created/updated successfully`);
     }
   }
 
