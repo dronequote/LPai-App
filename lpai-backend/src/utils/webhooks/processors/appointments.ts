@@ -314,9 +314,9 @@ export class AppointmentsProcessor extends BaseProcessor {
     });
     
     // Update project timeline if appointment was linked to a contact
-    const appointment = await this.db.collection('appointments').findOne({
-      ghlAppointmentId: appointmentData.appointment.id,
-      locationId
+    const existingAppointment = await this.db.collection('appointments').findOne({
+    ghlAppointmentId: appointment.id,
+    locationId
     });
     
     if (appointment?.contactId) {
@@ -326,20 +326,20 @@ export class AppointmentsProcessor extends BaseProcessor {
         status: { $in: ['open', 'quoted', 'won', 'in_progress'] }
       });
       
-      if (project) {
-        await this.db.collection('projects').updateOne(
-          { _id: project._id },
-          {
-            $push: {
-              timeline: {
-                id: new ObjectId().toString(),
-                event: 'appointment_cancelled',
-                description: `${appointment.title || 'Appointment'} cancelled`,
-                timestamp: new Date().toISOString(),
-                metadata: {
-                  appointmentId: appointmentData.appointment.id,
-                  webhookId
-                }
+    if (project) {
+      await this.db.collection('projects').updateOne(
+        { _id: project._id },
+        {
+          $push: {
+            timeline: {
+              id: new ObjectId().toString(),
+              event: 'appointment_cancelled',
+              description: `${existingAppointment.title || 'Appointment'} cancelled`,
+              timestamp: new Date().toISOString(),
+              metadata: {
+                appointmentId: appointment.id,
+                webhookId
+                  }
               }
             }
           }
