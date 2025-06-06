@@ -18,6 +18,10 @@ import { syncConversations } from '../../../src/utils/sync/syncConversations';
 import { syncInvoices } from '../../../src/utils/sync/syncInvoices';
 import { setupDefaults } from '../../../src/utils/sync/setupDefaults';
 import { syncCustomValues } from '../../../src/utils/sync/syncCustomValues';
+import { syncCompanyInfo } from '../../../src/utils/sync/syncCompanyInfo';
+import { syncTags } from '../../../src/utils/sync/syncTags';
+import { syncTasks } from '../../../src/utils/sync/syncTasks';
+import { syncNotes } from '../../../src/utils/sync/syncContactNotes';
 
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -280,6 +284,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       setupResults.steps.customFields = { success: false, error: error.message };
     }
 
+    // 5.5. Sync Tags (NEW - after custom fields, before contacts)
+    try {
+      console.log(`[Location Setup] Step 5.5: Syncing tags...`);
+      const tagsResult = await syncTags(db, location);
+      setupResults.steps.tags = { success: true, ...tagsResult };
+    } catch (error: any) {
+      console.error(`[Location Setup] Tags sync failed:`, error);
+      setupResults.steps.tags = { success: false, error: error.message };
+    }
+
+
     // 5.5 Sync Custom Values
     try {
       console.log(`[Location Setup] Step 5.5: Syncing custom values...`);
@@ -300,6 +315,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       } catch (error: any) {
         console.error(`[Location Setup] Contact sync failed:`, error);
         setupResults.steps.contacts = { success: false, error: error.message };
+      }
+
+            // 6.5. Sync Tasks (NEW - after contacts)
+      try {
+        console.log(`[Location Setup] Step 6.5: Syncing tasks (last 90 days)...`);
+        const tasksResult = await syncTasks(db, location, { daysBack: 90 });
+        setupResults.steps.tasks = { success: true, ...tasksResult };
+      } catch (error: any) {
+        console.error(`[Location Setup] Tasks sync failed:`, error);
+        setupResults.steps.tasks = { success: false, error: error.message };
       }
 
       // 7. Sync Opportunities
