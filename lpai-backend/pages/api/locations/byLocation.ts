@@ -1,8 +1,10 @@
 // pages/api/locations/byLocation.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
+import cors from '@/lib/cors';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  await cors(req, res);
   const { locationId } = req.query;
   
   if (!locationId || typeof locationId !== 'string') {

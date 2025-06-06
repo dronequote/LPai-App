@@ -21,5 +21,8 @@ export const GHL_ENDPOINTS = {
     OAUTH: {
       token: `${BASE_URL}/oauth/token`,
       locationToken: `${BASE_URL}/oauth/locationToken`,
-    }
+    },
+    PRODUCTS: {
+        base: `${BASE_URL}/products`,
+      },
   };

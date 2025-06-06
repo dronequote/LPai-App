@@ -13,14 +13,13 @@ import cors from '@/lib/cors';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
     await cors(req, res);
-  if (req.method !== 'POST') {
+  if (req.method !== 'GET') {
     return sendBadRequest(res, 'Method not allowed', 'Invalid Method');
   }
 
-  const payload = req.body;
-  const locationId = payload.locationId;
+  const locationId = typeof req.query.locationId === 'string' ? req.query.locationId : null;
 
-  if (!payload || !locationId) {
+  if (!locationId) {
     return sendBadRequest(res, 'Missing required field: locationId');
   }
 
@@ -29,25 +28,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const auth = await getAuthHeader(location);
   
   const options = {
-    method: 'POST',
-    url: GHL_ENDPOINTS.CONTACTS.search,
+    method: 'GET',
+    url: `${GHL_ENDPOINTS.PRODUCTS.base}/?locationId=${locationId}`,
     headers: {
       Authorization: auth.header,
       Version: '2021-07-28',
       'Content-Type': 'application/json',
       Accept: 'application/json',
     },
-    data: payload,
   };
 
   try {
     const { data } = await axios.request(options);
-    return sendSuccess(res, data, 'Contacts retrieved successfully');
+    return sendSuccess(res, data, 'Products retrieved successfully');
   } catch (error: any) {
     if (error?.response?.status === 401) {
       return sendUnauthorized(res, error.message, 'Invalid or expired token');
     }
 
-    return sendServerError(res, error, 'Failed to retrieve contacts');
+    return sendServerError(res, error, 'Failed to retrieve products');
   }
 }
