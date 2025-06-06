@@ -21,6 +21,10 @@
       "schedule": "* * * * *"
     },
     {
+     "path": "/api/cron/process-projects",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/process-financial",
       "schedule": "* * * * *"
     },

@@ -462,28 +462,32 @@ export class ContactsProcessor extends BaseProcessor {
       contactId = payload.contactId;
     }
     
-    const { note } = noteData;
+    // Check if note is nested or at root level
+    const note = noteData.note || noteData;
     
     console.log(`[ContactsProcessor] Creating note:`, {
       noteId: note?.id,
-      contactId,
+      contactId: contactId || note.contactId,
       locationId,
       webhookId
     });
     
-    if (!note?.id || !contactId || !locationId) {
+    if (!note?.id || !locationId) {
       console.warn(`[ContactsProcessor] Missing note data, skipping`);
       return;
     }
+    
+    // Use contactId from note if not at root level
+    const finalContactId = contactId || note.contactId;
     
     const result = await this.db.collection('notes').insertOne({
       _id: new ObjectId(),
       ghlNoteId: note.id,
       locationId,
-      contactId,
+      contactId: finalContactId,
       opportunityId: note.opportunityId || null,
       body: note.body || '',
-      createdBy: note.userId || 'system',
+      createdBy: note.userId || note.createdBy || 'system',
       createdAt: new Date(),
       createdByWebhook: webhookId,
       processedBy: 'queue'
@@ -494,7 +498,9 @@ export class ContactsProcessor extends BaseProcessor {
     });
     
     // Update contact's last activity
-    await this.updateContactActivity(contactId, locationId, 'note_added');
+    if (finalContactId) {
+      await this.updateContactActivity(finalContactId, locationId, 'note_added');
+    }
   }
 
   /**
@@ -515,7 +521,8 @@ export class ContactsProcessor extends BaseProcessor {
       locationId = payload.locationId;
     }
     
-    const { note } = noteData;
+    // Check if note is nested or at root level
+    const note = noteData.note || noteData;
     
     console.log(`[ContactsProcessor] Updating note:`, {
       noteId: note?.id,
@@ -564,7 +571,8 @@ export class ContactsProcessor extends BaseProcessor {
       locationId = payload.locationId;
     }
     
-    const { note } = noteData;
+    // Check if note is nested or at root level
+    const note = noteData.note || noteData;
     
     console.log(`[ContactsProcessor] Deleting note:`, {
       noteId: note?.id,
@@ -616,11 +624,12 @@ export class ContactsProcessor extends BaseProcessor {
       contactId = payload.contactId;
     }
     
-    const { task } = taskData;
+    // Check if task is nested or at root level
+    const task = taskData.task || taskData;
     
     console.log(`[ContactsProcessor] Creating task:`, {
       taskId: task?.id,
-      contactId,
+      contactId: contactId || task.contactId,
       locationId,
       webhookId
     });
@@ -630,15 +639,18 @@ export class ContactsProcessor extends BaseProcessor {
       return;
     }
     
+    // Use contactId from task if not at root level
+    const finalContactId = contactId || task.contactId;
+    
     const result = await this.db.collection('tasks').insertOne({
       _id: new ObjectId(),
       ghlTaskId: task.id,
       locationId,
-      contactId: contactId || task.contactId,
+      contactId: finalContactId,
       title: task.title || 'Task',
-      description: task.description || '',
+      description: task.description || task.body || '',
       dueDate: task.dueDate ? new Date(task.dueDate) : null,
-      assignedTo: task.assignedTo || null,
+      assignedTo: task.assignedTo || task.assignedUserId || null,
       status: task.completed ? 'completed' : 'pending',
       priority: task.priority || 'normal',
       createdAt: new Date(),
@@ -651,8 +663,8 @@ export class ContactsProcessor extends BaseProcessor {
     });
     
     // Update contact's last activity
-    if (contactId || task.contactId) {
-      await this.updateContactActivity(contactId || task.contactId, locationId, 'task_created');
+    if (finalContactId) {
+      await this.updateContactActivity(finalContactId, locationId, 'task_created');
     }
   }
 
@@ -674,7 +686,8 @@ export class ContactsProcessor extends BaseProcessor {
       locationId = payload.locationId;
     }
     
-    const { task } = taskData;
+    // Check if task is nested or at root level
+    const task = taskData.task || taskData;
     
     console.log(`[ContactsProcessor] Completing task:`, {
       taskId: task?.id,
@@ -723,7 +736,8 @@ export class ContactsProcessor extends BaseProcessor {
       locationId = payload.locationId;
     }
     
-    const { task } = taskData;
+    // Check if task is nested or at root level
+    const task = taskData.task || taskData;
     
     console.log(`[ContactsProcessor] Deleting task:`, {
       taskId: task?.id,

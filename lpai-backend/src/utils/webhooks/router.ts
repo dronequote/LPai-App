@@ -82,8 +82,8 @@ export function analyzeWebhook(payload: any): any {
     case 'OpportunityStageUpdate':
     case 'OpportunityAssignedToUpdate':
     case 'OpportunityMonetaryValueUpdate':
-      queueType = 'general'; // Could create 'opportunities' queue if volume is high
-      priority = 4;
+      queueType = 'projects'; // Changed from 'general'
+      priority = 3;
       break;
 
     // Financial events
