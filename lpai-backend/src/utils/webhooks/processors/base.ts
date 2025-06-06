@@ -6,13 +6,15 @@ import clientPromise from '../../../lib/mongodb';
 export interface ProcessorConfig {
   queueType: string;
   batchSize: number;
-  maxRuntime: number; // milliseconds
+  maxRuntime?: number; // Made optional with default
+  maxProcessingTime?: number; // Alternative name used in some processors
   processorName: string;
+  db?: Db; // Add optional db parameter
 }
 
 export abstract class BaseProcessor {
   protected db: Db;
-  protected client: MongoClient; // ADD THIS LINE
+  protected client: MongoClient;
   protected queueManager: QueueManager;
   protected config: ProcessorConfig;
   protected processorId: string;
@@ -22,17 +24,36 @@ export abstract class BaseProcessor {
 
   constructor(config: ProcessorConfig) {
     this.config = config;
+    // Handle both maxRuntime and maxProcessingTime
+    if (!this.config.maxRuntime && this.config.maxProcessingTime) {
+      this.config.maxRuntime = this.config.maxProcessingTime;
+    }
+    // Default to 50 seconds if not specified
+    this.config.maxRuntime = this.config.maxRuntime || 50000;
+    
     this.processorId = `${config.processorName}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     this.startTime = Date.now();
+    
+    // If db is provided, use it
+    if (config.db) {
+      this.db = config.db;
+    }
   }
 
   /**
    * Initialize database connection
    */
   protected async initialize(): Promise<void> {
-    const client = await clientPromise;
-    this.client = client; // ADD THIS LINE
-    this.db = client.db('lpai');
+    // Only initialize if db wasn't provided in constructor
+    if (!this.db) {
+      const client = await clientPromise;
+      this.client = client;
+      this.db = client.db('lpai');
+    } else if (!this.client) {
+      // If db was provided, get client from it
+      this.client = this.db.client as MongoClient;
+    }
+    
     this.queueManager = new QueueManager(this.db);
     
     console.log(`[${this.config.processorName}] Initialized processor ${this.processorId}`);
@@ -84,9 +105,8 @@ export abstract class BaseProcessor {
    * Process a batch of items
    */
   protected async processBatch(items: QueueItem[]): Promise<void> {
-  console.log(`[${this.config.processorName}] Processing batch of ${items.length} items`);
+    console.log(`[${this.config.processorName}] Processing batch of ${items.length} items`);
 
-    
     // Process items in parallel with concurrency limit
     const concurrency = 5;
     for (let i = 0; i < items.length; i += concurrency) {
@@ -113,8 +133,8 @@ export abstract class BaseProcessor {
       
       this.processedCount++;
       
-    const duration = Date.now() - itemStartTime;
-    console.log(`[${this.config.processorName}] Processed ${item.type} in ${duration}ms`);
+      const duration = Date.now() - itemStartTime;
+      console.log(`[${this.config.processorName}] Processed ${item.type} in ${duration}ms`);
       
     } catch (error: any) {
       this.errorCount++;
@@ -142,7 +162,7 @@ export abstract class BaseProcessor {
    */
   protected shouldContinue(): boolean {
     const runtime = Date.now() - this.startTime;
-    return runtime < this.config.maxRuntime;
+    return runtime < this.config.maxRuntime!;
   }
 
   /**
