@@ -6,10 +6,9 @@ import clientPromise from '../../../lib/mongodb';
 export interface ProcessorConfig {
   queueType: string;
   batchSize: number;
-  maxRuntime?: number; // Made optional with default
-  maxProcessingTime?: number; // Alternative name used in some processors
+  maxRuntime?: number;
+  maxProcessingTime?: number;
   processorName: string;
-  db?: Db; // Add optional db parameter
 }
 
 export abstract class BaseProcessor {
@@ -22,8 +21,11 @@ export abstract class BaseProcessor {
   protected processedCount: number = 0;
   protected errorCount: number = 0;
 
-  constructor(config: ProcessorConfig) {
+  constructor(config: ProcessorConfig, db?: Db) {
+    console.log(`[${config.processorName}] Constructor called with db: ${db ? 'provided' : 'not provided'}`);
+    
     this.config = config;
+    
     // Handle both maxRuntime and maxProcessingTime
     if (!this.config.maxRuntime && this.config.maxProcessingTime) {
       this.config.maxRuntime = this.config.maxProcessingTime;
@@ -34,68 +36,96 @@ export abstract class BaseProcessor {
     this.processorId = `${config.processorName}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     this.startTime = Date.now();
     
-    // If db is provided, use it
-    if (config.db) {
-      this.db = config.db;
+    // Store db if provided
+    if (db) {
+      this.db = db;
+      console.log(`[${this.config.processorName}] Database connection stored in constructor`);
     }
+    
+    console.log(`[${this.config.processorName}] Processor created with ID: ${this.processorId}`);
   }
 
   /**
    * Initialize database connection
    */
   protected async initialize(): Promise<void> {
-    // Only initialize if db wasn't provided in constructor
-    if (!this.db) {
-      const client = await clientPromise;
-      this.client = client;
-      this.db = client.db('lpai');
-    } else if (!this.client) {
-      // If db was provided, get client from it
-      this.client = this.db.client as MongoClient;
+    console.log(`[${this.config.processorName}] Starting initialization...`);
+    
+    try {
+      // Only initialize if db wasn't provided in constructor
+      if (!this.db) {
+        console.log(`[${this.config.processorName}] No database provided, creating new connection...`);
+        const client = await clientPromise;
+        this.client = client;
+        this.db = client.db('lpai');
+        console.log(`[${this.config.processorName}] Database connection established`);
+      } else {
+        console.log(`[${this.config.processorName}] Using provided database connection`);
+        // If db was provided, get client from it
+        this.client = this.db.client as MongoClient;
+      }
+      
+      console.log(`[${this.config.processorName}] Creating QueueManager...`);
+      this.queueManager = new QueueManager(this.db);
+      
+      console.log(`[${this.config.processorName}] Initialization complete - Processor ${this.processorId} ready`);
+    } catch (error) {
+      console.error(`[${this.config.processorName}] Failed to initialize:`, error);
+      throw error;
     }
-    
-    this.queueManager = new QueueManager(this.db);
-    
-    console.log(`[${this.config.processorName}] Initialized processor ${this.processorId}`);
   }
 
   /**
    * Main processing loop
    */
   async run(): Promise<void> {
+    console.log(`[${this.config.processorName}] Starting run() method...`);
+    
     try {
       await this.initialize();
       
       // Log processor start
+      console.log(`[${this.config.processorName}] Logging processor start...`);
       await this.logProcessorStart();
+      
+      console.log(`[${this.config.processorName}] Entering processing loop...`);
       
       // Process until timeout
       while (this.shouldContinue()) {
+        const remainingTime = this.config.maxRuntime! - (Date.now() - this.startTime);
+        console.log(`[${this.config.processorName}] Fetching next batch (${Math.round(remainingTime / 1000)}s remaining)...`);
+        
         const items = await this.queueManager.getNextBatch(
           this.config.queueType,
           this.config.batchSize
         );
         
         if (items.length === 0) {
-          // No items, wait a bit
+          console.log(`[${this.config.processorName}] No items to process, sleeping for 1s...`);
           await this.sleep(1000);
           continue;
         }
+        
+        console.log(`[${this.config.processorName}] Retrieved ${items.length} items to process`);
         
         // Process batch
         await this.processBatch(items);
         
         // Check if we should yield to prevent hogging resources
         if (this.processedCount % 100 === 0 && this.processedCount > 0) {
+          console.log(`[${this.config.processorName}] Processed ${this.processedCount} items, yielding...`);
           await this.sleep(100); // Brief pause every 100 items
         }
       }
+      
+      console.log(`[${this.config.processorName}] Processing loop ended, logging completion...`);
       
       // Log processor completion
       await this.logProcessorEnd();
       
     } catch (error: any) {
-      console.error(`[${this.config.processorName}] Fatal error:`, error);
+      console.error(`[${this.config.processorName}] Fatal error in run():`, error);
+      console.error(`[${this.config.processorName}] Error stack:`, error.stack);
       await this.logProcessorError(error);
       throw error;
     }
@@ -106,16 +136,20 @@ export abstract class BaseProcessor {
    */
   protected async processBatch(items: QueueItem[]): Promise<void> {
     console.log(`[${this.config.processorName}] Processing batch of ${items.length} items`);
+    console.log(`[${this.config.processorName}] Item types: ${items.map(i => i.type).join(', ')}`);
 
     // Process items in parallel with concurrency limit
     const concurrency = 5;
     for (let i = 0; i < items.length; i += concurrency) {
       const batch = items.slice(i, i + concurrency);
+      console.log(`[${this.config.processorName}] Processing sub-batch ${i / concurrency + 1} with ${batch.length} items`);
       
       await Promise.all(
         batch.map(item => this.processItemSafe(item))
       );
     }
+    
+    console.log(`[${this.config.processorName}] Batch processing complete`);
   }
 
   /**
@@ -123,25 +157,29 @@ export abstract class BaseProcessor {
    */
   protected async processItemSafe(item: QueueItem): Promise<void> {
     const itemStartTime = Date.now();
+    console.log(`[${this.config.processorName}] Processing item ${item.webhookId} (${item.type})`);
     
     try {
       // Call the implementation-specific processing
       await this.processItem(item);
       
       // Mark as complete
+      console.log(`[${this.config.processorName}] Marking ${item.webhookId} as complete...`);
       await this.queueManager.markComplete(item.webhookId);
       
       this.processedCount++;
       
       const duration = Date.now() - itemStartTime;
-      console.log(`[${this.config.processorName}] Processed ${item.type} in ${duration}ms`);
+      console.log(`[${this.config.processorName}] Successfully processed ${item.type} (${item.webhookId}) in ${duration}ms`);
       
     } catch (error: any) {
       this.errorCount++;
       
       console.error(`[${this.config.processorName}] Error processing ${item.webhookId}:`, error);
+      console.error(`[${this.config.processorName}] Error stack:`, error.stack);
       
       // Mark as failed with retry
+      console.log(`[${this.config.processorName}] Marking ${item.webhookId} as failed...`);
       await this.queueManager.markFailed(
         item.webhookId,
         error.message || 'Unknown error'
@@ -162,7 +200,13 @@ export abstract class BaseProcessor {
    */
   protected shouldContinue(): boolean {
     const runtime = Date.now() - this.startTime;
-    return runtime < this.config.maxRuntime!;
+    const shouldContinue = runtime < this.config.maxRuntime!;
+    
+    if (!shouldContinue) {
+      console.log(`[${this.config.processorName}] Max runtime reached (${runtime}ms >= ${this.config.maxRuntime}ms)`);
+    }
+    
+    return shouldContinue;
   }
 
   /**
@@ -176,17 +220,25 @@ export abstract class BaseProcessor {
    * Log processor start
    */
   protected async logProcessorStart(): Promise<void> {
-    await this.db.collection('processor_logs').insertOne({
-      processorId: this.processorId,
-      processorName: this.config.processorName,
-      queueType: this.config.queueType,
-      event: 'start',
-      timestamp: new Date(),
-      metadata: {
-        batchSize: this.config.batchSize,
-        maxRuntime: this.config.maxRuntime
-      }
-    });
+    console.log(`[${this.config.processorName}] Writing processor start log to database...`);
+    
+    try {
+      await this.db.collection('processor_logs').insertOne({
+        processorId: this.processorId,
+        processorName: this.config.processorName,
+        queueType: this.config.queueType,
+        event: 'start',
+        timestamp: new Date(),
+        metadata: {
+          batchSize: this.config.batchSize,
+          maxRuntime: this.config.maxRuntime
+        }
+      });
+      
+      console.log(`[${this.config.processorName}] Processor start logged successfully`);
+    } catch (error) {
+      console.error(`[${this.config.processorName}] Failed to log processor start:`, error);
+    }
   }
 
   /**
@@ -195,76 +247,102 @@ export abstract class BaseProcessor {
   protected async logProcessorEnd(): Promise<void> {
     const runtime = Date.now() - this.startTime;
     
-    await this.db.collection('processor_logs').insertOne({
-      processorId: this.processorId,
-      processorName: this.config.processorName,
-      queueType: this.config.queueType,
-      event: 'end',
-      timestamp: new Date(),
-      metadata: {
-        runtime,
-        processedCount: this.processedCount,
-        errorCount: this.errorCount,
-        averageTime: this.processedCount > 0 ? runtime / this.processedCount : 0,
-        successRate: this.processedCount > 0 
-          ? ((this.processedCount - this.errorCount) / this.processedCount) * 100 
-          : 0
-      }
-    });
+    console.log(`[${this.config.processorName}] Writing processor end log to database...`);
     
-    console.log(`[${this.config.processorName}] Completed:`, {
-      processed: this.processedCount,
-      errors: this.errorCount,
-      runtime: `${(runtime / 1000).toFixed(1)}s`,
-      rate: `${(this.processedCount / (runtime / 1000)).toFixed(1)}/sec`
-    });
+    try {
+      await this.db.collection('processor_logs').insertOne({
+        processorId: this.processorId,
+        processorName: this.config.processorName,
+        queueType: this.config.queueType,
+        event: 'end',
+        timestamp: new Date(),
+        metadata: {
+          runtime,
+          processedCount: this.processedCount,
+          errorCount: this.errorCount,
+          averageTime: this.processedCount > 0 ? runtime / this.processedCount : 0,
+          successRate: this.processedCount > 0 
+            ? ((this.processedCount - this.errorCount) / this.processedCount) * 100 
+            : 0
+        }
+      });
+      
+      console.log(`[${this.config.processorName}] Processor end logged successfully`);
+    } catch (error) {
+      console.error(`[${this.config.processorName}] Failed to log processor end:`, error);
+    }
+    
+    console.log(`[${this.config.processorName}] === PROCESSOR SUMMARY ===`);
+    console.log(`[${this.config.processorName}] Processed: ${this.processedCount} items`);
+    console.log(`[${this.config.processorName}] Errors: ${this.errorCount}`);
+    console.log(`[${this.config.processorName}] Runtime: ${(runtime / 1000).toFixed(1)}s`);
+    console.log(`[${this.config.processorName}] Rate: ${(this.processedCount / (runtime / 1000)).toFixed(1)}/sec`);
+    console.log(`[${this.config.processorName}] ========================`);
   }
 
   /**
    * Log processor error
    */
   protected async logProcessorError(error: Error): Promise<void> {
-    await this.db.collection('processor_logs').insertOne({
-      processorId: this.processorId,
-      processorName: this.config.processorName,
-      queueType: this.config.queueType,
-      event: 'error',
-      timestamp: new Date(),
-      error: {
-        message: error.message,
-        stack: error.stack
-      }
-    });
+    console.log(`[${this.config.processorName}] Writing processor error log to database...`);
+    
+    try {
+      await this.db.collection('processor_logs').insertOne({
+        processorId: this.processorId,
+        processorName: this.config.processorName,
+        queueType: this.config.queueType,
+        event: 'error',
+        timestamp: new Date(),
+        error: {
+          message: error.message,
+          stack: error.stack
+        }
+      });
+      
+      console.log(`[${this.config.processorName}] Processor error logged successfully`);
+    } catch (logError) {
+      console.error(`[${this.config.processorName}] Failed to log processor error:`, logError);
+    }
   }
 
   /**
    * Log item processing error
    */
   protected async logItemError(item: QueueItem, error: Error): Promise<void> {
-    await this.db.collection('webhook_errors').insertOne({
-      webhookId: item.webhookId,
-      processorId: this.processorId,
-      processorName: this.config.processorName,
-      queueType: this.config.queueType,
-      webhookType: item.type,
-      attempt: item.attempts,
-      timestamp: new Date(),
-      error: {
-        message: error.message,
-        stack: error.stack
-      },
-      item: {
-        locationId: item.locationId,
-        companyId: item.companyId,
-        priority: item.priority
-      }
-    });
+    console.log(`[${this.config.processorName}] Writing item error log to database for ${item.webhookId}...`);
+    
+    try {
+      await this.db.collection('webhook_errors').insertOne({
+        webhookId: item.webhookId,
+        processorId: this.processorId,
+        processorName: this.config.processorName,
+        queueType: this.config.queueType,
+        webhookType: item.type,
+        attempt: item.attempts,
+        timestamp: new Date(),
+        error: {
+          message: error.message,
+          stack: error.stack
+        },
+        item: {
+          locationId: item.locationId,
+          companyId: item.companyId,
+          priority: item.priority
+        }
+      });
+      
+      console.log(`[${this.config.processorName}] Item error logged successfully`);
+    } catch (logError) {
+      console.error(`[${this.config.processorName}] Failed to log item error:`, logError);
+    }
   }
 
   /**
    * Helper to get related records efficiently
    */
   protected async findContact(ghlContactId: string, locationId: string) {
+    console.log(`[${this.config.processorName}] Finding contact ${ghlContactId} in location ${locationId}...`);
+    
     return await this.db.collection('contacts').findOne(
       { ghlContactId, locationId },
       { 
@@ -283,6 +361,8 @@ export abstract class BaseProcessor {
    * Helper to find location
    */
   protected async findLocation(locationId: string) {
+    console.log(`[${this.config.processorName}] Finding location ${locationId}...`);
+    
     return await this.db.collection('locations').findOne(
       { locationId },
       { 

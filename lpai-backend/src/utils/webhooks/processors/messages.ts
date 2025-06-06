@@ -6,12 +6,11 @@ import { ObjectId, Db } from 'mongodb';
 export class MessagesProcessor extends BaseProcessor {
   constructor(db?: Db) {
     super({
-      db: db,
       queueType: 'messages',
       batchSize: 50,
       maxRuntime: 50000,
       processorName: 'MessagesProcessor'
-    });
+    }, db);
   }
 
   /**
