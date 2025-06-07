@@ -452,14 +452,40 @@ function generateProgressUI(entityId: string, isCompany: boolean, locations: any
 }
 
 function generateLocationCard(location: any, index: number): string {
-  const progress = calculateProgress(location.syncProgress);
-  const status = location.setupCompleted ? 'complete' : 
+  const progress = calculateProgress(location.syncProgress, location.setupResults);
+  const isUninstalled = location.uninstalledAt;
+  const status = isUninstalled ? 'uninstalled' :
+                 location.setupCompleted ? 'complete' : 
                  location.setupError ? 'error' : 
                  location.syncProgress?.overall?.status || 'pending';
   
+  // Get started time from setupResults or syncProgress
+  const startedAt = location.setupResults?.startedAt || location.syncProgress?.overall?.startedAt;
+  const startedTime = startedAt ? new Date(startedAt).toLocaleString() : 'Not started';
+  
+  // Parse duration
+  let duration = 'N/A';
+  if (location.setupResults?.duration) {
+    duration = location.setupResults.duration;
+  } else if (location.syncProgress?.overall?.duration) {
+    duration = location.syncProgress.overall.duration;
+  }
+  
+  // Get counts from setupResults
+  const counts = {
+    contacts: location.setupResults?.steps?.contacts?.processed || location.contactCount || 0,
+    customFields: location.customFieldsByModel ? 
+      (location.customFieldsByModel.contact?.length || 0) + (location.customFieldsByModel.opportunity?.length || 0) : 
+      location.setupResults?.steps?.customFields?.totalFields || 0,
+    pipelines: location.setupResults?.steps?.pipelines?.pipelineCount || location.pipelineCount || 0,
+    calendars: location.setupResults?.steps?.calendars?.calendarCount || location.calendarCount || 0,
+    users: location.setupResults?.steps?.users?.total || location.userCount || 0,
+    appointments: location.setupResults?.steps?.appointments?.processed || location.appointmentCount || 0
+  };
+  
   return `
     <div id="location-${location.locationId}" 
-         class="location-card glass rounded-2xl p-6 slide-in neon-glow" 
+         class="location-card glass rounded-2xl p-6 slide-in neon-glow ${isUninstalled ? 'opacity-60' : ''}" 
          style="animation-delay: ${index * 0.1}s"
          onclick="viewLocationDetails('${location.locationId}')">
       
@@ -468,9 +494,12 @@ function generateLocationCard(location: any, index: number): string {
         <div>
           <h3 class="text-xl font-semibold mb-1">${location.name || 'Unknown Location'}</h3>
           <p class="text-sm text-gray-400">${location.locationId}</p>
+          ${isUninstalled ? `<p class="text-xs text-red-400 mt-1">Uninstalled ${new Date(location.uninstalledAt).toLocaleDateString()}</p>` : ''}
         </div>
         <div class="status-indicator text-right">
-          ${status === 'complete' ? 
+          ${status === 'uninstalled' ?
+            '<span class="text-gray-500 text-2xl">🚫</span>' :
+            status === 'complete' ? 
             '<span class="text-green-500 text-2xl">✓</span>' :
             status === 'error' ? 
             '<span class="text-red-500 text-2xl">✗</span>' :
@@ -486,7 +515,7 @@ function generateLocationCard(location: any, index: number): string {
         <svg class="progress-ring w-32 h-32">
           <circle cx="64" cy="64" r="58" stroke="rgba(255,255,255,0.1)" stroke-width="8" fill="none" />
           <circle class="progress-ring-fill" cx="64" cy="64" r="58" 
-              stroke="url(#gradient-${location.locationId})" 
+              stroke="${isUninstalled ? '#6b7280' : 'url(#gradient-' + location.locationId + ')'}" 
               stroke-width="8" 
               fill="none"
               stroke-dasharray="${progress * 3.65} 365"
@@ -501,25 +530,42 @@ function generateLocationCard(location: any, index: number): string {
         </svg>
         <div class="absolute inset-0 flex flex-col items-center justify-center">
           <span class="progress-text text-3xl font-bold">${progress}%</span>
-          <span class="text-xs text-gray-400">Complete</span>
+          <span class="text-xs text-gray-400">${isUninstalled ? 'Uninstalled' : 'Complete'}</span>
         </div>
       </div>
 
       <!-- Quick Stats -->
-      <div class="grid grid-cols-2 gap-4 text-sm">
+      <div class="grid grid-cols-2 gap-4 text-sm mb-4">
         <div>
           <p class="text-gray-400">Status</p>
           <p class="font-semibold capitalize">${status}</p>
         </div>
         <div>
           <p class="text-gray-400">Started</p>
-          <p class="font-semibold">${location.syncProgress?.overall?.startedAt ? 
-            new Date(location.syncProgress.overall.startedAt).toLocaleTimeString() : 
-            'Not started'}</p>
+          <p class="font-semibold text-xs">${startedTime}</p>
         </div>
       </div>
+      
+      ${duration !== 'N/A' ? `
+        <div class="mb-4 text-center">
+          <p class="text-sm text-gray-400">Duration</p>
+          <p class="font-bold text-lg">${duration}</p>
+        </div>
+      ` : ''}
 
-      ${location.setupError ? `
+      <!-- Sync Stats -->
+      ${location.setupCompleted && !isUninstalled ? `
+        <div class="mt-4 pt-4 border-t border-gray-700 grid grid-cols-3 gap-2 text-xs">
+          ${counts.contacts > 0 ? `<div class="text-center"><p class="font-bold">${counts.contacts}</p><p class="text-gray-400">Contacts</p></div>` : ''}
+          ${counts.customFields > 0 ? `<div class="text-center"><p class="font-bold">${counts.customFields}</p><p class="text-gray-400">Fields</p></div>` : ''}
+          ${counts.pipelines > 0 ? `<div class="text-center"><p class="font-bold">${counts.pipelines}</p><p class="text-gray-400">Pipelines</p></div>` : ''}
+          ${counts.calendars > 0 ? `<div class="text-center"><p class="font-bold">${counts.calendars}</p><p class="text-gray-400">Calendars</p></div>` : ''}
+          ${counts.users > 0 ? `<div class="text-center"><p class="font-bold">${counts.users}</p><p class="text-gray-400">Users</p></div>` : ''}
+          ${counts.appointments > 0 ? `<div class="text-center"><p class="font-bold">${counts.appointments}</p><p class="text-gray-400">Appts</p></div>` : ''}
+        </div>
+      ` : ''}
+
+      ${location.setupError && !isUninstalled ? `
         <div class="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30">
           <p class="text-sm text-red-400">${location.setupError}</p>
         </div>
@@ -554,9 +600,14 @@ function generateDetailedProgress(location: any): string {
   const syncProgress = location.syncProgress || {};
   const setupResults = location.setupResults || {};
   const overallProgress = calculateProgress(syncProgress);
+  const isUninstalled = location.uninstalledAt;
 
-  // Calculate total time
+  // Calculate total time and format start time
   let totalTime = 0;
+  let formattedStartTime = 'Not started';
+  if (setupResults.startedAt) {
+    formattedStartTime = new Date(setupResults.startedAt).toLocaleString();
+  }
   if (setupResults.duration) {
     const match = setupResults.duration.match(/(\d+\.?\d*)s/);
     if (match) {
@@ -565,11 +616,14 @@ function generateDetailedProgress(location: any): string {
   }
 
   return `
-    <div class="glass rounded-2xl p-8 slide-in">
+    <div class="glass rounded-2xl p-8 slide-in ${isUninstalled ? 'opacity-60' : ''}">
       <!-- Location Header -->
       <div class="mb-8">
         <h2 class="text-3xl font-bold mb-2">${location.name || 'Location Setup'}</h2>
         <p class="text-gray-400">${location.locationId}</p>
+        ${isUninstalled ? `
+          <p class="text-red-400 mt-2">⚠️ This location was uninstalled on ${new Date(location.uninstalledAt).toLocaleString()}</p>
+        ` : ''}
       </div>
 
       <!-- Overall Progress -->
@@ -578,7 +632,7 @@ function generateDetailedProgress(location: any): string {
           <svg class="progress-ring w-48 h-48">
             <circle cx="96" cy="96" r="88" stroke="rgba(255,255,255,0.1)" stroke-width="12" fill="none" />
             <circle class="progress-ring-fill" cx="96" cy="96" r="88" 
-                stroke="url(#gradient)" 
+                stroke="${isUninstalled ? '#6b7280' : 'url(#gradient)'}" 
                 stroke-width="12" 
                 fill="none"
                 stroke-dasharray="${overallProgress * 5.52} 552"
@@ -593,12 +647,13 @@ function generateDetailedProgress(location: any): string {
           </svg>
           <div class="absolute inset-0 flex flex-col items-center justify-center">
             <span class="progress-text text-5xl font-bold">${overallProgress}%</span>
-            <span class="text-sm text-gray-400">Complete</span>
+            <span class="text-sm text-gray-400">${isUninstalled ? 'Uninstalled' : 'Complete'}</span>
           </div>
         </div>
-        ${totalTime > 0 ? `
-          <div class="text-center">
-            <p class="text-lg text-gray-400">Total time: <span class="font-bold text-white">${totalTime.toFixed(1)}s</span></p>
+        ${totalTime > 0 || formattedStartTime !== 'Not started' ? `
+          <div class="text-center space-y-2">
+            ${totalTime > 0 ? `<p class="text-lg text-gray-400">Total time: <span class="font-bold text-white">${totalTime.toFixed(1)}s</span></p>` : ''}
+            <p class="text-sm text-gray-500">Started: ${formattedStartTime}</p>
           </div>
         ` : ''}
       </div>
@@ -606,18 +661,60 @@ function generateDetailedProgress(location: any): string {
       <!-- Progress Steps -->
       <div class="space-y-4">
         ${steps.map(step => {
-          const stepData = syncProgress[step.key] || { status: 'pending' };
           const stepResult = setupResults.steps?.[step.key] || {};
-          const isComplete = stepData.status === 'complete';
-          const isSyncing = stepData.status === 'syncing';
-          const isFailed = stepData.status === 'failed';
+          const syncProgressStep = syncProgress[step.key];
           
-          // Parse duration
+          // Follow analytics page logic - check success from setupResults
+          const isComplete = stepResult.success === true;
+          const isFailed = stepResult.success === false;
+          const isSyncing = !isComplete && !isFailed && syncProgressStep?.status === 'syncing';
+          
+          // Parse duration and counts
           let durationStr = '';
+          let countStr = '';
+          
           if (stepResult.duration) {
-            if (typeof stepResult.duration === 'string') {
-              durationStr = stepResult.duration;
-            }
+            durationStr = stepResult.duration;
+          }
+          
+          // Build count string based on step type
+          switch(step.key) {
+            case 'contacts':
+              if (stepResult.processed) countStr = `${stepResult.processed} contacts`;
+              break;
+            case 'customFields':
+              if (stepResult.totalFields) countStr = `${stepResult.totalFields} fields`;
+              break;
+            case 'pipelines':
+              if (stepResult.pipelineCount) countStr = `${stepResult.pipelineCount} pipelines, ${stepResult.totalStages || 0} stages`;
+              break;
+            case 'calendars':
+              if (stepResult.calendarCount) countStr = `${stepResult.calendarCount} calendars`;
+              break;
+            case 'users':
+              if (stepResult.total) countStr = `${stepResult.total} users`;
+              break;
+            case 'tags':
+              if (stepResult.totalTags) countStr = `${stepResult.totalTags} tags`;
+              break;
+            case 'customValues':
+              if (stepResult.count) countStr = `${stepResult.count} values`;
+              break;
+            case 'tasks':
+              if (stepResult.processed) countStr = `${stepResult.processed} tasks`;
+              break;
+            case 'opportunities':
+              if (stepResult.processed) countStr = `${stepResult.processed} opportunities`;
+              break;
+            case 'appointments':
+              if (stepResult.processed) countStr = `${stepResult.processed} appointments`;
+              break;
+            case 'conversations':
+              if (stepResult.processed !== undefined) countStr = `${stepResult.processed} conversations`;
+              break;
+            case 'invoices':
+              if (stepResult.processed) countStr = `${stepResult.processed} invoices`;
+              break;
           }
           
           return `
@@ -627,12 +724,16 @@ function generateDetailedProgress(location: any): string {
                   <span class="text-2xl">${step.icon}</span>
                   <div>
                     <h4 class="font-semibold">${step.name}</h4>
-                    ${isComplete && durationStr ? 
-                      `<p class="text-sm text-gray-400 mt-1">Completed in ${durationStr}</p>` :
+                    ${isComplete && (durationStr || countStr) ? 
+                      `<p class="text-sm text-gray-400 mt-1">
+                        ${durationStr ? `Completed in ${durationStr}` : ''}
+                        ${durationStr && countStr ? ' • ' : ''}
+                        ${countStr}
+                      </p>` :
                       isSyncing ? 
                       `<p class="text-sm text-blue-400 mt-1">Processing...</p>` :
-                      isFailed && stepData.error ? 
-                      `<p class="text-sm text-red-400 mt-1">${stepData.error}</p>` :
+                      isFailed && stepResult.error ? 
+                      `<p class="text-sm text-red-400 mt-1">${stepResult.error}</p>` :
                       ''
                     }
                   </div>
@@ -657,17 +758,31 @@ function generateDetailedProgress(location: any): string {
         }).join('')}
       </div>
 
-      ${location.setupError ? `
+      ${location.setupError && !isUninstalled ? `
         <div class="mt-6 p-4 rounded-xl bg-red-500/10 border border-red-500/30">
           <h4 class="font-semibold text-red-500 mb-2">Setup Error</h4>
           <p class="text-sm text-gray-300">${location.setupError}</p>
+        </div>
+      ` : ''}
+      
+      ${location.setupCompleted && setupResults.completedAt ? `
+        <div class="mt-6 text-center text-sm text-gray-500">
+          <p>Completed: ${new Date(setupResults.completedAt).toLocaleString()}</p>
         </div>
       ` : ''}
     </div>
   `;
 }
 
-function calculateProgress(syncProgress: any): number {
+function calculateProgress(syncProgress: any, setupResults?: any): number {
+  // If we have setupResults with steps, use that for accuracy
+  if (setupResults?.steps) {
+    const steps = Object.keys(setupResults.steps);
+    const completed = steps.filter(k => setupResults.steps[k]?.success === true).length;
+    return steps.length > 0 ? Math.round((completed / steps.length) * 100) : 0;
+  }
+  
+  // Fallback to syncProgress if no setupResults
   if (!syncProgress) return 0;
   
   const steps = Object.keys(syncProgress).filter(k => k !== 'overall');
