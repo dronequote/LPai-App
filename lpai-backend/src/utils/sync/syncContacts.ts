@@ -21,10 +21,11 @@ export async function syncContacts(db: Db, location: any, options: SyncOptions =
     console.log(`[Sync Contacts] Full sync requested - will fetch all contacts in batches`);
     
     // Rate limit configuration
-    const BATCH_SIZE = 100; // Larger batches for efficiency
+    const BATCH_SIZE = 100; // Contacts per API request
+    const PARALLEL_BATCHES = 5; // Process 5 batches in parallel
     const REQUESTS_PER_SECOND = 8; // Stay under 10/second limit
     const DELAY_BETWEEN_BATCHES = 1000 / REQUESTS_PER_SECOND; // 125ms
-    const MAX_REQUESTS_PER_RUN = 50; // 50 requests = 25k contacts
+    const MAX_REQUESTS_PER_RUN = 50; // 50 requests = 5k contacts
     const MAX_SYNC_DURATION = 55000; // 55 seconds (safe for 60s timeout)
     
     let totalCreated = 0;
@@ -81,7 +82,7 @@ export async function syncContacts(db: Db, location: any, options: SyncOptions =
         allErrors.push(...batchResult.errors);
       }
       
-      // FIX: Check if no contacts were returned
+      // Check if no contacts were returned
       if (batchResult.processed === 0) {
         console.log(`[Sync Contacts] No more contacts found, ending sync`);
         hasMoreData = false;
@@ -148,115 +149,140 @@ export async function syncContacts(db: Db, location: any, options: SyncOptions =
     
     console.log(`[Sync Contacts] Found ${ghlContacts.length} contacts (Total: ${meta.total})`);
 
-    // Process each contact
+    // Process contacts in parallel batches
+    const PARALLEL_PROCESS = 5;
     let created = 0;
     let updated = 0;
     let skipped = 0;
     const errors: any[] = [];
 
-    for (const ghlContact of ghlContacts) {
-      try {
-        // Check if contact exists
-        const existingContact = await db.collection('contacts').findOne({
-          $or: [
-            { ghlContactId: ghlContact.id },
-            { 
-              email: ghlContact.email, 
-              locationId: location.locationId 
-            }
-          ]
-        });
+    // Process in chunks for parallel execution
+    for (let i = 0; i < ghlContacts.length; i += PARALLEL_PROCESS) {
+      const chunk = ghlContacts.slice(i, i + PARALLEL_PROCESS);
+      
+      const results = await Promise.allSettled(
+        chunk.map(async (ghlContact) => {
+          try {
+            // Check if contact exists
+            const existingContact = await db.collection('contacts').findOne({
+              $or: [
+                { ghlContactId: ghlContact.id },
+                { 
+                  email: ghlContact.email, 
+                  locationId: location.locationId 
+                }
+              ]
+            });
 
-        // Prepare contact data
-        const contactData = {
-          // GHL Integration
-          ghlContactId: ghlContact.id,
-          locationId: location.locationId,
-          
-          // Basic Information
-          firstName: ghlContact.firstName || '',
-          lastName: ghlContact.lastName || '',
-          fullName: ghlContact.contactName || `${ghlContact.firstName || ''} ${ghlContact.lastName || ''}`.trim(),
-          email: ghlContact.email || '',
-          phone: ghlContact.phone || '',
-          
-          // Additional Contact Info
-          secondaryPhone: ghlContact.additionalPhones?.[0] || '',
-          
-          // Address Information
-          address: ghlContact.address1 || '',
-          city: ghlContact.city || '',
-          state: ghlContact.state || '',
-          country: ghlContact.country || 'US',
-          postalCode: ghlContact.postalCode || '',
-          
-          // Business Information
-          companyName: ghlContact.companyName || '',
-          website: ghlContact.website || '',
-          
-          // Personal Information
-          dateOfBirth: ghlContact.dateOfBirth ? new Date(ghlContact.dateOfBirth) : null,
-          
-          // Communication Preferences
-          dnd: ghlContact.dnd || false,
-          dndSettings: ghlContact.dndSettings || {},
-          
-          // Tags and Source
-          tags: Array.isArray(ghlContact.tags) ? ghlContact.tags : [],
-          source: ghlContact.source || '',
-          type: ghlContact.type || 'lead',
-          
-          // Assignment
-          assignedTo: ghlContact.assignedTo || null,
-          
-          // Custom Fields (store all of them)
-          customFields: ghlContact.customFields || [],
-          
-          // Additional emails
-          additionalEmails: ghlContact.additionalEmails || [],
-          
-          // Attribution
-          attributions: ghlContact.attributions || [],
-          
-          // GHL Metadata
-          ghlCreatedAt: ghlContact.dateAdded ? new Date(ghlContact.dateAdded) : null,
-          ghlUpdatedAt: ghlContact.dateUpdated ? new Date(ghlContact.dateUpdated) : null,
-          
-          // Sync Metadata
-          lastSyncedAt: new Date(),
-          updatedAt: new Date()
-        };
+            // Prepare contact data
+            const contactData = {
+              // GHL Integration
+              ghlContactId: ghlContact.id,
+              locationId: location.locationId,
+              
+              // Basic Information
+              firstName: ghlContact.firstName || '',
+              lastName: ghlContact.lastName || '',
+              fullName: ghlContact.contactName || `${ghlContact.firstName || ''} ${ghlContact.lastName || ''}`.trim(),
+              email: ghlContact.email || '',
+              phone: ghlContact.phone || '',
+              
+              // Additional Contact Info
+              secondaryPhone: ghlContact.additionalPhones?.[0] || '',
+              
+              // Address Information
+              address: ghlContact.address1 || '',
+              city: ghlContact.city || '',
+              state: ghlContact.state || '',
+              country: ghlContact.country || 'US',
+              postalCode: ghlContact.postalCode || '',
+              
+              // Business Information
+              companyName: ghlContact.companyName || '',
+              website: ghlContact.website || '',
+              
+              // Personal Information
+              dateOfBirth: ghlContact.dateOfBirth ? new Date(ghlContact.dateOfBirth) : null,
+              
+              // Communication Preferences
+              dnd: ghlContact.dnd || false,
+              dndSettings: ghlContact.dndSettings || {},
+              
+              // Tags and Source
+              tags: Array.isArray(ghlContact.tags) ? ghlContact.tags : [],
+              source: ghlContact.source || '',
+              type: ghlContact.type || 'lead',
+              
+              // Assignment
+              assignedTo: ghlContact.assignedTo || null,
+              
+              // Custom Fields (store all of them)
+              customFields: ghlContact.customFields || [],
+              
+              // Additional emails
+              additionalEmails: ghlContact.additionalEmails || [],
+              
+              // Attribution
+              attributions: ghlContact.attributions || [],
+              
+              // GHL Metadata
+              ghlCreatedAt: ghlContact.dateAdded ? new Date(ghlContact.dateAdded) : null,
+              ghlUpdatedAt: ghlContact.dateUpdated ? new Date(ghlContact.dateUpdated) : null,
+              
+              // Sync Metadata
+              lastSyncedAt: new Date(),
+              updatedAt: new Date()
+            };
 
-        if (existingContact) {
-          // Update existing contact
-          await db.collection('contacts').updateOne(
-            { _id: existingContact._id },
-            { 
-              $set: contactData,
-              $setOnInsert: { createdAt: new Date() }
+            if (existingContact) {
+              // Update existing contact
+              await db.collection('contacts').updateOne(
+                { _id: existingContact._id },
+                { 
+                  $set: contactData,
+                  $setOnInsert: { createdAt: new Date() }
+                }
+              );
+              return { type: 'updated' };
+            } else {
+              // Create new contact
+              await db.collection('contacts').insertOne({
+                _id: new ObjectId(),
+                ...contactData,
+                createdAt: new Date(),
+                createdBySync: true
+              });
+              return { type: 'created' };
             }
-          );
-          updated++;
+          } catch (error: any) {
+            return { 
+              type: 'error', 
+              error: {
+                contactId: ghlContact.id,
+                email: ghlContact.email,
+                error: error.message
+              }
+            };
+          }
+        })
+      );
+
+      // Count results
+      results.forEach(result => {
+        if (result.status === 'fulfilled') {
+          if (result.value.type === 'created') created++;
+          else if (result.value.type === 'updated') updated++;
+          else if (result.value.type === 'error') {
+            errors.push(result.value.error);
+            skipped++;
+          }
         } else {
-          // Create new contact
-          await db.collection('contacts').insertOne({
-            _id: new ObjectId(),
-            ...contactData,
-            createdAt: new Date(),
-            createdBySync: true
+          skipped++;
+          errors.push({
+            error: result.reason?.message || 'Unknown error'
           });
-          created++;
         }
-        
-      } catch (contactError: any) {
-        console.error(`[Sync Contacts] Error processing contact ${ghlContact.email || ghlContact.id}:`, contactError.message);
-        errors.push({
-          contactId: ghlContact.id,
-          email: ghlContact.email,
-          error: contactError.message
-        });
-        skipped++;
-      }
+      });
     }
 
     // Update sync status
