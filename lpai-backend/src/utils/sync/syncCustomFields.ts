@@ -35,15 +35,12 @@ export async function syncCustomFields(db: Db, location: any) {
     
     // Fetch custom fields from GHL
     const response = await axios.get(
-      'https://services.leadconnectorhq.com/locations/customFields',
+      `https://services.leadconnectorhq.com/locations/${location.locationId}/customFields`,
       {
         headers: {
           'Authorization': auth.header,
           'Version': '2021-07-28',
           'Accept': 'application/json'
-        },
-        params: {
-          locationId: location.locationId
         }
       }
     );
@@ -90,9 +87,8 @@ export async function syncCustomFields(db: Db, location: any) {
         console.log(`[Sync Custom Fields] Creating field: ${fieldToCreate.name}`);
         
         const createResponse = await axios.post(
-          'https://services.leadconnectorhq.com/locations/customFields',
+          `https://services.leadconnectorhq.com/locations/${location.locationId}/customFields`,
           {
-            locationId: location.locationId,
             name: fieldToCreate.name,
             key: fieldToCreate.key,
             dataType: fieldToCreate.dataType,
@@ -103,6 +99,7 @@ export async function syncCustomFields(db: Db, location: any) {
             headers: {
               'Authorization': auth.header,
               'Version': '2021-07-28',
+              'Accept': 'application/json',
               'Content-Type': 'application/json'
             }
           }
