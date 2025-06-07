@@ -1,4 +1,5 @@
-// pages/api/sync/progress/[id].ts
+// pages/api/sync/progress/[id].ts - COMPLETE FILE
+
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../../src/lib/mongodb';
 
@@ -79,6 +80,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
 function generateProgressUI(entityId: string, isCompany: boolean, locations: any[]): string {
   const hasLocations = locations.length > 0;
+  
+  // Separate active/syncing locations from inactive ones
+  const activeLocations = locations.filter(loc => 
+    loc.syncProgress?.overall?.status === 'syncing' || 
+    loc.syncProgress?.overall?.status === 'complete' ||
+    loc.setupCompleted ||
+    loc.appInstalled // Locations where app is installed
+  );
+  
+  const inactiveLocations = locations.filter(loc => 
+    !loc.setupCompleted && 
+    !loc.appInstalled &&
+    (!loc.syncProgress || loc.syncProgress?.overall?.status === 'pending')
+  );
+  
   const allComplete = locations.every(loc => loc.setupCompleted);
   
   return `
@@ -128,9 +144,25 @@ function generateProgressUI(entityId: string, isCompany: boolean, locations: any
             border: 1px solid rgba(255, 255, 255, 0.1);
         }
 
+        .glass-inactive {
+            background: rgba(17, 25, 40, 0.4);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            opacity: 0.6;
+        }
+
         .neon-glow {
             box-shadow: 0 0 30px rgba(59, 130, 246, 0.5),
                         inset 0 0 30px rgba(59, 130, 246, 0.1);
+        }
+
+        .sync-indicator {
+            width: 12px;
+            height: 12px;
+            background: #10b981;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+            display: inline-block;
         }
 
         @keyframes float {
@@ -143,8 +175,8 @@ function generateProgressUI(entityId: string, isCompany: boolean, locations: any
         }
 
         @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(1.2); }
         }
 
         .pulse {
@@ -163,6 +195,32 @@ function generateProgressUI(entityId: string, isCompany: boolean, locations: any
         .progress-ring {
             transform: rotate(-90deg);
             transform-origin: 50% 50%;
+        }
+
+        .progress-bar {
+            position: relative;
+            overflow: hidden;
+        }
+
+        .progress-bar::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            right: 0;
+            background: linear-gradient(
+                90deg,
+                transparent,
+                rgba(255, 255, 255, 0.2),
+                transparent
+            );
+            animation: shimmer 2s infinite;
+        }
+
+        @keyframes shimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
         }
 
         .step-item {
@@ -193,24 +251,13 @@ function generateProgressUI(entityId: string, isCompany: boolean, locations: any
             cursor: pointer;
         }
 
-        .location-card:hover {
+        .location-card:hover:not(.inactive) {
             transform: translateY(-5px);
             box-shadow: 0 20px 40px rgba(59, 130, 246, 0.3);
         }
 
-        @keyframes shimmer {
-            0% { background-position: -200% 0; }
-            100% { background-position: 200% 0; }
-        }
-
-        .shimmer {
-            background: linear-gradient(90deg, 
-                transparent 25%, 
-                rgba(255, 255, 255, 0.1) 50%, 
-                transparent 75%
-            );
-            background-size: 200% 100%;
-            animation: shimmer 2s infinite;
+        .location-card.inactive {
+            cursor: default;
         }
 
         .success-animation {
@@ -235,16 +282,6 @@ function generateProgressUI(entityId: string, isCompany: boolean, locations: any
             stroke-dasharray: 100;
             stroke-dashoffset: 100;
             animation: checkmark 0.5s ease-out forwards;
-        }
-
-        .error-shake {
-            animation: shake 0.5s;
-        }
-
-        @keyframes shake {
-            0%, 100% { transform: translateX(0); }
-            25% { transform: translateX(-10px); }
-            75% { transform: translateX(10px); }
         }
 
         /* Custom scrollbar */
@@ -293,9 +330,28 @@ function generateProgressUI(entityId: string, isCompany: boolean, locations: any
                 </div>
             ` : isCompany ? `
                 <!-- Company View with Multiple Locations -->
-                <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-                    ${locations.map((location, index) => generateLocationCard(location, index)).join('')}
-                </div>
+                
+                ${activeLocations.length > 0 ? `
+                    <div class="mb-12">
+                        <h2 class="text-2xl font-semibold mb-6 flex items-center gap-3">
+                            <span class="sync-indicator"></span>
+                            Installing Locations
+                        </h2>
+                        <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+                            ${activeLocations.map((location, index) => generateLocationCard(location, index, false)).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+                
+                ${inactiveLocations.length > 0 ? `
+                    <div class="mb-8">
+                        <h2 class="text-xl font-semibold mb-4 text-gray-400">Other Locations</h2>
+                        <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+                            ${inactiveLocations.map((location, index) => generateLocationCard(location, index, true)).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+                
             ` : `
                 <!-- Single Location View -->
                 ${generateDetailedProgress(locations[0])}
@@ -385,6 +441,15 @@ function generateProgressUI(entityId: string, isCompany: boolean, locations: any
                 const response = await fetch(\`/api/sync/progress/\${entityId}\`);
                 const data = await response.json();
                 
+                // Check if any locations need setup to be triggered
+                data.locations.forEach(location => {
+                    if (!location.syncProgress || 
+                        (!location.setupCompleted && location.syncProgress?.overall?.status !== 'syncing')) {
+                        // Trigger setup for this location
+                        triggerSetup(location.locationId);
+                    }
+                });
+                
                 if (data.allComplete && !isComplete) {
                     isComplete = true;
                     showSuccessAnimation();
@@ -398,6 +463,22 @@ function generateProgressUI(entityId: string, isCompany: boolean, locations: any
                 
             } catch (error) {
                 console.error('Failed to check progress:', error);
+            }
+        }
+
+        async function triggerSetup(locationId) {
+            try {
+                const response = await fetch('/api/locations/setup-location', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ locationId, fullSync: true })
+                });
+                
+                if (response.ok) {
+                    console.log(\`Setup triggered for location \${locationId}\`);
+                }
+            } catch (error) {
+                console.error(\`Failed to trigger setup for \${locationId}:\`, error);
             }
         }
 
@@ -420,38 +501,27 @@ function generateProgressUI(entityId: string, isCompany: boolean, locations: any
             if (progressBar) progressBar.style.width = \`\${progress}%\`;
             if (progressText) progressText.textContent = \`\${progress}%\`;
 
-            // Update individual steps
-            Object.entries(location.syncProgress || {}).forEach(([key, value]) => {
-                if (key === 'overall') return;
+            // Update status
+            const statusElement = card.querySelector('.status-indicator');
+            if (statusElement) {
+                const status = location.setupCompleted ? 'complete' : 
+                              location.syncProgress?.overall?.status || 'pending';
                 
-                const stepElement = card.querySelector(\`[data-step="\${key}"]\`);
-                if (stepElement) {
-                    const statusIcon = stepElement.querySelector('.status-icon');
-                    const statusText = stepElement.querySelector('.status-text');
-                    
-                    if (value.status === 'complete') {
-                        statusIcon.innerHTML = '✓';
-                        statusIcon.className = 'status-icon text-green-500';
-                        if (statusText) statusText.textContent = 'Complete';
-                    } else if (value.status === 'syncing') {
-                        statusIcon.innerHTML = '⟳';
-                        statusIcon.className = 'status-icon text-blue-500 spin';
-                        if (statusText) statusText.textContent = 'Syncing...';
-                    } else if (value.status === 'failed') {
-                        statusIcon.innerHTML = '✗';
-                        statusIcon.className = 'status-icon text-red-500';
-                        if (statusText) statusText.textContent = 'Failed';
-                    }
+                if (status === 'complete') {
+                    statusElement.innerHTML = '<span class="text-green-500 text-2xl">✓</span>';
+                } else if (status === 'syncing') {
+                    statusElement.innerHTML = '<div class="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full spin"></div>';
                 }
-            });
+            }
         }
 
         function calculateOverallProgress(syncProgress) {
             if (!syncProgress) return 0;
             
             const steps = Object.keys(syncProgress).filter(k => k !== 'overall');
-            const completed = steps.filter(k => syncProgress[k]?.status === 'complete').length;
+            if (steps.length === 0) return 0;
             
+            const completed = steps.filter(k => syncProgress[k]?.status === 'complete').length;
             return Math.round((completed / steps.length) * 100);
         }
 
@@ -483,7 +553,7 @@ function generateProgressUI(entityId: string, isCompany: boolean, locations: any
 `;
 }
 
-function generateLocationCard(location: any, index: number): string {
+function generateLocationCard(location: any, index: number, isInactive: boolean = false): string {
   const progress = calculateProgress(location.syncProgress);
   const status = location.setupCompleted ? 'complete' : 
                  location.setupError ? 'error' : 
@@ -491,9 +561,9 @@ function generateLocationCard(location: any, index: number): string {
   
   return `
     <div id="location-${location.locationId}" 
-         class="location-card glass rounded-2xl p-6 slide-in" 
+         class="location-card ${isInactive ? 'glass-inactive inactive' : 'glass'} rounded-2xl p-6 slide-in" 
          style="animation-delay: ${index * 0.1}s"
-         onclick="viewLocationDetails('${location.locationId}')">
+         ${!isInactive ? `onclick="viewLocationDetails('${location.locationId}')"` : ''}>
       
       <!-- Header -->
       <div class="flex items-start justify-between mb-6">
@@ -501,46 +571,52 @@ function generateLocationCard(location: any, index: number): string {
           <h3 class="text-xl font-semibold mb-1">${location.name || 'Unknown Location'}</h3>
           <p class="text-sm text-gray-400">${location.locationId}</p>
         </div>
-        <div class="text-right">
+        <div class="status-indicator text-right">
           ${status === 'complete' ? 
             '<span class="text-green-500 text-2xl">✓</span>' :
             status === 'error' ? 
             '<span class="text-red-500 text-2xl">✗</span>' :
-            '<div class="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full spin"></div>'
+            status === 'syncing' ?
+            '<div class="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full spin"></div>' :
+            isInactive ? 
+            '<span class="text-gray-500 text-sm">Not installed</span>' :
+            '<span class="text-gray-500 text-sm">Pending</span>'
           }
         </div>
       </div>
 
-      <!-- Progress -->
-      <div class="mb-6">
-        <div class="flex justify-between items-center mb-2">
-          <span class="text-sm text-gray-400">Overall Progress</span>
-          <span class="progress-text text-sm font-semibold">${progress}%</span>
+      ${!isInactive ? `
+        <!-- Progress -->
+        <div class="mb-6">
+          <div class="flex justify-between items-center mb-2">
+            <span class="text-sm text-gray-400">Overall Progress</span>
+            <span class="progress-text text-sm font-semibold">${progress}%</span>
+          </div>
+          <div class="h-2 bg-gray-700 rounded-full overflow-hidden">
+            <div class="progress-bar h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full transition-all duration-500"
+                 style="width: ${progress}%"></div>
+          </div>
         </div>
-        <div class="h-2 bg-gray-700 rounded-full overflow-hidden">
-          <div class="progress-bar h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full transition-all duration-500"
-               style="width: ${progress}%"></div>
-        </div>
-      </div>
 
-      <!-- Quick Stats -->
-      <div class="grid grid-cols-2 gap-4 text-sm">
-        <div>
-          <p class="text-gray-400">Status</p>
-          <p class="font-semibold capitalize">${status}</p>
+        <!-- Quick Stats -->
+        <div class="grid grid-cols-2 gap-4 text-sm">
+          <div>
+            <p class="text-gray-400">Status</p>
+            <p class="font-semibold capitalize">${status}</p>
+          </div>
+          <div>
+            <p class="text-gray-400">Started</p>
+            <p class="font-semibold">${location.syncProgress?.overall?.startedAt ? 
+              new Date(location.syncProgress.overall.startedAt).toLocaleTimeString() : 
+              'Not started'}</p>
+          </div>
         </div>
-        <div>
-          <p class="text-gray-400">Started</p>
-          <p class="font-semibold">${location.syncProgress?.overall?.startedAt ? 
-            new Date(location.syncProgress.overall.startedAt).toLocaleTimeString() : 
-            'Not started'}</p>
-        </div>
-      </div>
 
-      <!-- View Details -->
-      <div class="mt-6 pt-6 border-t border-gray-700 text-center">
-        <span class="text-blue-400 text-sm font-medium">View Details →</span>
-      </div>
+        <!-- View Details -->
+        <div class="mt-6 pt-6 border-t border-gray-700 text-center">
+          <span class="text-blue-400 text-sm font-medium">View Details →</span>
+        </div>
+      ` : ''}
     </div>
   `;
 }
@@ -564,7 +640,17 @@ function generateDetailedProgress(location: any): string {
   ];
 
   const syncProgress = location.syncProgress || {};
+  const setupResults = location.setupResults || {};
   const overallProgress = calculateProgress(syncProgress);
+
+  // Calculate total time
+  let totalTime = 0;
+  if (setupResults.duration) {
+    const match = setupResults.duration.match(/(\d+\.?\d*)s/);
+    if (match) {
+      totalTime = parseFloat(match[1]);
+    }
+  }
 
   return `
     <div class="glass rounded-2xl p-8 slide-in">
@@ -598,32 +684,83 @@ function generateDetailedProgress(location: any): string {
             <span class="text-sm text-gray-400">Complete</span>
           </div>
         </div>
+        ${totalTime > 0 ? `
+          <div class="text-center">
+            <p class="text-lg text-gray-400">Total time: <span class="font-bold text-white">${totalTime.toFixed(1)}s</span></p>
+          </div>
+        ` : ''}
       </div>
 
-      <!-- Progress Steps -->
+      <!-- Progress Steps with Analytics-style tracking -->
       <div class="space-y-4">
         ${steps.map(step => {
           const stepData = syncProgress[step.key] || { status: 'pending' };
+          const stepResult = setupResults.steps?.[step.key] || {};
           const isComplete = stepData.status === 'complete';
           const isSyncing = stepData.status === 'syncing';
           const isFailed = stepData.status === 'failed';
           
+          // Parse duration from setupResults (like analytics)
+          let duration = 0;
+          let durationStr = '0s';
+          if (stepResult.duration) {
+            if (typeof stepResult.duration === 'string') {
+              const match = stepResult.duration.match(/(\d+\.?\d*)(\w+)/);
+              if (match) {
+                const value = parseFloat(match[1]);
+                const unit = match[2];
+                if (unit === 'ms') {
+                  duration = value / 1000;
+                  durationStr = duration < 1 ? `${value.toFixed(0)}ms` : `${duration.toFixed(1)}s`;
+                } else if (unit === 's') {
+                  duration = value;
+                  durationStr = `${duration.toFixed(1)}s`;
+                }
+              }
+            }
+          }
+          
+          // Calculate percentage of total time
+          const percentage = totalTime > 0 && duration > 0 ? (duration / totalTime) * 100 : 0;
+          
+          // Get current progress for syncing items
+          let currentProgress = 0;
+          let progressText = '';
+          if (isSyncing) {
+            if (stepData.percent) {
+              currentProgress = stepData.percent;
+              progressText = `${currentProgress}%`;
+            } else if (stepData.current && stepData.total) {
+              currentProgress = Math.round((stepData.current / stepData.total) * 100);
+              progressText = `${stepData.current} / ${stepData.total}`;
+            } else {
+              currentProgress = 50; // Default for unknown progress
+              progressText = 'Processing...';
+            }
+          }
+          
           return `
             <div data-step="${step.key}" class="step-item p-4 rounded-xl bg-white/5 hover:bg-white/10 transition-all">
-              <div class="flex items-center justify-between">
+              <div class="flex items-center justify-between mb-3">
                 <div class="flex items-center gap-4">
                   <span class="text-2xl">${step.icon}</span>
                   <div>
                     <h4 class="font-semibold">${step.name}</h4>
-                    ${stepData.error ? 
+                    ${isComplete && durationStr !== '0s' ? 
+                      `<p class="text-sm text-gray-400 mt-1">Completed in ${durationStr}</p>` :
+                      isSyncing && progressText ? 
+                      `<p class="text-sm text-blue-400 mt-1">${progressText}</p>` :
+                      isFailed && stepData.error ? 
                       `<p class="text-sm text-red-400 mt-1">${stepData.error}</p>` :
-                      stepData.duration ? 
-                      `<p class="text-sm text-gray-400 mt-1">Completed in ${stepData.duration}</p>` :
                       ''
                     }
                   </div>
                 </div>
                 <div class="flex items-center gap-3">
+                  ${isComplete && percentage > 0 ? 
+                    `<span class="text-sm text-gray-400">${percentage.toFixed(1)}% of total</span>` : 
+                    ''
+                  }
                   <span class="status-text text-sm text-gray-400">
                     ${isComplete ? 'Complete' : isSyncing ? 'Syncing...' : isFailed ? 'Failed' : 'Pending'}
                   </span>
@@ -633,15 +770,13 @@ function generateDetailedProgress(location: any): string {
                 </div>
               </div>
               
-              ${step.key === 'contacts' && stepData.current ? `
-                <div class="mt-3 text-sm">
-                  <div class="flex justify-between mb-1">
-                    <span class="text-gray-400">Progress</span>
-                    <span>${stepData.current} / ${stepData.total || '?'}</span>
-                  </div>
-                  <div class="h-1 bg-gray-700 rounded-full overflow-hidden">
-                    <div class="h-full bg-blue-500 rounded-full" style="width: ${stepData.percent || 0}%"></div>
-                  </div>
+              ${isSyncing || (isComplete && percentage > 0) ? `
+                <div class="h-2 bg-gray-700 rounded-full overflow-hidden progress-bar">
+                  <div class="h-full rounded-full transition-all duration-1000 ${
+                    isComplete ? 'bg-green-500' : 
+                    isSyncing ? 'bg-blue-500' : 
+                    'bg-gray-600'
+                  }" style="width: ${isComplete ? '100' : currentProgress}%"></div>
                 </div>
               ` : ''}
             </div>
