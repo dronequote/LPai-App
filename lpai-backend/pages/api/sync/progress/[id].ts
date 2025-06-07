@@ -453,11 +453,12 @@ function generateProgressUI(entityId: string, isCompany: boolean, locations: any
 
 function generateLocationCard(location: any, index: number): string {
   const progress = calculateProgress(location.syncProgress, location.setupResults);
-  const isUninstalled = location.uninstalledAt;
+  const isUninstalled = location.appInstalled === false; // Check current install status
+  const hasStarted = location.setupResults?.startedAt || location.syncProgress?.overall?.startedAt;
   const status = isUninstalled ? 'uninstalled' :
                  location.setupCompleted ? 'complete' : 
                  location.setupError ? 'error' : 
-                 location.syncProgress?.overall?.status || 'pending';
+                 hasStarted ? 'syncing' : 'pending'; // Only show syncing if actually started
   
   // Get started time from setupResults or syncProgress
   const startedAt = location.setupResults?.startedAt || location.syncProgress?.overall?.startedAt;
@@ -538,11 +539,11 @@ function generateLocationCard(location: any, index: number): string {
       <div class="grid grid-cols-2 gap-4 text-sm mb-4">
         <div>
           <p class="text-gray-400">Status</p>
-          <p class="font-semibold capitalize">${status}</p>
+          <p class="font-semibold capitalize">${status === 'pending' ? 'Not started' : status}</p>
         </div>
         <div>
           <p class="text-gray-400">Started</p>
-          <p class="font-semibold text-xs">${startedTime}</p>
+          <p class="font-semibold text-xs">${hasStarted ? startedTime : 'Not started'}</p>
         </div>
       </div>
       
