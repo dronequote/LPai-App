@@ -9,18 +9,21 @@ const REQUIRED_FIELDS = [
     key: 'project_title',
     name: 'Project Title',
     dataType: 'TEXT',
+    model: 'opportunity',
     position: 0
   },
   {
     key: 'quote_number',
     name: 'Quote Number',
     dataType: 'TEXT',
+    model: 'opportunity',
     position: 1
   },
   {
     key: 'signed_date',
     name: 'Signed Date',
     dataType: 'DATE',
+    model: 'opportunity',
     position: 2
   }
 ];
@@ -33,7 +36,7 @@ export async function syncCustomFields(db: Db, location: any) {
     // Get auth header (OAuth or API key)
     const auth = await getAuthHeader(location);
     
-    // Fetch custom fields from GHL
+    // Fetch custom fields from GHL - get all models
     const response = await axios.get(
       `https://services.leadconnectorhq.com/locations/${location.locationId}/customFields`,
       {
@@ -41,6 +44,9 @@ export async function syncCustomFields(db: Db, location: any) {
           'Authorization': auth.header,
           'Version': '2021-07-28',
           'Accept': 'application/json'
+        },
+        params: {
+          model: 'all' // Get fields for all models
         }
       }
     );
@@ -48,32 +54,49 @@ export async function syncCustomFields(db: Db, location: any) {
     const customFields = response.data.customFields || [];
     console.log(`[Sync Custom Fields] Found ${customFields.length} custom fields in GHL`);
 
-    // Create a map of existing fields by key
-    const existingFieldsMap = new Map();
+    // Organize fields by model
+    const fieldsByModel: Record<string, any[]> = {};
+    const fieldMapping: Record<string, Record<string, string>> = {};
+
     customFields.forEach((field: any) => {
-      // Some fields might have the key in different places
-      const fieldKey = field.key || field.fieldKey || field.name?.toLowerCase().replace(/\s+/g, '_');
-      if (fieldKey) {
-        existingFieldsMap.set(fieldKey, field);
+      const model = field.model || 'unknown';
+      if (!fieldsByModel[model]) {
+        fieldsByModel[model] = [];
+        fieldMapping[model] = {};
+      }
+      
+      fieldsByModel[model].push({
+        id: field.id,
+        name: field.name,
+        fieldKey: field.fieldKey,
+        dataType: field.dataType,
+        position: field.position,
+        placeholder: field.placeholder || '',
+        standard: field.standard || false
+      });
+
+      // Extract simple key from fieldKey (e.g., "opportunity.project_title" -> "project_title")
+      const simpleKey = field.fieldKey?.includes('.') ? field.fieldKey.split('.')[1] : field.fieldKey;
+      if (simpleKey) {
+        fieldMapping[model][simpleKey] = field.id;
       }
     });
 
-    // Track what we find and create
-    const fieldMapping: Record<string, string> = {};
+    // Check for our required fields
     const fieldsToCreate: any[] = [];
     const fieldsFound: any[] = [];
 
-    // Check for our required fields
     for (const requiredField of REQUIRED_FIELDS) {
-      const existingField = existingFieldsMap.get(requiredField.key);
+      const model = requiredField.model || 'opportunity';
+      const existingField = fieldMapping[model]?.[requiredField.key];
       
       if (existingField) {
-        console.log(`[Sync Custom Fields] Found existing field: ${requiredField.key} -> ${existingField.id}`);
-        fieldMapping[requiredField.key] = existingField.id;
+        console.log(`[Sync Custom Fields] Found existing field: ${requiredField.key} -> ${existingField}`);
         fieldsFound.push({
           key: requiredField.key,
-          id: existingField.id,
-          name: existingField.name
+          id: existingField,
+          name: requiredField.name,
+          model: model
         });
       } else {
         console.log(`[Sync Custom Fields] Need to create field: ${requiredField.key}`);
@@ -90,10 +113,10 @@ export async function syncCustomFields(db: Db, location: any) {
           `https://services.leadconnectorhq.com/locations/${location.locationId}/customFields`,
           {
             name: fieldToCreate.name,
-            key: fieldToCreate.key,
             dataType: fieldToCreate.dataType,
             position: fieldToCreate.position,
-            model: 'opportunity'  // These fields are for opportunities/projects
+            model: fieldToCreate.model || 'opportunity'
+            // Note: Do NOT send 'key' property - GHL doesn't accept it
           },
           {
             headers: {
@@ -106,7 +129,12 @@ export async function syncCustomFields(db: Db, location: any) {
         );
 
         const createdField = createResponse.data.customField || createResponse.data;
-        fieldMapping[fieldToCreate.key] = createdField.id;
+        const model = fieldToCreate.model || 'opportunity';
+        
+        if (!fieldMapping[model]) {
+          fieldMapping[model] = {};
+        }
+        fieldMapping[model][fieldToCreate.key] = createdField.id;
         
         console.log(`[Sync Custom Fields] Created field ${fieldToCreate.key} with ID: ${createdField.id}`);
       } catch (createError: any) {
@@ -114,21 +142,15 @@ export async function syncCustomFields(db: Db, location: any) {
       }
     }
 
-    // Update location with custom field mappings
+    // Update location with custom field mappings organized by model
     const updateData: any = {
-      ghlCustomFields: fieldMapping,
+      customFieldsByModel: fieldsByModel,
+      customFieldMapping: fieldMapping,
       lastCustomFieldSync: new Date()
     };
 
-    // Also store all custom fields for reference
-    updateData.allCustomFields = customFields.map((field: any) => ({
-      id: field.id,
-      name: field.name,
-      key: field.key || field.fieldKey,
-      dataType: field.dataType,
-      model: field.model,
-      position: field.position
-    }));
+    // Also keep backward compatibility with opportunity fields
+    updateData.ghlCustomFields = fieldMapping.opportunity || {};
 
     await db.collection('locations').updateOne(
       { _id: location._id },
@@ -143,8 +165,11 @@ export async function syncCustomFields(db: Db, location: any) {
       totalFields: customFields.length,
       requiredFieldsFound: fieldsFound.length,
       fieldsCreated: fieldsToCreate.length,
+      fieldsByModel: Object.keys(fieldsByModel).map(model => ({
+        model,
+        count: fieldsByModel[model].length
+      })),
       fieldMapping,
-      allFields: updateData.allCustomFields,
       duration: `${duration}ms`
     };
 

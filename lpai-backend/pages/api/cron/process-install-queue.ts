@@ -117,7 +117,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       try {
         if (syncJob.type === 'agency_sync') {
           // Call the sync endpoint
-          const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/oauth/get-location-tokens`, {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://lpai-backend-omega.vercel.app'}/api/oauth/get-location-tokens`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ companyId: syncJob.companyId })
