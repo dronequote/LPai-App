@@ -241,21 +241,83 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         console.log('[OAuth Callback] Location tokens stored for:', tokenLocationId);
       }
 
-        // After storing tokens...
-        console.log('[OAuth Callback] Location tokens stored');
+      // After storing tokens...
+      console.log('[OAuth Callback] Location tokens stored');
 
-        // Trigger the setup in the background (fire and forget)
-        fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://lpai-backend-omega.vercel.app'}/api/locations/setup-location`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ locationId: tokenLocationId || finalCompanyId })
-        }).catch(err => {
-          console.error('[OAuth Callback] Failed to trigger setup:', err);
-        });
+      // Trigger the setup in the background (fire and forget)
+      fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://lpai-backend-omega.vercel.app'}/api/locations/setup-location`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ locationId: tokenLocationId || finalCompanyId })
+      }).catch(err => {
+        console.error('[OAuth Callback] Failed to trigger setup:', err);
+      });
 
-        // Redirect to progress page
-        const progressUrl = `/api/sync/progress/${tokenLocationId || finalCompanyId}?ui=true`;
-        console.log('[OAuth Callback] Redirecting to:', progressUrl);
+      // Redirect to progress page
+      const progressUrl = `/api/sync/progress/${tokenLocationId || finalCompanyId}?ui=true`;
+      console.log('[OAuth Callback] Redirecting to:', progressUrl);
 
-        res.writeHead(302, { Location: progressUrl });
-        return res.end();
+      res.writeHead(302, { Location: progressUrl });
+      return res.end();
+      } finally {
+      // Always release the lock when done
+      if (lockAcquired) {
+        await releaseInstallLock(db, finalCompanyId, finalLocationId, lockKey);
+        console.log(`[OAuth Callback] Released lock for ${finalLocationId || finalCompanyId}`);
+      }
+    }
+
+  } catch (error: any) {
+    console.error('[OAuth Callback] Error:', error.response?.data || error);
+    
+    // Error page
+    const errorHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Installation Failed</title>
+        <style>
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background: #f5f5f5;
+          }
+          .container {
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            text-align: center;
+            max-width: 400px;
+          }
+          h1 { color: #E74C3C; margin-bottom: 10px; }
+          p { color: #666; line-height: 1.6; }
+          .error { 
+            background: #fee; 
+            padding: 15px; 
+            border-radius: 4px; 
+            color: #c00;
+            margin: 20px 0;
+            font-size: 14px;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>❌ Installation Failed</h1>
+          <p>There was an error installing the LPai App.</p>
+          <div class="error">${error.response?.data?.error || error.message || 'Unknown error occurred'}</div>
+          <p>Please try again or contact support if the problem persists.</p>
+        </div>
+      </body>
+      </html>
+    `;
+
+    res.setHeader('Content-Type', 'text/html');
+    return res.status(500).send(errorHtml);
+  }
+}
