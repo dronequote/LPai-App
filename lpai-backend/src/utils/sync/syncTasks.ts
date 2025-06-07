@@ -19,35 +19,42 @@ export async function syncTasks(db: Db, location: any, options: SyncOptions = {}
     // Get auth header (OAuth or API key)
     const auth = await getAuthHeader(location);
     
-    // Calculate date range
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - daysBack);
+    // Note: GHL tasks endpoint doesn't support date filtering in the search
+    // We'll fetch all tasks and filter locally if needed
     
     // Fetch tasks from GHL
-    // Updated syncTasks.ts
     const response = await axios.post(
-    `https://services.leadconnectorhq.com/locations/${location.locationId}/tasks/search`,
-    {
-        limit: 100,
-        skip: offset,
-        startDate: startDate.toISOString(),
-        endDate: endDate.toISOString()
-    },
-    {
+      `https://services.leadconnectorhq.com/locations/${location.locationId}/tasks/search`,
+      {
+        limit: limit,
+        skip: offset
+      },
+      {
         headers: {
-        'Authorization': auth.header,
-        'Version': '2021-07-28',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
+          'Authorization': auth.header,
+          'Version': '2021-07-28',
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
         }
-    }
+      }
     );
 
-    const ghlTasks = response.data.tasks || [];
-    const meta = response.data.meta || {};
+    const tasksResponse = response.data;
+    const ghlTasks = tasksResponse.tasks || [];
+    const traceId = tasksResponse.traceId;
     
-    console.log(`[Sync Tasks] Found ${ghlTasks.length} tasks (Total: ${meta.total || ghlTasks.length})`);
+    console.log(`[Sync Tasks] Found ${ghlTasks.length} tasks (TraceId: ${traceId})`);
+
+    // If we need to filter by date, do it locally
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - daysBack);
+    
+    const filteredTasks = daysBack ? ghlTasks.filter((task: any) => {
+      const taskDate = new Date(task.dateAdded || task.createdAt);
+      return taskDate >= cutoffDate;
+    }) : ghlTasks;
+
+    console.log(`[Sync Tasks] Processing ${filteredTasks.length} tasks within date range`);
 
     // Process each task
     let created = 0;
@@ -55,45 +62,43 @@ export async function syncTasks(db: Db, location: any, options: SyncOptions = {}
     let skipped = 0;
     const errors: any[] = [];
 
-    for (const ghlTask of ghlTasks) {
+    for (const ghlTask of filteredTasks) {
       try {
         // Check if task exists
         const existingTask = await db.collection('tasks').findOne({
-          ghlTaskId: ghlTask.id,
+          ghlTaskId: ghlTask._id || ghlTask.id,
           locationId: location.locationId
         });
 
         // Prepare task data
         const taskData = {
-          ghlTaskId: ghlTask.id,
+          ghlTaskId: ghlTask._id || ghlTask.id,
           locationId: location.locationId,
           
           // Basic Info
-          title: ghlTask.title || ghlTask.name || 'Untitled Task',
-          description: ghlTask.description || ghlTask.body || '',
+          title: ghlTask.title || 'Untitled Task',
+          description: ghlTask.body || '',
           
           // Relationships
           contactId: ghlTask.contactId || null,
-          opportunityId: ghlTask.opportunityId || null,
-          assignedTo: ghlTask.assignedTo || ghlTask.userId || null,
+          contactDetails: ghlTask.contactDetails || null,
+          assignedTo: ghlTask.assignedTo || null,
+          assignedToUserDetails: ghlTask.assignedToUserDetails || null,
           
           // Status & Priority
-          status: ghlTask.isCompleted || ghlTask.completed ? 'completed' : 'pending',
-          priority: ghlTask.priority || 'normal',
+          status: ghlTask.completed ? 'completed' : 'pending',
+          completed: ghlTask.completed || false,
           
           // Dates
           dueDate: ghlTask.dueDate ? new Date(ghlTask.dueDate) : null,
           completedAt: ghlTask.completedAt ? new Date(ghlTask.completedAt) : null,
           
-          // Additional Fields
-          type: ghlTask.type || 'general',
-          tags: ghlTask.tags || [],
-          reminderDate: ghlTask.reminderDate ? new Date(ghlTask.reminderDate) : null,
-          
           // Metadata
-          createdBy: ghlTask.createdBy || ghlTask.userId,
+          deleted: ghlTask.deleted || false,
           ghlCreatedAt: ghlTask.createdAt ? new Date(ghlTask.createdAt) : null,
           ghlUpdatedAt: ghlTask.updatedAt ? new Date(ghlTask.updatedAt) : null,
+          dateAdded: ghlTask.dateAdded ? new Date(ghlTask.dateAdded) : null,
+          dateUpdated: ghlTask.dateUpdated ? new Date(ghlTask.dateUpdated) : null,
           
           // Sync Metadata
           lastSyncedAt: new Date(),
@@ -124,7 +129,7 @@ export async function syncTasks(db: Db, location: any, options: SyncOptions = {}
       } catch (taskError: any) {
         console.error(`[Sync Tasks] Error processing task ${ghlTask.title}:`, taskError.message);
         errors.push({
-          taskId: ghlTask.id,
+          taskId: ghlTask._id || ghlTask.id,
           title: ghlTask.title,
           error: taskError.message
         });
@@ -149,10 +154,10 @@ export async function syncTasks(db: Db, location: any, options: SyncOptions = {}
       created,
       updated,
       skipped,
-      processed: ghlTasks.length,
-      totalInGHL: meta.total || ghlTasks.length,
+      processed: filteredTasks.length,
+      totalInGHL: ghlTasks.length,
       taskStats: taskStats,
-      hasMore: meta.nextPage !== null,
+      hasMore: ghlTasks.length === limit,
       errors: errors.length > 0 ? errors : undefined,
       duration: `${duration}ms`
     };

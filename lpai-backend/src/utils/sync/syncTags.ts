@@ -22,7 +22,8 @@ export async function syncTags(db: Db, location: any) {
       }
     );
 
-    const ghlTags = response.data.tags || response.data || [];
+    const tagsResponse = response.data;
+    const ghlTags = tagsResponse.tags || [];
     
     console.log(`[Sync Tags] Found ${ghlTags.length} tags from GHL`);
 
@@ -31,19 +32,27 @@ export async function syncTags(db: Db, location: any) {
 
     // Insert tags into database
     if (ghlTags.length > 0) {
-      const tagsToInsert = ghlTags.map((tag: any) => ({
-        _id: new ObjectId(),
-        locationId: location.locationId,
-        name: tag.name || tag,
-        ghlTagId: tag.id || null,
-        slug: (tag.name || tag).toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-        color: generateTagColor(tag.name || tag),
-        isActive: true,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      }));
+      const tagsToInsert = ghlTags.map((tag: any) => {
+        // Tags from GHL have structure: { id, name, locationId }
+        const tagName = tag.name || '';  // Handle empty names
+        
+        return {
+          _id: new ObjectId(),
+          locationId: location.locationId,
+          name: tagName,
+          ghlTagId: tag.id,
+          slug: tagName ? tagName.toLowerCase().replace(/[^a-z0-9]+/g, '-') : 'no-name',
+          color: generateTagColor(tagName || 'default'),
+          isActive: true,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        };
+      });
 
       await db.collection('tags').insertMany(tagsToInsert);
+      
+      // Log some example tags for debugging
+      console.log(`[Sync Tags] Sample tags inserted:`, tagsToInsert.slice(0, 3).map(t => ({ name: t.name, id: t.ghlTagId })));
     }
 
     // Update location with tag sync info
