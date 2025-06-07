@@ -241,91 +241,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         console.log('[OAuth Callback] Location tokens stored for:', tokenLocationId);
       }
 
-      // Success page
-      const html = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <title>Installation Successful</title>
-          <style>
-            body {
-              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              min-height: 100vh;
-              margin: 0;
-              background: #f5f5f5;
-            }
-            .container {
-              background: white;
-              padding: 40px;
-              border-radius: 8px;
-              box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-              text-align: center;
-              max-width: 500px;
-            }
-            h1 { color: #2E86AB; margin-bottom: 10px; }
-            p { color: #666; line-height: 1.6; }
-            .success { color: #27AE60; font-weight: 600; }
-            .details { 
-              background: #f0f0f0; 
-              padding: 20px; 
-              border-radius: 4px; 
-              margin: 20px 0;
-              text-align: left;
-            }
-            .details-item {
-              margin: 10px 0;
-              font-size: 14px;
-            }
-            .label {
-              font-weight: 600;
-              color: #333;
-            }
-            .value {
-              color: #666;
-              font-family: monospace;
-            }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <h1>✅ Installation Successful!</h1>
-            <p class="success">LPai App has been successfully installed.</p>
-            <div class="details">
-              <div class="details-item">
-                <span class="label">Install Type:</span> 
-                <span class="value">${userType || 'Unknown'}</span>
-              </div>
-              ${tokenLocationId ? `
-                <div class="details-item">
-                  <span class="label">Location ID:</span> 
-                  <span class="value">${tokenLocationId}</span>
-                </div>
-              ` : ''}
-              <div class="details-item">
-                <span class="label">Company ID:</span> 
-                <span class="value">${finalCompanyId}</span>
-              </div>
-              ${approvedLocations && approvedLocations.length > 0 ? `
-                <div class="details-item">
-                  <span class="label">Approved Locations:</span> 
-                  <span class="value">${approvedLocations.length} locations</span>
-                </div>
-              ` : ''}
-            </div>
-            <p>The app is now connected and webhooks will begin flowing automatically.</p>
-            <p style="margin-top: 30px; font-size: 14px;">You can close this window.</p>
-          </div>
-        </body>
-        </html>
-      `;
+      // After storing tokens...
+      console.log('[OAuth Callback] Location tokens stored');
 
-      res.setHeader('Content-Type', 'text/html');
-      return res.status(200).send(html);
+      // Trigger the setup in the background (fire and forget)
+      fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://lpai-backend-omega.vercel.app'}/api/locations/setup-location`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ locationId: tokenLocationId || finalCompanyId })
+      }).catch(err => {
+        console.error('[OAuth Callback] Failed to trigger setup:', err);
+      });
 
-    } finally {
+      // Redirect to progress page
+      const progressUrl = `/api/sync/progress/${tokenLocationId || finalCompanyId}?ui=true`;
+      console.log('[OAuth Callback] Redirecting to:', progressUrl);
+
+      res.writeHead(302, { Location: progressUrl });
+      return res.end();
+      } finally {
       // Always release the lock when done
       if (lockAcquired) {
         await releaseInstallLock(db, finalCompanyId, finalLocationId, lockKey);
