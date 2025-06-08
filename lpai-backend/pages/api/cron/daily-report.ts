@@ -1,7 +1,7 @@
 // pages/api/cron/daily-report.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
-import { DailyReportGenerator } from '../../../src/utils/reports/dailyReport';
+import { EnhancedDailyReportGenerator } from '../../../src/utils/reports/enhancedDailyReport';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   // Verify cron secret
@@ -22,7 +22,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     
     console.log('[Daily Report Cron] Starting daily report generation...');
     
-    const reportGenerator = new DailyReportGenerator(db);
+    const reportGenerator = new EnhancedDailyReportGenerator(db);
     await reportGenerator.generateDailyReport();
     
     console.log('[Daily Report Cron] Daily report sent successfully');
