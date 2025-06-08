@@ -1,7 +1,7 @@
-// pages/api/cron/daily-report.ts
+// pages/api/cron/weekly-report.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
-import { DailyReportGenerator } from '../../../src/utils/reports/dailyReport';
+import { WeeklyReportGenerator } from '../../../src/utils/reports/weeklyReport';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   // Verify cron secret
@@ -12,7 +12,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const hasValidAuth = cronSecret && authHeader === `Bearer ${cronSecret}`;
   
   if (!isVercelCron && !hasValidAuth) {
-    console.log('[Daily Report Cron] Unauthorized attempt');
+    console.log('[Weekly Report Cron] Unauthorized attempt');
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
@@ -20,23 +20,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const client = await clientPromise;
     const db = client.db('lpai');
     
-    console.log('[Daily Report Cron] Starting daily report generation...');
+    console.log('[Weekly Report Cron] Starting weekly report generation...');
     
-    const reportGenerator = new DailyReportGenerator(db);
-    await reportGenerator.generateDailyReport();
+    const reportGenerator = new WeeklyReportGenerator(db);
+    await reportGenerator.generateWeeklyReport();
     
-    console.log('[Daily Report Cron] Daily report sent successfully');
+    console.log('[Weekly Report Cron] Weekly report sent successfully');
     
     return res.status(200).json({
       success: true,
-      message: 'Daily report sent successfully',
+      message: 'Weekly report sent successfully',
       timestamp: new Date()
     });
     
   } catch (error: any) {
-    console.error('[Daily Report Cron] Error:', error);
+    console.error('[Weekly Report Cron] Error:', error);
     return res.status(500).json({
-      error: 'Failed to generate daily report',
+      error: 'Failed to generate weekly report',
       message: error.message
     });
   }
