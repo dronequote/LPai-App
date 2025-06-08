@@ -388,18 +388,18 @@ export class EnhancedWeeklyReportGenerator {
                 locationId: 1,
                 name: 1,
                 issue: {
-                  $cond: [
-                    { $eq: ['$ghlOAuth.needsReauth', true] },
-                    'OAuth needs refresh',
-                    {
-                      $cond: [
-                        { $exists: ['$setupError', true] },
-                        'Setup error',
-                        'Setup incomplete > 3 days'
-                      ]
-                    }
-                  ]
-                },
+                        $cond: [
+                            { $eq: ['$ghlOAuth.needsReauth', true] },
+                            'OAuth needs refresh',
+                            {
+                            $cond: [
+                                { $ne: ['$setupError', null] },  // <-- FIXED: Check if not null
+                                'Setup error',
+                                'Setup incomplete > 3 days'
+                            ]
+                            }
+                        ]
+                        },
                 daysSinceInstall: {
                   $divide: [
                     { $subtract: [new Date(), '$installedAt'] },
