@@ -335,7 +335,7 @@ export class EnhancedDailyReportGenerator {
                     'OAuth needs refresh',
                     {
                       $cond: [
-                        { $exists: ['$setupError', true] },
+                        { $ne: ['$setupError', null] },  // <-- FIXED: Check if not null
                         'Setup error',
                         'Incomplete setup'
                       ]
