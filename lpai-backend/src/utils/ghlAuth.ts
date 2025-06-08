@@ -152,14 +152,3 @@ export async function getLocationToken(companyToken: string, locationId: string)
     throw error;
   }
 }
-
-// Helper function to check if token needs refresh (for cron job)
-export function tokenNeedsRefresh(location: any): boolean {
-  if (!location.ghlOAuth?.expiresAt) return true;
-  
-  const expiresAt = new Date(location.ghlOAuth.expiresAt);
-  const now = new Date();
-  const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000);
-  
-  return expiresAt <= oneHourFromNow;
-}
