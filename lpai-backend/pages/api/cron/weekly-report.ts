@@ -1,7 +1,7 @@
 // pages/api/cron/weekly-report.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
-import { WeeklyReportGenerator } from '../../../src/utils/reports/weeklyReport';
+import { EnhancedWeeklyReportGenerator } from '../../../src/utils/reports/enhancedWeeklyReport';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   // Verify cron secret
@@ -22,7 +22,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     
     console.log('[Weekly Report Cron] Starting weekly report generation...');
     
-    const reportGenerator = new WeeklyReportGenerator(db);
+    const reportGenerator = new EnhancedWeeklyReportGenerator(db);
     await reportGenerator.generateWeeklyReport();
     
     console.log('[Weekly Report Cron] Weekly report sent successfully');
