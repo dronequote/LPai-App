@@ -78,6 +78,36 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 }
 
+// Helper function to format duration strings
+function formatDuration(durationStr: string): string {
+  if (!durationStr || typeof durationStr !== 'string') return durationStr;
+  
+  // Handle milliseconds (e.g., "157ms")
+  if (durationStr.includes('ms')) {
+    const ms = parseInt(durationStr.replace('ms', ''));
+    if (ms < 1000) {
+      return durationStr; // Keep as ms if under 1 second
+    } else {
+      const seconds = (ms / 1000).toFixed(1);
+      return seconds + 's';
+    }
+  }
+  
+  // Handle seconds (e.g., "119.4s")
+  if (durationStr.includes('s') && !durationStr.includes('ms')) {
+    const totalSeconds = parseFloat(durationStr.replace('s', ''));
+    if (totalSeconds >= 60) {
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = Math.round(totalSeconds % 60);
+      return `${minutes}m ${seconds}s`;
+    } else {
+      return Math.round(totalSeconds) + 's';
+    }
+  }
+  
+  return durationStr;
+}
+
 function generateProgressUI(entityId: string, isCompany: boolean, locations: any[]): string {
   const hasLocations = locations.length > 0;
   const allComplete = locations.every(loc => loc.setupCompleted);
@@ -496,12 +526,12 @@ function generateLocationCard(location: any, index: number): string {
   const startedAt = location.setupResults?.startedAt || location.syncProgress?.overall?.startedAt;
   const startedTime = startedAt ? new Date(startedAt).toLocaleString() : 'Not started';
   
-  // Parse duration
+  // Parse duration and format it
   let duration = 'N/A';
   if (location.setupResults?.duration) {
-    duration = location.setupResults.duration;
+    duration = formatDuration(location.setupResults.duration);
   } else if (location.syncProgress?.overall?.duration) {
-    duration = location.syncProgress.overall.duration;
+    duration = formatDuration(location.syncProgress.overall.duration);
   }
   
   // Get counts from setupResults
@@ -613,36 +643,6 @@ function generateLocationCard(location: any, index: number): string {
 }
 
 function generateDetailedProgress(location: any): string {
-  // Helper function to format duration
-  function formatDuration(durationStr: string): string {
-    if (!durationStr || typeof durationStr !== 'string') return durationStr;
-    
-    // Handle milliseconds (e.g., "157ms")
-    if (durationStr.includes('ms')) {
-      const ms = parseInt(durationStr.replace('ms', ''));
-      if (ms < 1000) {
-        return durationStr; // Keep as ms if under 1 second
-      } else {
-        const seconds = (ms / 1000).toFixed(1);
-        return seconds + 's';
-      }
-    }
-    
-    // Handle seconds (e.g., "119.4s")
-    if (durationStr.includes('s') && !durationStr.includes('ms')) {
-      const totalSeconds = parseFloat(durationStr.replace('s', ''));
-      if (totalSeconds >= 60) {
-        const minutes = Math.floor(totalSeconds / 60);
-        const seconds = Math.round(totalSeconds % 60);
-        return `${minutes}m ${seconds}s`;
-      } else {
-        return Math.round(totalSeconds) + 's';
-      }
-    }
-    
-    return durationStr;
-  }
-
   const steps = [
     { key: 'locationDetails', name: 'Location Configuration', icon: '🏢' },
     { key: 'pipelines', name: 'Sales Pipelines', icon: '📊' },
