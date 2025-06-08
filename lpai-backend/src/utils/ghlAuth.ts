@@ -1,63 +1,46 @@
-// src/utils/ghlAuth.ts
+// /src/utils/ghlAuth.ts
 import axios from 'axios';
 import clientPromise from '../lib/mongodb';
 
-export interface AuthResult {
-  header: string;
-  type: 'oauth' | 'apikey';
-  needsRefresh?: boolean;
+export interface OAuthTokens {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: Date;
+  tokenType: string;
+  userType?: string;
 }
 
-export async function getAuthHeader(location: any): Promise<AuthResult> {
-  // Check if we have OAuth tokens
-  if (location.ghlOAuth?.accessToken) {
-    // Check if token is expired or expiring soon
-    const expiresAt = new Date(location.ghlOAuth.expiresAt);
-    const now = new Date();
-    const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000); // 1 hour buffer
-    
-    if (expiresAt < oneHourFromNow) {
-      console.log(`[Auth] Token expired or expiring soon for location ${location.locationId}, refreshing...`);
-      // Token expired or expiring soon, refresh it
-      const refreshed = await refreshOAuthToken(location);
-      if (refreshed) {
-        return {
-          header: `Bearer ${refreshed.accessToken}`,
-          type: 'oauth',
-          needsRefresh: false
-        };
-      }
-    }
-    
-    return {
-      header: `Bearer ${location.ghlOAuth.accessToken}`,
-      type: 'oauth',
-      needsRefresh: false
-    };
+export function getAuthHeader(location: any): string {
+  if (location?.ghlAuth) {
+    return `Bearer ${location.ghlAuth.access_token}`;
   }
-  
-  // Fall back to API key
-  if (location.apiKey) {
-    return {
-      header: `Bearer ${location.apiKey}`,
-      type: 'apikey',
-      needsRefresh: false
-    };
+  if (location?.ghlOAuth?.accessToken) {
+    return `Bearer ${location.ghlOAuth.accessToken}`;
   }
-  
-  throw new Error(`No authentication method available for location ${location.locationId || location._id}`);
+  if (location?.apiKey) {
+    return `Bearer ${location.apiKey}`;
+  }
+  throw new Error('No authentication method available');
 }
 
-export async function refreshOAuthToken(location: any): Promise<any> {
-  if (!location.ghlOAuth?.refreshToken) {
-    console.error('[Auth] No refresh token available');
-    return null;
-  }
+export function tokenNeedsRefresh(location: any): boolean {
+  if (!location?.ghlOAuth?.expiresAt) return false;
   
+  const expiresAt = new Date(location.ghlOAuth.expiresAt);
+  const now = new Date();
+  const bufferTime = 24 * 60 * 60 * 1000; // 24 hours buffer
+  
+  return (expiresAt.getTime() - now.getTime()) < bufferTime;
+}
+
+export async function refreshOAuthToken(location: any): Promise<OAuthTokens> {
+  if (!location?.ghlOAuth?.refreshToken) {
+    throw new Error('No refresh token available');
+  }
+
+  console.log(`[OAuth Refresh] Starting refresh for location ${location.locationId}`);
+
   try {
-    console.log('[Auth] Refreshing OAuth token...');
-    
-    // Only send required fields
     const response = await axios.post(
       'https://services.leadconnectorhq.com/oauth/token',
       new URLSearchParams({
@@ -73,56 +56,71 @@ export async function refreshOAuthToken(location: any): Promise<any> {
         }
       }
     );
-    
+
     const { access_token, refresh_token, expires_in } = response.data;
     
-    // Update tokens in database
+    // Calculate new expiry
+    const expiresAt = new Date(Date.now() + (expires_in * 1000));
+    
+    // Update the database with new tokens
     const client = await clientPromise;
     const db = client.db('lpai');
     
-    const newExpiresAt = new Date(Date.now() + (expires_in * 1000));
-    
-    await db.collection('locations').updateOne(
-      { _id: location._id },
+    const updateResult = await db.collection('locations').updateOne(
+      { 
+        locationId: location.locationId 
+      },
       {
         $set: {
           'ghlOAuth.accessToken': access_token,
-          'ghlOAuth.refreshToken': refresh_token,
-          'ghlOAuth.expiresAt': newExpiresAt,
-          'ghlOAuth.lastRefreshed': new Date()
+          'ghlOAuth.refreshToken': refresh_token || location.ghlOAuth.refreshToken, // Keep old refresh token if new one not provided
+          'ghlOAuth.expiresAt': expiresAt,
+          'ghlOAuth.lastRefreshed': new Date(),
+          'ghlOAuth.refreshCount': (location.ghlOAuth.refreshCount || 0) + 1,
+          updatedAt: new Date()
         }
       }
     );
-    
-    console.log('[Auth] Token refreshed successfully');
-    
+
+    if (updateResult.modifiedCount === 0) {
+      console.error(`[OAuth Refresh] Failed to update tokens for location ${location.locationId}`);
+      throw new Error('Failed to update tokens in database');
+    }
+
+    console.log(`[OAuth Refresh] Successfully refreshed tokens for location ${location.locationId}`);
+    console.log(`[OAuth Refresh] New token expires at: ${expiresAt.toISOString()}`);
+    console.log(`[OAuth Refresh] This is refresh #${(location.ghlOAuth.refreshCount || 0) + 1}`);
+
     return {
       accessToken: access_token,
-      refreshToken: refresh_token,
-      expiresAt: newExpiresAt
+      refreshToken: refresh_token || location.ghlOAuth.refreshToken,
+      expiresAt: expiresAt,
+      tokenType: 'Bearer'
     };
-    
+
   } catch (error: any) {
-    console.error('[Auth] Token refresh failed:', error.response?.data || error);
+    console.error(`[OAuth Refresh] Error refreshing token for location ${location.locationId}:`, error.response?.data || error);
     
-    // If refresh fails due to invalid token, mark for re-auth
-    if (error.response?.status === 400 || error.response?.status === 401) {
+    // If refresh fails, mark the location as needing reauth
+    try {
       const client = await clientPromise;
       const db = client.db('lpai');
       
       await db.collection('locations').updateOne(
-        { _id: location._id },
+        { locationId: location.locationId },
         {
           $set: {
             'ghlOAuth.needsReauth': true,
-            'ghlOAuth.reauthReason': error.response?.data?.error_description || 'Refresh token invalid',
-            'ghlOAuth.reauthDate': new Date()
+            'ghlOAuth.lastRefreshError': error.response?.data?.error || error.message,
+            'ghlOAuth.lastRefreshAttempt': new Date()
           }
         }
       );
+    } catch (dbError) {
+      console.error('[OAuth Refresh] Failed to mark location as needing reauth:', dbError);
     }
     
-    return null;
+    throw error;
   }
 }
 
