@@ -341,9 +341,40 @@ function generateProgressUI(entityId: string, isCompany: boolean, locations: any
             retina_detect: true
         });
 
+        // Helper function to format duration
+        function formatDuration(durationStr) {
+            if (!durationStr || typeof durationStr !== 'string') return durationStr;
+            
+            // Handle milliseconds (e.g., "157ms")
+            if (durationStr.includes('ms')) {
+                const ms = parseInt(durationStr.replace('ms', ''));
+                if (ms < 1000) {
+                    return durationStr; // Keep as ms if under 1 second
+                } else {
+                    const seconds = (ms / 1000).toFixed(1);
+                    return seconds + 's';
+                }
+            }
+            
+            // Handle seconds (e.g., "119.4s")
+            if (durationStr.includes('s') && !durationStr.includes('ms')) {
+                const totalSeconds = parseFloat(durationStr.replace('s', ''));
+                if (totalSeconds >= 60) {
+                    const minutes = Math.floor(totalSeconds / 60);
+                    const seconds = Math.round(totalSeconds % 60);
+                    return \`\${minutes}m \${seconds}s\`;
+                } else {
+                    return Math.round(totalSeconds) + 's';
+                }
+            }
+            
+            return durationStr;
+        }
+
         // OBSERVATION ONLY - Just check progress, don't trigger anything
         const entityId = '${entityId}';
         const isCompany = ${isCompany};
+        const hasLocations = ${hasLocations};
         let pollInterval;
         let isComplete = ${allComplete};
 
@@ -432,13 +463,14 @@ function generateProgressUI(entityId: string, isCompany: boolean, locations: any
             window.location.href = \`/api/sync/progress/\${locationId}?ui=true\`;
         }
 
-        // Start polling if not complete (observation only)
-        if (!isComplete) {
+        // Start polling immediately
+        if (!hasLocations || !isComplete) {
             // Check immediately
             checkProgress();
             
-            // Then check every 3 seconds (less aggressive than before)
-            pollInterval = setInterval(checkProgress, 3000);
+            // Poll more frequently if no locations yet
+            const interval = hasLocations ? 3000 : 1000; // 1 second if waiting for initial data
+            pollInterval = setInterval(checkProgress, interval);
         }
 
         // Cleanup on page unload
@@ -581,6 +613,36 @@ function generateLocationCard(location: any, index: number): string {
 }
 
 function generateDetailedProgress(location: any): string {
+  // Helper function to format duration
+  function formatDuration(durationStr: string): string {
+    if (!durationStr || typeof durationStr !== 'string') return durationStr;
+    
+    // Handle milliseconds (e.g., "157ms")
+    if (durationStr.includes('ms')) {
+      const ms = parseInt(durationStr.replace('ms', ''));
+      if (ms < 1000) {
+        return durationStr; // Keep as ms if under 1 second
+      } else {
+        const seconds = (ms / 1000).toFixed(1);
+        return seconds + 's';
+      }
+    }
+    
+    // Handle seconds (e.g., "119.4s")
+    if (durationStr.includes('s') && !durationStr.includes('ms')) {
+      const totalSeconds = parseFloat(durationStr.replace('s', ''));
+      if (totalSeconds >= 60) {
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = Math.round(totalSeconds % 60);
+        return `${minutes}m ${seconds}s`;
+      } else {
+        return Math.round(totalSeconds) + 's';
+      }
+    }
+    
+    return durationStr;
+  }
+
   const steps = [
     { key: 'locationDetails', name: 'Location Configuration', icon: '🏢' },
     { key: 'pipelines', name: 'Sales Pipelines', icon: '📊' },
@@ -727,7 +789,7 @@ function generateDetailedProgress(location: any): string {
                     <h4 class="font-semibold">${step.name}</h4>
                     ${isComplete && (durationStr || countStr) ? 
                       `<p class="text-sm text-gray-400 mt-1">
-                        ${durationStr ? `Completed in ${durationStr}` : ''}
+                        ${durationStr ? `Completed in ${formatDuration(durationStr)}` : ''}
                         ${durationStr && countStr ? ' • ' : ''}
                         ${countStr}
                       </p>` :
