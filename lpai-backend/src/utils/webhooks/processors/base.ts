@@ -2,6 +2,7 @@
 import { Db, MongoClient } from 'mongodb';
 import { QueueManager, QueueItem } from '../queueManager';
 import clientPromise from '../../../lib/mongodb';
+import { WebhookAnalytics } from '../../analytics/webhookAnalytics';
 
 export interface ProcessorConfig {
   queueType: string;
@@ -10,6 +11,7 @@ export interface ProcessorConfig {
   maxProcessingTime?: number;
   processorName: string;
 }
+
 
 export abstract class BaseProcessor {
   protected db: Db;
@@ -20,6 +22,7 @@ export abstract class BaseProcessor {
   protected startTime: number;
   protected processedCount: number = 0;
   protected errorCount: number = 0;
+  protected webhookAnalytics: WebhookAnalytics;
 
   constructor(config: ProcessorConfig, db?: Db) {
     console.log(`[${config.processorName}] Constructor called with db: ${db ? 'provided' : 'not provided'}`);
@@ -44,6 +47,7 @@ export abstract class BaseProcessor {
     
     console.log(`[${this.config.processorName}] Processor created with ID: ${this.processorId}`);
   }
+  
 
   /**
    * Initialize database connection
@@ -67,7 +71,7 @@ export abstract class BaseProcessor {
       
       console.log(`[${this.config.processorName}] Creating QueueManager...`);
       this.queueManager = new QueueManager(this.db);
-      
+      this.webhookAnalytics = new WebhookAnalytics(this.db);
       console.log(`[${this.config.processorName}] Initialization complete - Processor ${this.processorId} ready`);
     } catch (error) {
       console.error(`[${this.config.processorName}] Failed to initialize:`, error);
@@ -83,7 +87,7 @@ export abstract class BaseProcessor {
     
     try {
       await this.initialize();
-      
+
       // Log processor start
       console.log(`[${this.config.processorName}] Logging processor start...`);
       await this.logProcessorStart();
@@ -160,13 +164,20 @@ export abstract class BaseProcessor {
     console.log(`[${this.config.processorName}] Processing item ${item.webhookId} (${item.type})`);
     
     try {
+      // Record when processing starts
+      await this.webhookAnalytics.recordProcessingStarted(item.webhookId);
+      
       // Call the implementation-specific processing
       await this.processItem(item);
       
       // Mark as complete
       console.log(`[${this.config.processorName}] Marking ${item.webhookId} as complete...`);
       await this.queueManager.markComplete(item.webhookId);
+      await this.queueManager.markComplete(item._id);
       
+      // Record successful completion
+      await this.webhookAnalytics.recordProcessingCompleted(item.webhookId, true);
+
       this.processedCount++;
       
       const duration = Date.now() - itemStartTime;
@@ -177,6 +188,13 @@ export abstract class BaseProcessor {
       
       console.error(`[${this.config.processorName}] Error processing ${item.webhookId}:`, error);
       console.error(`[${this.config.processorName}] Error stack:`, error.stack);
+      
+      // Record failure
+      await this.webhookAnalytics.recordProcessingCompleted(
+        item.webhookId, 
+        false, 
+        error.message || 'Unknown error'
+      );
       
       // Mark as failed with retry
       console.log(`[${this.config.processorName}] Marking ${item.webhookId} as failed...`);
