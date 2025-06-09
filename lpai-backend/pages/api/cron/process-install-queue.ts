@@ -54,34 +54,86 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           }
         );
         
-        // Add back to main queue for processing by CriticalProcessor
-        await db.collection('webhook_queue').insertOne({
-          _id: new ObjectId(),
-          webhookId: item.webhookId,
-          type: item.payload.type,
-          payload: item.payload,
-          locationId: item.payload.locationId,
-          status: 'pending',
-          attempts: 0,
-          queueType: 'critical',
-          priority: 1,
-          createdAt: new Date(),
-          processAfter: new Date(),
-          source: 'install_retry'
-        });
-        
-        // Mark as complete in retry queue
-        await db.collection('install_retry_queue').updateOne(
-          { _id: item._id },
-          {
-            $set: { 
-              status: 'completed',
-              completedAt: new Date()
+        // Check if this is a SETUP_LOCATION type
+        if (item.payload.type === 'SETUP_LOCATION') {
+          console.log(`[Install Queue Cron] Processing location setup for ${item.payload.locationId}`);
+          
+          // Call setup-location endpoint directly
+          const response = await fetch(
+            `${process.env.NEXT_PUBLIC_API_URL || 'https://lpai-backend-omega.vercel.app'}/api/locations/setup-location`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                locationId: item.payload.locationId,
+                fullSync: item.payload.fullSync 
+              })
             }
+          );
+
+          if (response.ok) {
+            const result = await response.json();
+            
+            // Update webhook metrics if we have the original webhook ID
+            if (item.payload.originalWebhookId) {
+              await db.collection('webhook_metrics').updateOne(
+                { webhookId: item.payload.originalWebhookId },
+                { 
+                  $set: { 
+                    'timestamps.steps.setupCompleted': new Date(),
+                    'setupResult': result
+                  } 
+                }
+              );
+            }
+
+            // Mark as complete
+            await db.collection('install_retry_queue').updateOne(
+              { _id: item._id },
+              {
+                $set: { 
+                  status: 'completed',
+                  completedAt: new Date(),
+                  result: result
+                }
+              }
+            );
+            
+            results.success++;
+            console.log(`[Install Queue Cron] Setup completed for ${item.payload.locationId}`);
+          } else {
+            throw new Error(`Setup failed with status ${response.status}: ${response.statusText}`);
           }
-        );
-        
-        results.success++;
+        } else {
+          // For other types (INSTALL, etc), add back to main queue for CriticalProcessor
+          await db.collection('webhook_queue').insertOne({
+            _id: new ObjectId(),
+            webhookId: item.webhookId,
+            type: item.payload.type,
+            payload: item.payload,
+            locationId: item.payload.locationId,
+            status: 'pending',
+            attempts: 0,
+            queueType: 'critical',
+            priority: 1,
+            createdAt: new Date(),
+            processAfter: new Date(),
+            source: 'install_retry'
+          });
+          
+          // Mark as complete in retry queue
+          await db.collection('install_retry_queue').updateOne(
+            { _id: item._id },
+            {
+              $set: { 
+                status: 'completed',
+                completedAt: new Date()
+              }
+            }
+          );
+          
+          results.success++;
+        }
       } catch (error: any) {
         console.error(`[Install Queue Cron] Failed to process ${item.webhookId}:`, error);
         

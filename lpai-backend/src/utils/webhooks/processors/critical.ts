@@ -198,76 +198,67 @@ export class CriticalProcessor extends BaseProcessor {
   }
 
   /**
-   * Trigger location setup process
-   */
-  private async triggerLocationSetup(locationId: string, webhookId: string): Promise<void> {
-    try {
-      console.log(`[CriticalProcessor] Triggering setup for location ${locationId}`);
-      
-      // Track setup start
-      await this.db.collection('webhook_metrics').updateOne(
-        { webhookId },
-        { $set: { 'timestamps.steps.setupStarted': new Date() } }
-      );
+ * Trigger location setup process
+ */
+private async triggerLocationSetup(locationId: string, webhookId: string): Promise<void> {
+  try {
+    console.log(`[CriticalProcessor] Queueing setup for location ${locationId}`);
+    
+    // Track setup start
+    await this.db.collection('webhook_metrics').updateOne(
+      { webhookId },
+      { $set: { 'timestamps.steps.setupQueued': new Date() } }
+    );
 
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || 'https://lpai-backend-omega.vercel.app'}/api/locations/setup-location`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ locationId, fullSync: true })
+    // Add to install retry queue for background processing
+    await this.db.collection('install_retry_queue').insertOne({
+      _id: new ObjectId(),
+      webhookId: `setup_${locationId}_${webhookId}`,
+      payload: {
+        type: 'SETUP_LOCATION',
+        locationId: locationId,
+        fullSync: true,
+        originalWebhookId: webhookId
+      },
+      reason: 'install_webhook_setup',
+      attempts: 0,
+      status: 'pending',
+      createdAt: new Date(),
+      nextRetryAt: new Date() // Process immediately
+    });
+
+    // Update location to indicate setup is queued
+    await this.db.collection('locations').updateOne(
+      { locationId },
+      {
+        $set: {
+          setupQueued: true,
+          setupQueuedAt: new Date(),
+          lastSetupWebhook: webhookId
         }
-      );
-
-      if (response.ok) {
-        const result = await response.json();
-        
-        // Track setup completion
-        await this.db.collection('webhook_metrics').updateOne(
-          { webhookId },
-          { 
-            $set: { 
-              'timestamps.steps.setupCompleted': new Date(),
-              'setupResult': result
-            } 
-          }
-        );
-
-        // Update location
-        await this.db.collection('locations').updateOne(
-          { locationId },
-          {
-            $set: {
-              setupCompleted: true,
-              setupCompletedAt: new Date(),
-              lastSetupWebhook: webhookId
-            }
-          }
-        );
-
-        console.log(`[CriticalProcessor] Setup completed for ${locationId}`);
-      } else {
-        throw new Error(`Setup failed: ${response.statusText}`);
       }
+    );
 
-    } catch (error: any) {
-      console.error(`[CriticalProcessor] Setup failed for ${locationId}:`, error);
-      
-      // Mark location as needing manual setup
-      await this.db.collection('locations').updateOne(
-        { locationId },
-        {
-          $set: {
-            setupError: error.message,
-            needsManualSetup: true,
-            setupFailedAt: new Date()
-          }
+    console.log(`[CriticalProcessor] Setup queued successfully for ${locationId}`);
+
+  } catch (error: any) {
+    console.error(`[CriticalProcessor] Failed to queue setup for ${locationId}:`, error);
+    
+    // Mark location as needing manual setup
+    await this.db.collection('locations').updateOne(
+      { locationId },
+      {
+        $set: {
+          setupError: error.message,
+          needsManualSetup: true,
+          setupFailedAt: new Date()
         }
-      );
+      }
+    );
 
-      // Don't throw - install succeeded even if setup failed
-    }
+    // Don't throw - install succeeded even if queuing failed
   }
+}
 
   /**
    * Process app uninstallation
