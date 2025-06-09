@@ -16,46 +16,7 @@ Please analyze how these files work together and provide:
 Context: We recently restructured the backend and suspect some files are deprecated. The new pattern uses [describe the new pattern if known].
 
 📋 System-by-System Analysis Plan:
-1. Webhook System (Most Complex - Start Here)
-Files to share:
-OLD SYSTEM (potentially deprecated):
-- /src/utils/webhookProcessor.ts
 
-NEW SYSTEM (current):
-- /src/utils/webhooks/nativeWebhookProcessor.ts
-- /src/utils/webhooks/router.ts
-- /src/utils/webhooks/queueManager.ts
-- /src/utils/webhooks/directProcessor.ts
-- /src/utils/deduplication.ts
-- /src/utils/webhooks/processors/base.ts
-- /src/utils/webhooks/processors/appointments.ts
-- /src/utils/webhooks/processors/contacts.ts
-- /src/utils/webhooks/processors/critical.ts
-- /src/utils/webhooks/processors/financial.ts
-- /src/utils/webhooks/processors/general.ts
-- /src/utils/webhooks/processors/messages.ts
-- /src/utils/webhooks/processors/projects.ts
-
-ENDPOINTS:
-- /pages/api/webhooks/ghl/native.ts
-- /pages/api/webhooks/ghl/unified.ts
-- /pages/api/webhooks/ghl/email-received.ts
-- /pages/api/webhooks/ghl/sms-received.ts
-- /pages/api/webhooks/workflow/contact-milestones.ts
-- /pages/api/webhooks/workflow/email-activity.ts
-- /pages/api/webhooks/workflow/form-submission.ts
-- /pages/api/webhooks/status.ts
-- /pages/api/webhooks/trigger-cron.ts
-
-CRON JOBS:
-- /pages/api/cron/process-webhooks.ts
-- /pages/api/cron/process-appointments.ts
-- /pages/api/cron/process-contacts.ts
-- /pages/api/cron/process-critical.ts
-- /pages/api/cron/process-financial.ts
-- /pages/api/cron/process-general.ts
-- /pages/api/cron/process-messages.ts
-- /pages/api/cron/process-projects.ts
 2. Report System (Quick Win - Clear Deprecation)
 Files to share:
 - /src/utils/reports/dailyReport.ts (OLD?)
@@ -2177,16 +2138,20 @@ Critical Notes: Defines 11 cron jobs (token refresh every 6 hours, various proce
 
 ********************************************
 
-I'm analyzing the Report System  in my LPai backend. Here are all the related files:
+I'm analyzing the Installation/OAuth System  in my LPai backend. Here are all the related files:
 
-- /src/utils/reports/dailyReport.ts (OLD?)
-- /src/utils/reports/enhancedDailyReport.ts (NEW?)
-- /src/utils/reports/weeklyReport.ts (OLD?)
-- /src/utils/reports/enhancedWeeklyReport.ts (NEW?)
-- /src/utils/analytics/webhookAnalytics.ts
-- /src/utils/email/emailService.ts
-- /pages/api/cron/daily-report.ts
-- /pages/api/cron/weekly-report.ts
+Installation/OAuth System
+Files to share:
+- /src/utils/installQueue.ts
+- /pages/api/oauth/callback.ts
+- /pages/api/oauth/get-location-tokens.ts
+- /pages/api/locations/setup-location.ts
+- /pages/api/locations/manual-setup.ts
+- /pages/api/sync/progress/[id].ts
+- /pages/api/install-progress/[locationId].ts (BROKEN - missing imports)
+- /pages/api/cron/process-install-queue.ts
+- /pages/api/analytics/installs/[locationId].ts
+- /pages/api/analytics/installs/[locationId]/ui.ts
 
 Please analyze every file thuroughly. If you need more that i forgot let me know. We need to know how these files work together and provide:
 1. A flow diagram showing how the system works
@@ -2198,54 +2163,20 @@ Please analyze every file thuroughly. If you need more that i forgot let me know
 
 Context: We recently restructured the backend and suspect some files are deprecated. The new pattern uses [describe the new pattern if known].
 
-📋 Summary of Webhook System Cleanup
-✅ What We Accomplished:
+## Installation Process - Changes Made
 
-Removed 5 Deprecated Files:
+**File Modified**: `pages/api/cron/process-install-queue.ts`
 
-webhookProcessor.ts - Old monolithic processor
-unified.ts - Old endpoint using deprecated processor
-sms-received.ts - Old direct processing pattern
-email-received.ts - Old direct processing pattern
-deduplication.ts - Only used by old system
+**What we changed**:
+- Removed import: `import { processNativeWebhook } from '../../../src/utils/webhooks/nativeWebhookProcessor';`
+- Replaced the webhook processing logic that called `processNativeWebhook(db, queueItem)`
+- Now adds failed webhooks back to the main `webhook_queue` collection with:
+  - `queueType: 'critical'`
+  - `priority: 1`
+  - `status: 'pending'`
+  - `attempts: 0`
 
+**Result**: Failed install webhooks now go through the standard queue system to be processed by `CriticalProcessor` instead of using the old `nativeWebhookProcessor`.
 
-Removed Redundant Processing:
+******************************
 
-process-webhooks.ts - Was causing double processing
-trigger-cron.ts - Only existed to trigger the above
-nativeWebhookProcessor.ts - Old monolithic processor
-
-
-Fixed process-install-queue.ts:
-
-Removed dependency on old processor
-Now routes failed installs back through the new queue system
-
-
-
-🏗️ Current Clean Architecture:
-Webhook Entry → native.ts → Router → Queue → Specialized Processors
-                                              ├── CriticalProcessor (INSTALL/UNINSTALL)
-                                              ├── MessagesProcessor
-                                              ├── ContactsProcessor  
-                                              ├── AppointmentsProcessor
-                                              ├── ProjectsProcessor
-                                              ├── FinancialProcessor
-                                              └── GeneralProcessor
-📁 What We Kept (and why):
-
-All processor classes - Working well
-All specialized cron jobs - Each handles specific types
-directProcessor.ts - Keeping for potential future use
-installQueue.ts - Has lock cleanup logic for installs
-Workflow webhooks - Separate system for custom workflows
-
-🎯 Result:
-
-No more deprecated code
-No more double processing
-Clear separation of concerns
-Each webhook type has one clear processing path
-
-The webhook system is now clean, modular, and maintainable!
