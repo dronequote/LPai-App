@@ -28,7 +28,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const user = await db.collection('users').findOne({ email });
 
     if (!user) {
-        return res.status(404).json({ error: 'No email found. Please contact admin to register on GHL.' });
+        return sendSuccess(res, {email}, 'No Email Found', { noEmailFound: true });
     }
 
     const payload = {

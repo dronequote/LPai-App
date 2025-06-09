@@ -3,13 +3,22 @@ import { NextApiResponse } from 'next';
 export const sendSuccess = (
   res: NextApiResponse,
   data: any,
-  message = 'Success'
+  message = 'Success',
+  option?: {
+    noEmailFound?: boolean
+  }
 ) => {
-  return res.status(200).json({
-    success: true,
-    message,
-    data,
-  });
+    const response: any = {
+        success: true,
+        message,
+        data,
+      };
+    
+      if (option?.noEmailFound) {
+        response.noEmailFound = true;
+      }
+    
+      return res.status(200).json(response);
 };
 
 export const sendBadRequest = (
