@@ -10,15 +10,24 @@ export interface OAuthTokens {
   userType?: string;
 }
 
-export function getAuthHeader(location: any): string {
+export async function getAuthHeader(location: any): Promise<{ header: string; type: string }> {
   if (location?.ghlAuth) {
-    return `Bearer ${location.ghlAuth.access_token}`;
+    return {
+      header: `Bearer ${location.ghlAuth.access_token}`,
+      type: 'OAuth'
+    };
   }
   if (location?.ghlOAuth?.accessToken) {
-    return `Bearer ${location.ghlOAuth.accessToken}`;
+    return {
+      header: `Bearer ${location.ghlOAuth.accessToken}`,
+      type: 'OAuth'
+    };
   }
   if (location?.apiKey) {
-    return `Bearer ${location.apiKey}`;
+    return {
+      header: `Bearer ${location.apiKey}`,
+      type: 'API Key'
+    };
   }
   throw new Error('No authentication method available');
 }
