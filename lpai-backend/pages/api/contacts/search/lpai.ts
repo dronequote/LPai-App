@@ -5,7 +5,7 @@ import {
   sendBadRequest,
   sendUnauthorized,
   sendServerError,
-} from '../../../../utils/httpResponses';
+} from '../../../../src/utils/httpResponses';
 import clientPromise from '@/lib/mongodb';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {

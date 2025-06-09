@@ -2,7 +2,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '@/lib/mongodb';
 import jwt from 'jsonwebtoken';
-import { sendSuccess } from '../../../utils/httpResponses';
+import { sendSuccess } from '../../../src/utils/httpResponses';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret';
 
