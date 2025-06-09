@@ -222,3 +222,49 @@ Check install_locks collection
 Verify install queue processing
 Review OAuth callback logs
 
+- /src/utils/installQueue.ts
+- /pages/api/oauth/callback.ts
+- /pages/api/oauth/get-location-tokens.ts
+- /pages/api/locations/setup-location.ts
+- /pages/api/locations/manual-setup.ts
+- /pages/api/sync/progress/[id].ts
+- /pages/api/install-progress/[locationId].ts (BROKEN - missing imports)
+- /pages/api/cron/process-install-queue.ts
+- /pages/api/analytics/installs/[locationId].ts
+- /pages/api/analytics/installs/[locationId]/ui.ts
+ALL SYNC UTILITIES:
+- /src/utils/sync/contacts-full.ts (MISPLACED - should be in pages/api)
+- /src/utils/sync/setupDefaults.ts
+- /src/utils/sync/syncAppointments.ts
+- /src/utils/sync/syncCalendars.ts
+- /src/utils/sync/syncContactNotes.ts
+- /src/utils/sync/syncContacts.ts
+- /src/utils/sync/syncConversations.ts
+- /src/utils/sync/syncCustomFields.ts
+- /src/utils/sync/syncCustomValues.ts
+- /src/utils/sync/syncInvoices.ts
+- /src/utils/sync/syncLocationDetails.ts
+- /src/utils/sync/syncMessages.ts
+- /src/utils/sync/syncOpportunities.ts
+- /src/utils/sync/syncPipelines.ts
+- /src/utils/sync/syncTags.ts
+- /src/utils/sync/syncTasks.ts
+- /src/utils/sync/syncUsers.ts
+
+SYNC ENDPOINTS:
+- /pages/api/sync/appointments.ts
+- /pages/api/sync/calendars.ts
+- /pages/api/sync/contacts.ts
+- /pages/api/sync/conversations.ts
+- /pages/api/sync/custom-fields.ts
+- /pages/api/sync/custom-values.ts
+- /pages/api/sync/location-details.ts
+- /pages/api/sync/opportunities.ts
+- /pages/api/sync/pipelines.ts
+- /pages/api/sync/users.ts
+
+GHL SYNC ENDPOINTS:
+- /pages/api/ghl/syncContacts.ts
+- /pages/api/ghl/calendars/[locationId].ts
+- /pages/api/ghl/pipelines/[locationId].ts
+- /pages/api/ghl/[id].ts
