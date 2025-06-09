@@ -1,6 +1,7 @@
 // pages/api/oauth/callback.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
+import { ObjectId } from 'mongodb';
 import axios from 'axios';
 import { acquireInstallLock, releaseInstallLock } from '../../../src/utils/installQueue';
 
@@ -234,6 +235,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               companyId: finalCompanyId,
               hasLocationOAuth: true,
               updatedAt: new Date()
+            },
+              $unset: {
+              uninstalledAt: "",      // Clear uninstall timestamp
+              uninstallReason: "",    // Clear uninstall reason
+              uninstallWebhookId: ""  // Clear uninstall webhook ID
             }
           }
         );
@@ -242,16 +248,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       // After storing tokens...
-      console.log('[OAuth Callback] Location tokens stored');
+        console.log('[OAuth Callback] Location tokens stored');
 
-      // Trigger the setup in the background (fire and forget)
-      fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://lpai-backend-omega.vercel.app'}/api/locations/setup-location`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ locationId: tokenLocationId || finalCompanyId })
-      }).catch(err => {
-        console.error('[OAuth Callback] Failed to trigger setup:', err);
-      });
+        // Add to setup queue for reliable processing
+        await db.collection('install_retry_queue').insertOne({
+          _id: new ObjectId(),
+          webhookId: `setup_${tokenLocationId || finalCompanyId}_${Date.now()}`,
+          payload: {
+            type: 'INSTALL',
+            locationId: tokenLocationId || finalCompanyId
+          },
+          reason: 'oauth_callback_setup',
+          attempts: 0,
+          status: 'pending',
+          createdAt: new Date(),
+          nextRetryAt: new Date() // Process immediately
+        });
+
+        console.log('[OAuth Callback] Added to setup queue for reliable processing');
 
       // Redirect to progress page
       const progressUrl = `/api/sync/progress/${tokenLocationId || finalCompanyId}?ui=true`;

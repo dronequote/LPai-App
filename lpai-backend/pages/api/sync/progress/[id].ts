@@ -27,14 +27,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     if (companyCheck) {
       isCompany = true;
-      // Get all locations under this company
-      locations = await db.collection('locations')
-        .find({ 
-          companyId: entityId,
-          locationId: { $ne: null }
-        })
-        .sort({ createdAt: -1 })
-        .toArray();
+      // Get all locations under this company that have the app installed
+        locations = await db.collection('locations')
+          .find({ 
+            companyId: entityId,
+            locationId: { $ne: null },
+            appInstalled: true  // Only show installed locations
+          })
+          .sort({ createdAt: -1 })
+  .toArray();
     } else {
       // It's a location ID
       primaryLocation = await db.collection('locations').findOne({ 
