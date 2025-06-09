@@ -680,14 +680,11 @@ function generateDetailedProgress(location: any): string {
   }
 
   return `
-    <div class="glass rounded-2xl p-8 slide-in ${isUninstalled ? 'opacity-60' : ''}">
+    <div class="glass rounded-2xl p-8 slide-in">
       <!-- Location Header -->
       <div class="mb-8">
         <h2 class="text-3xl font-bold mb-2">${location.name || 'Location Setup'}</h2>
         <p class="text-gray-400">${location.locationId}</p>
-        ${isUninstalled ? `
-          <p class="text-red-400 mt-2">⚠️ This location was uninstalled on ${new Date(location.uninstalledAt).toLocaleString()}</p>
-        ` : ''}
       </div>
 
       <!-- Overall Progress -->
