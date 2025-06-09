@@ -2143,6 +2143,8 @@ I'm analyzing the Installation/OAuth System  in my LPai backend. Here are all th
 Installation/OAuth System
 Files to share:
 - /src/utils/installQueue.ts
+/src/utils/ghlAuth.ts  
+/src/utils/refreshGHLToken.ts
 - /pages/api/oauth/callback.ts
 - /pages/api/oauth/get-location-tokens.ts
 - /pages/api/locations/setup-location.ts
