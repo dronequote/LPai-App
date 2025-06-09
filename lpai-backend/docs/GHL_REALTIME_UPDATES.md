@@ -1,4 +1,4 @@
-GHL Real-Time Data Updates - Complete Documentation
+GHL Real-Time Data Updates - Complete Documentation 6/9/2025
 Overview
 This system maintains real-time data consistency between GoHighLevel (GHL) and MongoDB through webhooks. When data changes in GHL, webhooks notify our system to update MongoDB accordingly.
 Architecture
