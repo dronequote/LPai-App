@@ -46,9 +46,6 @@
     }
   ],
   "functions": {
-    "pages/api/cron/process-webhooks.ts": {
-      "maxDuration": 60
-    },
     "pages/api/webhooks/ghl/native.ts": {
       "maxDuration": 30
     },

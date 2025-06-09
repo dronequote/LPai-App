@@ -6,10 +6,10 @@ import {
     sendBadRequest,
     sendUnauthorized,
     sendServerError,
-  } from '../../../utils/httpResponses';
+  } from '../../../src/utils/httpResponses';
 import { GHL_ENDPOINTS } from '../../../constants/ghl';
 import { getAuthHeader } from '@/utils/ghlAuth';
-import { getLocation } from '../../../utils/getLocation';
+import { getLocation } from '../../../src/utils/getLocation';
 
 function formatPhoneToE164(phone: string): string {
   if (!phone) return '';

@@ -1,7 +1,7 @@
 // pages/api/cron/process-install-queue.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
-import { processNativeWebhook } from '../../../src/utils/webhooks/nativeWebhookProcessor';
+import { ObjectId } from 'mongodb';
 import { cleanupExpiredLocks } from '../../../src/utils/installQueue';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -54,19 +54,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           }
         );
         
-        // Create a webhook queue item for processing
-        const queueItem = {
-          _id: item._id,
+        // Add back to main queue for processing by CriticalProcessor
+        await db.collection('webhook_queue').insertOne({
+          _id: new ObjectId(),
           webhookId: item.webhookId,
           type: item.payload.type,
           payload: item.payload,
-          source: 'native'
-        };
+          locationId: item.payload.locationId,
+          status: 'pending',
+          attempts: 0,
+          queueType: 'critical',
+          priority: 1,
+          createdAt: new Date(),
+          processAfter: new Date(),
+          source: 'install_retry'
+        });
         
-        // Process the webhook
-        await processNativeWebhook(db, queueItem);
-        
-        // Mark as complete
+        // Mark as complete in retry queue
         await db.collection('install_retry_queue').updateOne(
           { _id: item._id },
           {
@@ -117,7 +121,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       try {
         if (syncJob.type === 'agency_sync') {
           // Call the sync endpoint
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://lpai-backend-omega.vercel.app'}/api/oauth/get-location-tokens`, {
+          const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://lpai-backend-omega.vercel.app'}/api/oauth/get-location-tokens`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ companyId: syncJob.companyId })

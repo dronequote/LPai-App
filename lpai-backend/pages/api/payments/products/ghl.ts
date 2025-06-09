@@ -5,10 +5,10 @@ import {
   sendBadRequest,
   sendUnauthorized,
   sendServerError,
-} from '../../../../utils/httpResponses';
+} from '../../../../src/utils/httpResponses';
 import { GHL_ENDPOINTS } from '../../../../constants/ghl';
 import { getAuthHeader } from '@/utils/ghlAuth';
-import { getLocation } from '../../../../utils/getLocation';
+import { getLocation } from '../../../../src/utils/getLocation';
 import cors from '@/lib/cors';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
