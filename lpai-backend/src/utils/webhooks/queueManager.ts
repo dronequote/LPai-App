@@ -189,30 +189,33 @@ export class QueueManager {
   /**
    * Mark item as successfully completed
    */
-  async markComplete(webhookId: string): Promise<void> {
-    const now = new Date();
-    
-    const result = await this.db.collection('webhook_queue').findOneAndUpdate(
-      { webhookId },
-      {
-        $set: {
-          status: 'completed',
-          processingCompleted: now,
-          updatedAt: now
+    async markComplete(webhookId: string): Promise<void> {
+      const now = new Date();
+      
+      const result = await this.db.collection('webhook_queue').findOneAndUpdate(
+        { webhookId },
+        {
+          $set: {
+            status: 'completed',
+            processingCompleted: now,
+            updatedAt: now
+          },
+          $unset: {
+            lockedUntil: '',
+            processorId: ''
+          }
         },
-        $unset: {
-          lockedUntil: '',
-          processorId: ''
-        }
-      },
-      { returnDocument: 'after' }
-    );
-    
-    if (result.value) {
-      await this.completeMetrics(result.value as QueueItem, true);
+        { returnDocument: 'after' }
+      );
+      
+      // Fix: Check both result and result.value
+      if (result && result.value) {
+        await this.completeMetrics(result.value as QueueItem, true);
+      } else {
+        console.warn(`[QueueManager] Webhook ${webhookId} not found when marking complete - may have been processed by another worker`);
+      }
     }
-  }
-  
+      
   /**
    * Mark item as failed and schedule retry
    */
