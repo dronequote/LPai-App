@@ -1,13 +1,13 @@
 // src/contexts/AuthContext.tsx
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { User } from '@lpai/types'; // Import from your types package
+import { User } from '@lpai/types';
+import { authService } from '../services/authService';
 
 interface AuthContextType {
   user: User | null;
   token: string | null;
   loading: boolean;
-  login: (data: { token: string; user: User }) => Promise<void>;
+  login: (data: { email: string; password: string }) => Promise<void>;
   logout: () => Promise<void>;
   updateUser: (updates: Partial<User>) => Promise<void>;
 }
@@ -20,82 +20,121 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const loadFromStorage = async () => {
-      try {
-        const storedToken = await AsyncStorage.getItem('token');
-        const storedUser = await AsyncStorage.getItem('user');
-        
-        if (storedToken && storedUser) {
-          const parsedUser = JSON.parse(storedUser);
-          
-          if (__DEV__) {
-            console.log('🔐 [AuthContext] User loaded from storage:', {
-              id: parsedUser._id,
-              name: parsedUser.name,
-              role: parsedUser.role,
-              hasPreferences: !!parsedUser.preferences,
-              navigatorOrder: parsedUser.preferences?.navigatorOrder,
-              preferencesType: typeof parsedUser.preferences?.navigatorOrder,
-            });
-          }
-          
-          setToken(storedToken);
-          setUser(parsedUser);
-        }
-      } catch (e) {
-        console.error('❌ [AuthContext] Error loading auth state:', e);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadFromStorage();
+    initializeAuth();
   }, []);
 
-  const login = async ({ token, user }: { token: string; user: User }) => {
+  const initializeAuth = async () => {
     try {
       if (__DEV__) {
-        console.log('🔐 [AuthContext] Login called with user:', {
-          id: user._id,
-          name: user.name,
-          role: user.role,
-          hasPreferences: !!user.preferences,
-          navigatorOrder: user.preferences?.navigatorOrder,
-        });
+        console.log('🔐 [AuthContext] Initializing authentication...');
       }
       
-      await AsyncStorage.setItem('token', token);
-      await AsyncStorage.setItem('user', JSON.stringify(user));
-      setToken(token);
-      setUser(user);
+      // Let authService handle all initialization
+      const isAuthenticated = await authService.initialize();
+      
+      if (isAuthenticated) {
+        const currentUser = await authService.getCurrentUser();
+        const storedToken = await authService.getToken();
+        
+        if (currentUser && storedToken) {
+          setUser(currentUser);
+          setToken(storedToken);
+          
+          if (__DEV__) {
+            console.log('🔐 [AuthContext] User restored from storage:', {
+              id: currentUser._id,
+              name: currentUser.name,
+              role: currentUser.role,
+            });
+          }
+        }
+      }
     } catch (error) {
-      console.error('❌ [AuthContext] Error during login:', error);
-      throw error;
+      console.error('❌ [AuthContext] Error initializing auth:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const login = async ({ email, password }: { email: string; password: string }) => {
+    try {
+      if (__DEV__) {
+        console.log('🔐 [AuthContext] Login attempt for:', email);
+      }
+      
+      // Use authService for login
+      const response = await authService.login({ email, password });
+      
+      // Extract user data from response
+      const userData: User = {
+        _id: response._id,
+        userId: response.userId,
+        name: response.name,
+        email: response.email,
+        role: response.role,
+        locationId: response.locationId,
+        permissions: response.permissions,
+        preferences: response.preferences,
+      };
+      
+      setToken(response.token);
+      setUser(userData);
+      
+      if (__DEV__) {
+        console.log('🔐 [AuthContext] Login successful:', {
+          id: userData._id,
+          name: userData.name,
+          role: userData.role,
+        });
+      }
+    } catch (error: any) {
+      console.error('❌ [AuthContext] Login error:', error);
+      
+      // Re-throw with a user-friendly message
+      if (error.response?.status === 401) {
+        throw new Error('Invalid email or password');
+      } else if (error.response?.status === 404) {
+        throw new Error('User not found');
+      } else if (error.message === 'Network Error') {
+        throw new Error('No internet connection. Please check your network.');
+      } else {
+        throw new Error(error.response?.data?.error || 'Login failed. Please try again.');
+      }
     }
   };
 
   const logout = async () => {
     try {
       if (__DEV__) {
-        console.log('🔐 [AuthContext] Logout called');
+        console.log('🔐 [AuthContext] Logout initiated');
       }
       
-      await AsyncStorage.removeItem('token');
-      await AsyncStorage.removeItem('user');
+      // Let authService handle all cleanup
+      await authService.logout();
+      
+      // Clear local state
       setToken(null);
       setUser(null);
+      
+      if (__DEV__) {
+        console.log('🔐 [AuthContext] Logout complete');
+      }
     } catch (error) {
       console.error('❌ [AuthContext] Error during logout:', error);
-      throw error;
+      // Even if logout fails, clear local state
+      setToken(null);
+      setUser(null);
     }
   };
 
-  // Add this new function to update user (useful for preference changes)
   const updateUser = async (updates: Partial<User>) => {
-    if (!user) return;
+    if (!user) {
+      console.warn('⚠️ [AuthContext] Cannot update user - no user logged in');
+      return;
+    }
     
     try {
-      const updatedUser = {
+      const updatedUser: User = {
         ...user,
         ...updates,
         preferences: {
@@ -111,7 +150,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
       }
       
-      await AsyncStorage.setItem('user', JSON.stringify(updatedUser));
+      // Update in authService (handles AsyncStorage)
+      await authService.updateStoredPreferences(updatedUser.preferences);
+      
+      // Update local state
       setUser(updatedUser);
     } catch (error) {
       console.error('❌ [AuthContext] Error updating user:', error);
@@ -120,7 +162,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, logout, updateUser }}>
+    <AuthContext.Provider 
+      value={{ 
+        user, 
+        token, 
+        loading, 
+        login, 
+        logout, 
+        updateUser 
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

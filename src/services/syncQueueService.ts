@@ -1,6 +1,6 @@
 // services/syncQueueService.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import NetInfo from '@react-native-community/netinfo';
+import NetInfo from '../utils/netinfo';
 import { cacheService } from './cacheService';
 
 interface QueuedAction {

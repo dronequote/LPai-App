@@ -34,7 +34,13 @@ class AuthService extends BaseService {
    */
   async login(credentials: LoginCredentials): Promise<LoginResponse> {
     const endpoint = '/api/login';
-    
+      if (__DEV__) {
+    console.log('🔐 [authService] Login request:', {
+      endpoint,
+      credentials,
+      baseURL: api.defaults.baseURL
+    });
+  }
     try {
       const response = await this.post<LoginResponse>(
         endpoint,
