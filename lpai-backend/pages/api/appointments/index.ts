@@ -2,12 +2,143 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
 import axios from 'axios';
 import { ObjectId } from 'mongodb';
+import { 
+  paginate, 
+  buildDateRangeFilter, 
+  buildSearchFilter 
+} from '../../../src/utils/pagination';
+import { 
+  parseQueryParams, 
+  buildAppointmentFilter 
+} from '../../../src/utils/filters';
+import { 
+  sendPaginatedSuccess, 
+  sendSuccess, 
+  sendError, 
+  sendValidationError,
+  sendServerError,
+  sendMethodNotAllowed 
+} from '../../../src/utils/response';
 
 const GHL_BASE_URL = 'https://services.leadconnectorhq.com';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const client = await clientPromise;
   const db = client.db('lpai');
+
+  if (req.method === 'GET') {
+    try {
+      // Parse and validate query parameters
+      const params = parseQueryParams(req.query);
+      
+      if (!params.locationId) {
+        return sendValidationError(res, { locationId: 'Missing locationId' });
+      }
+
+      // Build base filter
+      const filter = buildAppointmentFilter(params);
+      
+      // Add date range filter for appointments (using 'start' field)
+      if (params.startDate || params.endDate) {
+        const dateFilter = buildDateRangeFilter('start', params.startDate, params.endDate);
+        Object.assign(filter, dateFilter);
+      }
+      
+      // Add search filter
+      if (params.search) {
+        const searchFilter = buildSearchFilter(params.search, [
+          'title', 
+          'notes', 
+          'contactName',
+          'address',
+          'customLocation'
+        ]);
+        if (searchFilter.$or) {
+          if (filter.$or) {
+            filter.$and = [{ $or: filter.$or }, searchFilter];
+            delete filter.$or;
+          } else {
+            Object.assign(filter, searchFilter);
+          }
+        }
+      }
+
+      // Get paginated results
+      const result = await paginate(
+        db.collection('appointments'),
+        filter,
+        {
+          limit: params.limit,
+          offset: params.offset,
+          sortBy: params.sortBy === 'createdAt' ? 'start' : params.sortBy, // Default to 'start' for appointments
+          sortOrder: params.sortOrder
+        }
+      );
+
+      // Optionally include user details if requested
+      if (params.includeUser === 'true') {
+        const userIds = [...new Set(result.data.map(a => a.userId).filter(Boolean))];
+        
+        if (userIds.length > 0) {
+          const users = await db.collection('users').find({
+            userId: { $in: userIds }
+          }).toArray();
+          
+          const userMap = Object.fromEntries(
+            users.map(u => [u.userId, {
+              name: u.name,
+              email: u.email,
+              phone: u.phone
+            }])
+          );
+          
+          result.data = result.data.map(appointment => ({
+            ...appointment,
+            assignedUser: appointment.userId ? userMap[appointment.userId] : null
+          }));
+        }
+      }
+
+      // Optionally include contact details if requested
+      if (params.includeContact === 'true') {
+        const contactIds = result.data
+          .map(a => a.contactId)
+          .filter(Boolean)
+          .filter(id => ObjectId.isValid(id));
+          
+        if (contactIds.length > 0) {
+          const contacts = await db.collection('contacts').find({
+            _id: { $in: contactIds.map(id => new ObjectId(id)) }
+          }).toArray();
+          
+          const contactMap = Object.fromEntries(
+            contacts.map(c => [c._id.toString(), {
+              firstName: c.firstName,
+              lastName: c.lastName,
+              email: c.email,
+              phone: c.phone
+            }])
+          );
+          
+          result.data = result.data.map(appointment => ({
+            ...appointment,
+            contactDetails: appointment.contactId ? contactMap[appointment.contactId] : null
+          }));
+        }
+      }
+
+      return sendPaginatedSuccess(
+        res, 
+        result.data, 
+        result.pagination, 
+        'Appointments retrieved successfully'
+      );
+      
+    } catch (err) {
+      console.error('❌ Failed to fetch appointments:', err);
+      return sendServerError(res, err, 'Failed to fetch appointments');
+    }
+  }
 
   if (req.method === 'POST') {
     // Log incoming request
@@ -21,9 +152,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Validate required fields
     if (!contactId || !userId || !locationId || !start || !end || !calendarId) {
-      return res.status(400).json({
-        error: 'Missing required fields',
-        fields: { contactId, userId, locationId, start, end, calendarId }
+      return sendValidationError(res, {
+        contactId: !contactId ? 'Required' : undefined,
+        userId: !userId ? 'Required' : undefined,
+        locationId: !locationId ? 'Required' : undefined,
+        start: !start ? 'Required' : undefined,
+        end: !end ? 'Required' : undefined,
+        calendarId: !calendarId ? 'Required' : undefined,
       });
     }
 
@@ -33,13 +168,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       contact = await db.collection('contacts').findOne({ _id: new ObjectId(contactId) });
       user = await db.collection('users').findOne({ _id: new ObjectId(userId) });
     } catch (e) {
-      return res.status(400).json({ error: 'Invalid contactId or userId format' });
+      return sendValidationError(res, { 
+        contactId: 'Invalid contactId format',
+        userId: 'Invalid userId format' 
+      });
     }
 
-    if (!contact) return res.status(400).json({ error: 'Contact not found' });
-    if (!user) return res.status(400).json({ error: 'User not found' });
-    if (!contact.ghlContactId) return res.status(400).json({ error: 'Contact found but missing ghlContactId' });
-    if (!user.ghlUserId) return res.status(400).json({ error: 'User found but missing ghlUserId' });
+    if (!contact) return sendError(res, 'Contact not found', 404);
+    if (!user) return sendError(res, 'User not found', 404);
+    if (!contact.ghlContactId) return sendError(res, 'Contact found but missing ghlContactId', 400);
+    if (!user.ghlUserId) return sendError(res, 'User found but missing ghlUserId', 400);
 
     // Address/location logic
     let meetingLocationType = locationType || 'address';
@@ -59,7 +197,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Get the API key for this location
     const location = await db.collection('locations').findOne({ locationId });
     if (!location?.apiKey) {
-      return res.status(400).json({ error: 'No GHL API key found for locationId' });
+      return sendError(res, 'No GHL API key found for locationId', 400);
     }
 
     // Build payload for GHL API
@@ -110,7 +248,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     } catch (e: any) {
       // Log the error response if available
       console.error('[API] Failed to sync appointment to GHL', e?.response?.data || e.message);
-      return res.status(500).json({ error: e?.response?.data || e?.message, ghlPayload });
+      return sendServerError(res, e?.response?.data || e?.message, 'Failed to sync appointment to GHL');
     }
 
     // --- Step 2: Save appointment locally in MongoDB ---
@@ -148,44 +286,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
       console.error('[API] Failed to save appointment in MongoDB:', errMsg);
       // Return GHL success, but warn about local save
-      return res.status(201).json({
+      return sendSuccess(res, {
         ghlPayload,
         ghlResponse,
         ghlAppointmentId: ghlResponse.event?.id || ghlResponse.id,
         warning: 'Appointment created in GHL but failed to save in local DB',
         error: errMsg,
-      });
+      }, 'Appointment created with warning');
     }
 
     // --- Step 3: Return both local and GHL results ---
-    return res.status(201).json({
+    return sendSuccess(res, {
       appointment: savedAppointment,
       ghlPayload,
       ghlResponse,
       ghlAppointmentId: ghlResponse.event?.id || ghlResponse.id,
-    });
+    }, 'Appointment created successfully');
   }
 
-  // --- GET handler unchanged ---
-  if (req.method === 'GET') {
-    const { locationId, userId, start, end } = req.query;
-    if (!locationId) return res.status(400).json({ error: 'Missing locationId' });
-
-    const filter: any = { locationId };
-    if (userId) filter.userId = userId;
-    if (start && end) filter.start = { $gte: new Date(start as string), $lte: new Date(end as string) };
-
-    try {
-      const appointments = await db.collection('appointments')
-        .find(filter)
-        .sort({ start: 1 })
-        .toArray();
-      return res.status(200).json(appointments);
-    } catch (err) {
-      return res.status(500).json({ error: 'Failed to fetch appointments', details: err });
-    }
-  }
-
-  res.setHeader('Allow', ['GET', 'POST']);
-  return res.status(405).json({ error: `Method ${req.method} not allowed` });
+  return sendMethodNotAllowed(res, ['GET', 'POST']);
 }
