@@ -1157,3 +1157,531 @@ export interface PaymentProofFile {
 
 // Note: The .chunks collections contain binary data and are handled by GridFS
 // Frontend doesn't interact with chunks directly - just use the file ID
+
+// ==================== SERVICE TYPES ====================
+// Types used by service layer for requests/responses
+
+export interface ServiceResponse<T> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  message?: string;
+}
+
+export interface PaginatedResponse<T> {
+  data: T[];
+  pagination: {
+    total: number;
+    limit: number;
+    offset: number;
+    hasMore: boolean;
+  };
+}
+
+export interface SyncResult {
+  entity: string;
+  created: number;
+  updated: number;
+  failed: number;
+  errors?: string[];
+  duration?: number;
+  timestamp?: string;
+}
+
+export interface BatchOperationResult<T> {
+  successful: T[];
+  failed: Array<{
+    item: any;
+    error: string;
+  }>;
+  total: number;
+  successCount: number;
+  failedCount: number;
+}
+
+// ==================== FILTER/QUERY TYPES ====================
+// Types for filtering and querying data
+
+export interface BaseFilters {
+  limit?: number;
+  offset?: number;
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
+  search?: string;
+}
+
+export interface ProjectFilters extends BaseFilters {
+  status?: ProjectStatus | string;
+  contactId?: string;
+  pipelineId?: string;
+  pipelineStageId?: string;
+  startDate?: string;
+  endDate?: string;
+  hasQuotes?: boolean;
+  userId?: string;
+}
+
+export interface ContactFilters extends BaseFilters {
+  status?: string;
+  source?: string;
+  tags?: string[];
+  hasProjects?: boolean;
+  createdAfter?: string;
+  createdBefore?: string;
+}
+
+export interface AppointmentFilters extends BaseFilters {
+  calendarId?: string;
+  userId?: string;
+  contactId?: string;
+  projectId?: string;
+  status?: AppointmentStatus | string;
+  startDate?: string;
+  endDate?: string;
+  includeRecurring?: boolean;
+}
+
+export interface QuoteFilters extends BaseFilters {
+  status?: QuoteStatus | string;
+  projectId?: string;
+  contactId?: string;
+  createdAfter?: string;
+  createdBefore?: string;
+  minAmount?: number;
+  maxAmount?: number;
+  hasSignatures?: boolean;
+}
+
+export interface ConversationFilters extends BaseFilters {
+  contactId?: string;
+  type?: 'sms' | 'email' | 'all';
+  unreadOnly?: boolean;
+  starred?: boolean;
+  afterDate?: string;
+  beforeDate?: string;
+}
+
+export interface PaymentFilters extends BaseFilters {
+  projectId?: string;
+  quoteId?: string;
+  contactId?: string;
+  status?: PaymentStatus | string;
+  type?: PaymentType | string;
+  method?: PaymentMethod | string;
+  startDate?: string;
+  endDate?: string;
+  minAmount?: number;
+  maxAmount?: number;
+}
+
+// ==================== ENUM TYPES ====================
+// Enums for better type safety
+
+export enum ProjectStatus {
+  Open = 'open',
+  Won = 'won',
+  Lost = 'lost',
+  Abandoned = 'abandoned'
+}
+
+export enum QuoteStatus {
+  Draft = 'draft',
+  Published = 'published',
+  Viewed = 'viewed',
+  Signed = 'signed',
+  Recalled = 'recalled',
+  Expired = 'expired',
+  Revised = 'revised',
+  DepositPaid = 'deposit_paid'
+}
+
+export enum AppointmentStatus {
+  Scheduled = 'scheduled',
+  Completed = 'completed',
+  Cancelled = 'cancelled',
+  NoShow = 'no_show',
+  Rescheduled = 'rescheduled'
+}
+
+export enum PaymentStatus {
+  Pending = 'pending',
+  Completed = 'completed',
+  Failed = 'failed',
+  Refunded = 'refunded',
+  Cancelled = 'cancelled'
+}
+
+export enum PaymentType {
+  Deposit = 'deposit',
+  Progress = 'progress',
+  Final = 'final',
+  Additional = 'additional'
+}
+
+export enum PaymentMethod {
+  Card = 'card',
+  Cash = 'cash',
+  Check = 'cheque',
+  BankTransfer = 'bank_transfer',
+  Other = 'other'
+}
+
+export enum MessageDirection {
+  Inbound = 'inbound',
+  Outbound = 'outbound'
+}
+
+export enum UserRole {
+  Admin = 'admin',
+  User = 'user',
+  Technician = 'technician',
+  Manager = 'manager'
+}
+
+export enum DashboardType {
+  Service = 'service',
+  Sales = 'sales',
+  Operations = 'operations',
+  Custom = 'custom'
+}
+
+// ==================== INPUT TYPES ====================
+// Types for creating/updating entities
+
+export interface CreateProjectInput {
+  title: string;
+  contactId: string;
+  userId: string;
+  locationId: string;
+  status?: string;
+  notes?: string;
+  scopeOfWork?: string;
+  products?: string;
+  pipelineId?: string;
+  pipelineStageId?: string;
+  customFields?: Record<string, any>;
+}
+
+export interface UpdateProjectInput {
+  title?: string;
+  status?: string;
+  notes?: string;
+  scopeOfWork?: string;
+  products?: string;
+  pipelineStageId?: string;
+  milestones?: Milestone[];
+  customFields?: Record<string, any>;
+}
+
+export interface CreateContactInput {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  notes?: string;
+  locationId: string;
+  source?: string;
+  tags?: string[];
+}
+
+export interface UpdateContactInput {
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  notes?: string;
+  tags?: string[];
+  status?: string;
+}
+
+export interface CreateAppointmentInput {
+  title: string;
+  contactId: string;
+  userId: string;
+  locationId: string;
+  calendarId: string;
+  start: string;
+  end: string;
+  duration?: number;
+  notes?: string;
+  locationType?: 'address' | 'custom' | 'phone' | 'googlemeet' | 'zoom';
+  customLocation?: string;
+  address?: string;
+  projectId?: string;
+  reminders?: Array<{
+    type: 'email' | 'sms' | 'push';
+    minutesBefore: number;
+  }>;
+}
+
+export interface UpdateAppointmentInput {
+  title?: string;
+  start?: string;
+  end?: string;
+  notes?: string;
+  status?: string;
+  locationType?: string;
+  customLocation?: string;
+  address?: string;
+}
+
+export interface CreateQuoteInput {
+  projectId: string;
+  contactId: string;
+  locationId: string;
+  userId: string;
+  title: string;
+  description?: string;
+  sections: QuoteSection[];
+  taxRate?: number;
+  discountAmount?: number;
+  discountPercentage?: number;
+  depositType?: 'percentage' | 'fixed';
+  depositValue?: number;
+  termsAndConditions?: string;
+  paymentTerms?: string;
+  notes?: string;
+  validUntil?: string;
+  templateId?: string;
+}
+
+export interface UpdateQuoteInput {
+  title?: string;
+  description?: string;
+  sections?: QuoteSection[];
+  taxRate?: number;
+  discountAmount?: number;
+  discountPercentage?: number;
+  depositType?: string;
+  depositValue?: number;
+  termsAndConditions?: string;
+  paymentTerms?: string;
+  notes?: string;
+  status?: string;
+}
+
+// ==================== EXTRACTED NESTED TYPES ====================
+// Better structure for commonly used nested types
+
+export interface LibraryItem {
+  id: string;
+  name: string;
+  description: string;
+  basePrice: number;
+  markup: number;
+  unit: string;
+  sku: string;
+  isActive: boolean;
+  usageCount: number;
+  categoryId?: string;
+  libraryId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LibraryCategory {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  sortOrder: number;
+  isActive: boolean;
+  items: LibraryItem[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InvoiceItem {
+  ghlItemId: string;
+  productId: string | null;
+  priceId: string | null;
+  name: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  currency: string;
+  taxes: any[];
+  taxInclusive: boolean;
+  itemTotalTax: number;
+  itemTotalDiscount: number;
+  itemUnitDiscount: number;
+}
+
+export interface Attribution {
+  utmSessionSource?: string;
+  medium?: string;
+  isFirst: boolean;
+}
+
+// ==================== WEBHOOK TYPES ====================
+// Types for webhook payloads
+
+export interface WebhookPayload {
+  type: string;
+  locationId: string;
+  eventType: string;
+  id: string;
+  [key: string]: any;
+}
+
+export interface WebhookQueueItem {
+  _id: string;
+  webhookId: string;
+  type: string;
+  locationId: string;
+  payload: any;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  attempts: number;
+  lastAttempt?: string;
+  error?: string;
+  createdAt: string;
+  processedAt?: string;
+}
+
+// ==================== API ERROR TYPES ====================
+// Standard error response types
+
+export interface ApiError {
+  error: string;
+  message: string;
+  statusCode: number;
+  details?: any;
+}
+
+export interface ValidationError extends ApiError {
+  fields: Record<string, string[]>;
+}
+
+// ==================== SYNC TYPES ====================
+// Types for sync operations
+
+export interface SyncOptions {
+  fullSync?: boolean;
+  limit?: number;
+  startDate?: string;
+  endDate?: string;
+  entities?: string[];
+  forceUpdate?: boolean;
+}
+
+export interface SyncProgress {
+  entity: string;
+  status: 'pending' | 'syncing' | 'complete' | 'failed';
+  current?: number;
+  total?: number;
+  percent?: number;
+  message?: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export interface FullSyncResult {
+  overall: {
+    success: boolean;
+    duration: string;
+    timestamp: string;
+  };
+  entities: Record<string, SyncResult>;
+  errors: string[];
+}
+
+// ==================== STATISTICS TYPES ====================
+// Types for analytics and statistics
+
+export interface ProjectStats {
+  total: number;
+  byStatus: Record<string, number>;
+  thisMonth: number;
+  thisWeek: number;
+  averageValue?: number;
+  totalValue?: number;
+}
+
+export interface QuoteStats {
+  total: number;
+  byStatus: Record<string, number>;
+  totalValue: number;
+  averageValue: number;
+  conversionRate: number;
+  thisMonth: {
+    count: number;
+    value: number;
+  };
+}
+
+export interface AppointmentStats {
+  total: number;
+  completed: number;
+  cancelled: number;
+  noShow: number;
+  upcoming: number;
+  completionRate: number;
+  byCalendar?: Record<string, number>;
+  byUser?: Record<string, number>;
+}
+
+export interface PaymentStats {
+  totalCollected: number;
+  pendingAmount: number;
+  averagePayment: number;
+  byType: Record<string, number>;
+  byMethod: Record<string, number>;
+  thisMonth: {
+    count: number;
+    amount: number;
+  };
+  outstanding: {
+    count: number;
+    amount: number;
+  };
+}
+
+// ==================== UI HELPER TYPES ====================
+// Types for UI components and helpers
+
+export interface SelectOption {
+  value: string;
+  label: string;
+  icon?: string;
+  color?: string;
+  disabled?: boolean;
+}
+
+export interface TableColumn<T> {
+  key: keyof T | string;
+  label: string;
+  sortable?: boolean;
+  width?: number | string;
+  align?: 'left' | 'center' | 'right';
+  render?: (value: any, item: T) => React.ReactNode;
+}
+
+export interface ChartData {
+  labels: string[];
+  datasets: Array<{
+    label: string;
+    data: number[];
+    backgroundColor?: string | string[];
+    borderColor?: string | string[];
+  }>;
+}
+
+export interface DateRange {
+  start: Date | string;
+  end: Date | string;
+}
+
+export interface TimeSlot {
+  start: string; // HH:mm format
+  end: string;
+  available: boolean;
+  appointmentId?: string;
+}
