@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,8 @@ import {
   FlatList,
   Alert,
   ActivityIndicator,
+  RefreshControl,
+  SectionList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Calendar } from 'react-native-calendars';
@@ -22,336 +24,434 @@ import { COLORS, FONT, RADIUS, SHADOW } from '../styles/theme';
 import type { Appointment, Contact } from '../../packages/types/dist';
 
 type CalendarScreenProps = {
-  navigation: any; // Adjust for react-navigation types
+  navigation: any;
+};
+
+type AppointmentSection = {
+  title: string;
+  data: Appointment[];
 };
 
 export default function CalendarScreen({ navigation }: CalendarScreenProps) {
   const { user } = useAuth();
-  const {
-    calendars,
-    calendarMap,
-    refetchCalendars,
-  } = useCalendar();
+  const { calendars, calendarMap, refetchCalendars } = useCalendar();
 
-  // Helper function to validate dates
-  const isValidDate = (dateString: any): boolean => {
-    if (!dateString) return false;
-    try {
-      const date = new Date(dateString);
-      return date instanceof Date && !isNaN(date.getTime()) && date.getFullYear() > 1900 && date.getFullYear() < 2100;
-    } catch {
-      return false;
-    }
-  };
-
-  // Helper function to get appointment start time (handles different field names)
-  const getAppointmentStart = (appointment: any): string | null => {
-    return appointment.start || appointment.startTime || appointment.time || null;
-  };
-
-  // Helper function to get appointment end time (handles different field names)
-  const getAppointmentEnd = (appointment: any): string | null => {
-    return appointment.end || appointment.endTime || null;
-  };
+  // Get user timezone (default to system timezone)
+  const userTimezone = user?.preferences?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Denver';
 
   const [selectedDate, setSelectedDate] = useState<string>(() => {
     const today = new Date();
-    // Ensure we're not in an invalid timezone scenario
-    if (isNaN(today.getTime())) {
-      return '2025-01-01'; // Fallback date
-    }
     return today.toISOString().split('T')[0];
   });
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [showAllUsers, setShowAllUsers] = useState(false);
   const [users, setUsers] = useState<any[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [markedDates, setMarkedDates] = useState<any>({});
+  const [showUpcomingView, setShowUpcomingView] = useState(false);
 
   // Maps for fast lookup
   const contactsMap: { [key: string]: Contact } = Object.fromEntries(
     contacts.map((c) => [c._id, c])
   );
 
-  // Fetch all appointments for the location using appointmentService
+  // Helper function to convert UTC to local date
+  const getLocalDate = (utcDateString: string): Date => {
+    return new Date(utcDateString);
+  };
+
+  // Helper function to get date string in local timezone
+  const getLocalDateString = (utcDateString: string): string => {
+    const date = getLocalDate(utcDateString);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  // Helper function to format time
+  const formatTime = (dateString: string): string => {
+    const date = new Date(dateString);
+    return date.toLocaleTimeString('en-US', { 
+      hour: 'numeric', 
+      minute: '2-digit',
+      hour12: true 
+    });
+  };
+
+  // Helper function to get appointment start time
+  const getAppointmentStart = (appointment: any): string | null => {
+    return appointment.start || appointment.startTime || appointment.time || null;
+  };
+
+  // Helper function to get appointment end time
+  const getAppointmentEnd = (appointment: any): string | null => {
+    return appointment.end || appointment.endTime || null;
+  };
+
+  // Fetch all appointments
   const fetchAppointments = async () => {
     if (!user?.locationId) return;
-    setLoading(true);
+    
     try {
       const appointmentsData = await appointmentService.list(user.locationId);
       
       if (__DEV__) {
-        console.log('Raw appointments data:', appointmentsData);
-        // Check for invalid dates
-        appointmentsData.forEach((apt, index) => {
-          const startDate = getAppointmentStart(apt);
-          const endDate = getAppointmentEnd(apt);
-          if (!isValidDate(startDate)) {
-            console.error(`Invalid date in appointment ${index}:`, apt);
-          }
-        });
+        console.log('Fetched appointments:', appointmentsData.length);
       }
       
       // Filter out appointments with invalid dates
       const validAppointments = appointmentsData.filter(apt => {
         const startDate = getAppointmentStart(apt);
-        const hasValidDate = isValidDate(startDate);
-        if (!hasValidDate && __DEV__) {
-          console.warn('Filtering out appointment with invalid date:', apt);
-        }
-        return hasValidDate;
+        return startDate && !isNaN(new Date(startDate).getTime());
       });
       
       setAppointments(validAppointments);
+      
+      // Create marked dates for calendar
+      const marks: any = {};
+      validAppointments.forEach(apt => {
+        const startDate = getAppointmentStart(apt);
+        if (startDate) {
+          const dateKey = getLocalDateString(startDate);
+          const calendarColor = calendarMap[apt.calendarId]?.color || COLORS.accent;
+          
+          if (!marks[dateKey]) {
+            marks[dateKey] = { dots: [] };
+          }
+          
+          // Add dot for this appointment's calendar color
+          if (!marks[dateKey].dots.find((d: any) => d.color === calendarColor)) {
+            marks[dateKey].dots.push({ color: calendarColor });
+          }
+        }
+      });
+      
+      // Mark selected date
+      if (marks[selectedDate]) {
+        marks[selectedDate].selected = true;
+        marks[selectedDate].selectedColor = COLORS.accent;
+      } else {
+        marks[selectedDate] = { selected: true, selectedColor: COLORS.accent };
+      }
+      
+      setMarkedDates(marks);
     } catch (error) {
       if (__DEV__) {
         console.error('Failed to fetch appointments:', error);
       }
-      setAppointments([]);
+      Alert.alert('Error', 'Failed to load appointments');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
+  // Pull to refresh
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await Promise.all([
+      fetchAppointments(),
+      refetchCalendars(),
+    ]);
+  }, [user?.locationId]);
+
   useEffect(() => {
+    setLoading(true);
     fetchAppointments();
   }, [user?.locationId]);
 
-  // Fetch users (for admin view) using userService
+  // Fetch users (for admin view)
   useEffect(() => {
-    if (user?.role === 'admin' && user?.locationId) {
-      // Check if userService exists, otherwise skip for now
-      if (typeof userService !== 'undefined' && userService.list) {
-        userService.list(user.locationId)
-          .then(setUsers)
-          .catch((e) => {
-            if (__DEV__) {
-              console.error('Failed to fetch users:', e);
-            }
-            setUsers([]);
-          });
-      } else {
-        if (__DEV__) {
-          console.log('userService not available yet');
-        }
-      }
+    if (user?.role === 'admin' && user?.locationId && userService?.list) {
+      userService.list(user.locationId)
+        .then(setUsers)
+        .catch((e) => {
+          if (__DEV__) console.error('Failed to fetch users:', e);
+        });
     }
   }, [user?.role, user?.locationId]);
 
-  // Fetch contacts (for contact picker in modal) using contactService
+  // Fetch contacts
   useEffect(() => {
-    if (!user?.locationId) return;
+    if (!user?.locationId || !contactService?.list) return;
     
-    // Check if contactService exists, otherwise skip for now
-    if (typeof contactService !== 'undefined' && contactService.list) {
-      contactService.list(user.locationId)
-        .then(setContacts)
-        .catch((e) => {
-          if (__DEV__) {
-            console.error('Failed to fetch contacts:', e);
-          }
-          setContacts([]);
-        });
-    } else {
-      if (__DEV__) {
-        console.log('contactService not available yet');
-      }
-    }
+    contactService.list(user.locationId)
+      .then(setContacts)
+      .catch((e) => {
+        if (__DEV__) console.error('Failed to fetch contacts:', e);
+      });
   }, [user?.locationId]);
 
-  // Filter appointments for the selected day and user/admin toggle
-  const filteredAppointments = appointments.filter((a) => {
-    const startDate = getAppointmentStart(a);
-    if (!isValidDate(startDate)) {
-      if (__DEV__) {
-        console.warn('Invalid appointment date:', a);
+  // Filter appointments for selected date
+  const getAppointmentsForDate = useCallback((date: string) => {
+    return appointments.filter((apt) => {
+      const startDate = getAppointmentStart(apt);
+      if (!startDate) return false;
+      
+      const apptDateLocal = getLocalDateString(startDate);
+      const matchesDate = apptDateLocal === date;
+      
+      if (!user) return false;
+      
+      if (user.role === 'admin' && showAllUsers) {
+        return matchesDate;
       }
-      return false;
-    }
-    const apptDate = new Date(startDate).toISOString().split('T')[0];
-    const byDate = apptDate === selectedDate;
-    if (!user || !user.role) return false;
-    if (user.role === 'admin') {
-      if (!showAllUsers) {
-        return byDate && (a.userId === user._id || a.userId === user.userId);
-      }
-      return byDate;
-    }
-    return byDate && (a.userId === user._id || a.userId === user.userId);
-  });
+      
+      return matchesDate && (apt.userId === user._id || apt.userId === user.userId);
+    });
+  }, [appointments, user, showAllUsers]);
 
-  // Handle FAB: Refresh calendars via context, then open modal
-  const handleOpenCreateModal = async () => {
-    if (!user?.locationId) {
-      if (__DEV__) {
-        console.error('[CalendarScreen] No user.locationId found.');
+  // Get next 5 appointments grouped by date
+  const getUpcomingAppointmentSections = useCallback((): AppointmentSection[] => {
+    const now = new Date();
+    const upcoming = appointments
+      .filter(apt => {
+        const startDate = getAppointmentStart(apt);
+        if (!startDate) return false;
+        
+        const isUpcoming = new Date(startDate) >= now;
+        
+        if (!user) return false;
+        if (user.role === 'admin' && showAllUsers) {
+          return isUpcoming;
+        }
+        return isUpcoming && (apt.userId === user._id || apt.userId === user.userId);
+      })
+      .sort((a, b) => {
+        const aStart = getAppointmentStart(a);
+        const bStart = getAppointmentStart(b);
+        if (!aStart || !bStart) return 0;
+        return new Date(aStart).getTime() - new Date(bStart).getTime();
+      })
+      .slice(0, 5); // Get first 5
+
+    // Group by date
+    const sections: { [key: string]: Appointment[] } = {};
+    upcoming.forEach(apt => {
+      const startDate = getAppointmentStart(apt);
+      if (!startDate) return;
+      
+      const dateKey = getLocalDateString(startDate);
+      if (!sections[dateKey]) {
+        sections[dateKey] = [];
       }
-      return;
+      sections[dateKey].push(apt);
+    });
+
+    // Convert to section array
+    return Object.entries(sections).map(([date, apts]) => ({
+      title: formatDateHeader(date),
+      data: apts,
+    }));
+  }, [appointments, user, showAllUsers]);
+
+  // Format date header
+  const formatDateHeader = (dateString: string): string => {
+    const date = new Date(dateString + 'T00:00:00');
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    if (date.toDateString() === today.toDateString()) {
+      return 'Today';
+    } else if (date.toDateString() === tomorrow.toDateString()) {
+      return 'Tomorrow';
+    } else {
+      return date.toLocaleDateString('en-US', { 
+        weekday: 'long', 
+        month: 'short', 
+        day: 'numeric' 
+      });
     }
+  };
+
+  const filteredAppointments = getAppointmentsForDate(selectedDate);
+
+  // Handle FAB
+  const handleOpenCreateModal = async () => {
+    if (!user?.locationId) return;
+    
     try {
       await refetchCalendars();
       setShowCreateModal(true);
     } catch (err) {
-      Alert.alert('Error', 'Failed to load calendars for appointment.');
-      if (__DEV__) {
-        console.error('[CalendarScreen] Failed to load calendars:', err);
-      }
+      Alert.alert('Error', 'Failed to load calendars');
     }
   };
 
-  // Delete appointment with confirmation using appointmentService
+  // Delete appointment
   const handleDeleteAppointment = (appointmentId: string) => {
-    Alert.alert('Cancel Appointment', 'Are you sure you want to cancel this appointment?', [
-      { text: 'Keep', style: 'cancel' },
-      {
-        text: 'Cancel Appointment',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            // Use appointmentService to update status
-            await appointmentService.update(appointmentId, { status: 'cancelled' });
-            fetchAppointments(); // Refresh the list
-          } catch (err) {
-            Alert.alert('Error', 'Failed to cancel appointment.');
-            if (__DEV__) {
-              console.error('[CalendarScreen] Failed to cancel appointment:', err);
+    Alert.alert(
+      'Cancel Appointment',
+      'Are you sure you want to cancel this appointment?',
+      [
+        { text: 'Keep', style: 'cancel' },
+        {
+          text: 'Cancel Appointment',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await appointmentService.update(appointmentId, { status: 'cancelled' });
+              fetchAppointments();
+            } catch (err) {
+              Alert.alert('Error', 'Failed to cancel appointment');
             }
-          }
+          },
         },
-      },
-    ]);
+      ]
+    );
+  };
+
+  const renderAppointmentItem = ({ item }: { item: Appointment }) => {
+    const contact = contactsMap[item.contactId] || contacts.find(
+      (c) => c._id === item.contactId || c.contactId === item.contactId
+    );
+    const calendar = calendarMap[item.calendarId];
+    
+    return (
+      <AppointmentCard
+        appointment={item}
+        contact={contact}
+        calendar={calendar}
+        onPress={() => navigation.navigate('AppointmentDetail', { appointmentId: item._id })}
+        onContactPress={() => {
+          if (contact) navigation.navigate('ContactDetailScreen', { contact });
+        }}
+        onEdit={() => {}}
+        onCancel={() => handleDeleteAppointment(item._id)}
+      />
+    );
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      <FlatList
-        ListHeaderComponent={() => (
-          <>
-            <Text style={styles.header}>Calendar</Text>
-            {selectedDate && (
+      <View style={styles.header}>
+        <Text style={styles.title}>Calendar</Text>
+        <TouchableOpacity
+          style={styles.viewToggle}
+          onPress={() => setShowUpcomingView(!showUpcomingView)}
+        >
+          <Ionicons 
+            name={showUpcomingView ? "calendar" : "list"} 
+            size={24} 
+            color={COLORS.accent} 
+          />
+        </TouchableOpacity>
+      </View>
+
+      {showUpcomingView ? (
+        // Upcoming appointments view
+        <SectionList
+          sections={getUpcomingAppointmentSections()}
+          keyExtractor={(item) => item._id}
+          renderItem={renderAppointmentItem}
+          renderSectionHeader={({ section }) => (
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionHeaderText}>{section.title}</Text>
+            </View>
+          )}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>No upcoming appointments</Text>
+            </View>
+          }
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+          contentContainerStyle={styles.listContent}
+        />
+      ) : (
+        // Calendar view
+        <FlatList
+          ListHeaderComponent={() => (
+            <>
               <Calendar
-                onDayPress={(day) => {
-                  if (__DEV__) {
-                    console.log('Day pressed:', day);
-                  }
-                  setSelectedDate(day.dateString);
-                }}
-                markedDates={{
-                  [selectedDate]: { selected: true, selectedColor: COLORS.accent },
-                }}
+                onDayPress={(day) => setSelectedDate(day.dateString)}
+                markedDates={markedDates}
+                markingType="multi-dot"
                 style={styles.calendar}
                 theme={{
                   todayTextColor: COLORS.accent,
                   arrowColor: COLORS.accent,
+                  dotColor: COLORS.accent,
+                  selectedDayBackgroundColor: COLORS.accent,
+                  selectedDayTextColor: '#fff',
                 }}
-                // Add these props to prevent date issues
                 minDate={'2020-01-01'}
                 maxDate={'2030-12-31'}
                 current={selectedDate}
               />
-            )}
 
-            {/* Admin: Toggle between My Appointments and All Users */}
-            {user?.role === 'admin' && (
-              <View style={styles.toggleRow}>
-                <TouchableOpacity
-                  style={[styles.toggleBtn, !showAllUsers && styles.toggleBtnActive]}
-                  onPress={() => setShowAllUsers(false)}
-                >
-                  <Text style={!showAllUsers ? styles.toggleTextActive : styles.toggleText}>My Appointments</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.toggleBtn, showAllUsers && styles.toggleBtnActive]}
-                  onPress={() => setShowAllUsers(true)}
-                >
-                  <Text style={showAllUsers ? styles.toggleTextActive : styles.toggleText}>All Users</Text>
-                </TouchableOpacity>
-              </View>
-            )}
+              {user?.role === 'admin' && (
+                <View style={styles.toggleRow}>
+                  <TouchableOpacity
+                    style={[styles.toggleBtn, !showAllUsers && styles.toggleBtnActive]}
+                    onPress={() => setShowAllUsers(false)}
+                  >
+                    <Text style={!showAllUsers ? styles.toggleTextActive : styles.toggleText}>
+                      My Appointments
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.toggleBtn, showAllUsers && styles.toggleBtnActive]}
+                    onPress={() => setShowAllUsers(true)}
+                  >
+                    <Text style={showAllUsers ? styles.toggleTextActive : styles.toggleText}>
+                      All Users
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
 
-            <Text style={styles.sectionTitle}>
-              {loading
-                ? 'Loading...'
-                : filteredAppointments.length > 0
-                ? `Appointments for ${selectedDate}:`
-                : `No appointments for ${selectedDate}.`}
-            </Text>
+              <Text style={styles.sectionTitle}>
+                {loading
+                  ? 'Loading...'
+                  : filteredAppointments.length > 0
+                  ? `${formatDateHeader(selectedDate)} (${filteredAppointments.length})`
+                  : `No appointments for ${formatDateHeader(selectedDate)}`}
+              </Text>
+            </>
+          )}
+          data={loading ? [] : filteredAppointments}
+          keyExtractor={(item) => item._id}
+          renderItem={renderAppointmentItem}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+          contentContainerStyle={styles.listContent}
+        />
+      )}
 
-            {loading && (
-              <ActivityIndicator style={{ marginTop: 20 }} color={COLORS.accent} />
-            )}
-          </>
-        )}
-        data={loading ? [] : filteredAppointments}
-        keyExtractor={(item) => item._id}
-        renderItem={({ item }: { item: Appointment }) => {
-          const contact = contactsMap[item.contactId] || contacts.find(
-            (c) => c._id === item.contactId || c.contactId === item.contactId
-          );
-          const calendar = calendarMap[item.calendarId];
-          return (
-            <AppointmentCard
-              appointment={item}
-              contact={contact}
-              calendar={calendar}
-              onPress={() => {
-                navigation.navigate('AppointmentDetail', { 
-                  appointmentId: item._id 
-                });
-              }}
-              onContactPress={() => {
-                if (contact) navigation.navigate('ContactDetailScreen', { contact: contact });
-              }}
-              onEdit={() => {/* edit logic */}}
-              onCancel={() => handleDeleteAppointment(item._id)}
-            />
-          );
-        }}
-        contentContainerStyle={styles.listContent}
-      />
-
-      {/* Floating Action Button */}
+      {/* FAB */}
       <TouchableOpacity style={styles.fab} onPress={handleOpenCreateModal}>
         <Ionicons name="add" size={32} color="#fff" />
       </TouchableOpacity>
 
-      {/* Create Appointment Modal */}
+      {/* Create Modal */}
       <CreateAppointmentModal
         visible={showCreateModal}
         onClose={() => setShowCreateModal(false)}
         onSubmit={async (data) => {
           if (!user?._id || !user?.locationId) {
-            Alert.alert('Auth Error', 'Your session has expired. Please log out and log back in.');
+            Alert.alert('Error', 'Session expired. Please log in again.');
             return;
           }
-          if (!data.contactId || !data.calendarId) {
-            Alert.alert('Missing Data', 'Contact and Calendar are required.');
-            return;
-          }
+          
           try {
-            // Use appointmentService to create appointment
             await appointmentService.create({
               ...data,
               userId: user._id,
               locationId: user.locationId,
             });
             setShowCreateModal(false);
-            fetchAppointments(); // Refresh the list
+            fetchAppointments();
           } catch (err: any) {
-            if (__DEV__) {
-              console.error('[CalendarScreen] Failed to create appointment:', err);
-            }
-            
-            // Better error message based on the error
-            let errorMessage = 'Failed to create appointment.';
-            if (err.response?.status === 400 && err.response?.data?.error?.includes('GHL API key')) {
-              errorMessage = 'Authentication issue. Please contact support to refresh OAuth tokens.';
-            } else if (err.response?.data?.error) {
-              errorMessage = err.response.data.error;
-            }
-            
-            Alert.alert('Error', errorMessage);
+            Alert.alert('Error', err.response?.data?.error || 'Failed to create appointment');
           }
         }}
         contacts={contacts}
@@ -363,16 +463,32 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background },
+  container: { 
+    flex: 1, 
+    backgroundColor: COLORS.background 
+  },
   header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 10,
+  },
+  title: {
     fontSize: FONT.header,
     fontWeight: '700',
     color: COLORS.textDark,
-    marginHorizontal: 20,
-    marginTop: 18,
-    marginBottom: 6,
   },
-  calendar: { marginBottom: 10, borderRadius: RADIUS.card, marginHorizontal: 10 },
+  viewToggle: {
+    padding: 8,
+  },
+  calendar: { 
+    marginBottom: 10, 
+    borderRadius: RADIUS.card, 
+    marginHorizontal: 10,
+    ...SHADOW.card,
+  },
   toggleRow: {
     flexDirection: 'row',
     marginHorizontal: 20,
@@ -405,8 +521,29 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     color: COLORS.textDark,
   },
-  list: { paddingHorizontal: 12 },
-  listContent: { paddingBottom: 100 }, // Add padding for FAB
+  sectionHeader: {
+    backgroundColor: COLORS.background,
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  sectionHeaderText: {
+    fontSize: FONT.body,
+    fontWeight: '600',
+    color: COLORS.textDark,
+  },
+  listContent: { 
+    paddingBottom: 100 
+  },
+  emptyContainer: {
+    paddingVertical: 40,
+    alignItems: 'center',
+  },
+  emptyText: {
+    fontSize: FONT.body,
+    color: COLORS.textLight,
+  },
   fab: {
     position: 'absolute',
     right: 28,

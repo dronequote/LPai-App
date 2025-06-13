@@ -1,8 +1,9 @@
-// pages/api/login.ts
+// lpai-backend/pages/api/login.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '@/lib/mongodb';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import { ensureUserPreferences } from '../../src/utils/userPreferences';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret';
 
@@ -36,9 +37,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Payload for JWT (can add/remove fields as needed)
+    // Ensure user has complete preferences with defaults
+    user.preferences = ensureUserPreferences(user.preferences);
+
+    // Update user's lastLogin
+    await db.collection('users').updateOne(
+      { _id: user._id },
+      { 
+        $set: { 
+          lastLogin: new Date().toISOString(),
+          // Also save the merged preferences back to DB
+          preferences: user.preferences
+        } 
+      }
+    );
+
+    // Payload for JWT
     const payload = {
-      userId: user.ghlUserId,
+      userId: user.ghlUserId || user.userId,
       locationId: user.locationId,
       name: user.name,
       permissions: user.permissions || [],
@@ -49,24 +65,45 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
 
-    // --- FULL USER OBJECT returned to frontend (including preferences!) ---
+    // Full user object returned to frontend (including complete preferences!)
     const loginResponse = {
       token,
-      userId: user.ghlUserId,
+      userId: user.ghlUserId || user.userId,
       locationId: user.locationId,
       name: user.name,
       permissions: user.permissions || [],
       role: user.role || 'user',
-      _id: user._id,
+      _id: user._id.toString(),
       email: user.email,
-      preferences: user.preferences || {}, // ADD THIS LINE!
+      preferences: user.preferences, // Now includes all defaults
+      // Include other user fields
+      firstName: user.firstName || '',
+      lastName: user.lastName || '',
+      phone: user.phone || '',
+      avatar: user.avatar || '',
+      isActive: user.isActive !== false, // Default to true
+      extension: user.extension || '',
+      roles: user.roles || {
+        type: 'account',
+        role: user.role || 'user',
+        locationIds: [user.locationId]
+      },
+      // Navigation (legacy - moving to preferences)
+      navigatorOrder: user.navigatorOrder || user.preferences.navigatorOrder,
+      // Metadata
+      dateAdded: user.dateAdded || user.createdAt || null,
+      lastSyncedAt: user.lastSyncedAt || null,
+      createdAt: user.createdAt || null,
+      updatedAt: user.updatedAt || new Date().toISOString(),
     };
 
     // Debug log
-    console.log('[LOGIN RESPONSE]', {
-      ...loginResponse,
+    console.log('[LOGIN SUCCESS]', {
+      email: user.email,
+      name: user.name,
       hasPreferences: !!user.preferences,
-      navigatorOrder: user.preferences?.navigatorOrder,
+      timezone: user.preferences?.timezone,
+      communicationProvider: user.preferences?.communication?.phoneProvider,
     });
 
     return res.status(200).json(loginResponse);

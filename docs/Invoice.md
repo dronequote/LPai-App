@@ -388,7 +388,7 @@ export default async function handler(req, res) {
     },
     {
       headers: {
-        Authorization: `Bearer ${location.apiKey}`,
+        Authorization: `Bearer ${location.ghlOAuth.accessToken}`,
         Version: '2021-07-28'
       }
     }
@@ -408,7 +408,7 @@ export default async function handler(req, res) {
     },
     {
       headers: {
-        Authorization: `Bearer ${location.apiKey}`,
+        Authorization: `Bearer ${location.ghlOAuth.accessToken}`,
         Version: '2021-07-28'
       }
     }

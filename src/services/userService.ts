@@ -3,26 +3,9 @@ import { BaseService } from './baseService';
 import { User, UserPreferences } from '../../packages/types';
 import { authService } from './authService';
 
-interface UpdatePreferencesInput {
-  dashboardType?: 'service' | 'sales' | 'operations' | 'custom';
-  navigatorOrder?: string[];
-  hiddenNavItems?: string[];
-  showHomeLabel?: boolean;
-  customDashboard?: {
-    layout: Array<{
-      id: string;
-      type: string;
-      size: 'full' | 'half' | 'quarter';
-      position: number;
-      config?: Record<string, any>;
-    }>;
-  };
-  theme?: 'light' | 'dark' | 'system';
-  notifications?: {
-    push?: boolean;
-    email?: boolean;
-    sms?: boolean;
-  };
+// Updated to match new UserPreferences structure
+interface UpdatePreferencesInput extends Partial<UserPreferences> {
+  // All fields from UserPreferences are now available
 }
 
 interface UpdateUserInput {
@@ -35,8 +18,12 @@ class UserService extends BaseService {
   /**
    * Get all users for location
    */
-  async listUsers(locationId: string): Promise<User[]> {
+  async list(locationId: string): Promise<User[]> {
     const endpoint = `/api/users?locationId=${locationId}`;
+    
+    if (__DEV__) {
+      console.log('📋 [UserService] Fetching users for location:', locationId);
+    }
     
     return this.get<User[]>(
       endpoint,
@@ -57,6 +44,10 @@ class UserService extends BaseService {
   async getUser(userId: string): Promise<User> {
     const endpoint = `/api/users/${userId}`;
     
+    if (__DEV__) {
+      console.log('👤 [UserService] Fetching user:', userId);
+    }
+    
     return this.get<User>(
       endpoint,
       {
@@ -71,13 +62,17 @@ class UserService extends BaseService {
   }
 
   /**
-   * Update user preferences
+   * Update user preferences (now supports all new preference fields)
    */
   async updatePreferences(
     userId: string,
     preferences: UpdatePreferencesInput
   ): Promise<User> {
     const endpoint = `/api/users/${userId}`;
+    
+    if (__DEV__) {
+      console.log('⚙️ [UserService] Updating preferences:', { userId, preferences });
+    }
     
     const updatedUser = await this.patch<User>(
       endpoint,
@@ -100,17 +95,25 @@ class UserService extends BaseService {
     // Clear user cache
     await this.clearCache(`@lpai_cache_GET_/api/users/${userId}`);
     
+    if (__DEV__) {
+      console.log('✅ [UserService] Preferences updated successfully');
+    }
+    
     return updatedUser;
   }
 
   /**
-   * Update user profile
+   * Update user profile (NEW METHOD)
    */
   async updateProfile(
     userId: string,
     data: UpdateUserInput
   ): Promise<User> {
     const endpoint = `/api/users/${userId}`;
+    
+    if (__DEV__) {
+      console.log('🔄 [UserService] Updating profile:', { userId, data });
+    }
     
     const updatedUser = await this.patch<User>(
       endpoint,
@@ -130,6 +133,10 @@ class UserService extends BaseService {
     // Clear caches
     await this.clearCache(`@lpai_cache_GET_/api/users/${userId}`);
     await this.clearCache(`@lpai_cache_GET_/api/users`);
+    
+    if (__DEV__) {
+      console.log('✅ [UserService] Profile updated:', updatedUser);
+    }
     
     return updatedUser;
   }
@@ -199,27 +206,97 @@ class UserService extends BaseService {
    */
   async updateNotificationPreferences(
     userId: string,
-    notifications: UpdatePreferencesInput['notifications']
+    notifications: UserPreferences['notificationSettings']
   ): Promise<User> {
-    return this.updatePreferences(userId, { notifications });
+    return this.updatePreferences(userId, { 
+      notificationSettings: notifications 
+    });
+  }
+
+  /**
+   * Update communication preferences
+   */
+  async updateCommunicationPreferences(
+    userId: string,
+    communication: UserPreferences['communication']
+  ): Promise<User> {
+    if (__DEV__) {
+      console.log('📱 [UserService] Updating communication preferences:', communication);
+    }
+    
+    return this.updatePreferences(userId, { communication });
+  }
+
+  /**
+   * Update business settings
+   */
+  async updateBusinessSettings(
+    userId: string,
+    business: UserPreferences['business']
+  ): Promise<User> {
+    return this.updatePreferences(userId, { business });
+  }
+
+  /**
+   * Update privacy settings
+   */
+  async updatePrivacySettings(
+    userId: string,
+    privacy: UserPreferences['privacy']
+  ): Promise<User> {
+    return this.updatePreferences(userId, { privacy });
+  }
+
+  /**
+   * Update mobile settings
+   */
+  async updateMobileSettings(
+    userId: string,
+    mobile: UserPreferences['mobile']
+  ): Promise<User> {
+    return this.updatePreferences(userId, { mobile });
+  }
+
+  /**
+   * Update timezone
+   */
+  async updateTimezone(
+    userId: string,
+    timezone: string
+  ): Promise<User> {
+    if (__DEV__) {
+      console.log('🌍 [UserService] Updating timezone:', timezone);
+    }
+    
+    return this.updatePreferences(userId, { timezone });
   }
 
   /**
    * Reset preferences to defaults
    */
   async resetPreferences(userId: string): Promise<User> {
+    // Import default preferences from backend utils
     const defaultPreferences: UserPreferences = {
-      dashboardType: 'service',
-      navigatorOrder: [],
-      hiddenNavItems: [],
-      showHomeLabel: true,
+      // Display & UI
+      notifications: true,
+      defaultCalendarView: 'week',
+      emailSignature: '',
       theme: 'system',
-      notifications: {
-        push: true,
-        email: true,
-        sms: true,
-      },
+      
+      // Localization
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Denver',
+      dateFormat: 'MM/DD/YYYY',
+      timeFormat: '12h',
+      firstDayOfWeek: 0,
+      language: 'en',
+      
+      // Add all other default fields...
+      // (matching what's in your backend userPreferences.ts)
     };
+    
+    if (__DEV__) {
+      console.log('🔄 [UserService] Resetting preferences to defaults');
+    }
     
     return this.updatePreferences(userId, defaultPreferences);
   }
@@ -241,6 +318,31 @@ class UserService extends BaseService {
   ): Promise<boolean> {
     const user = await this.getUser(userId);
     return user.preferences?.[key] !== undefined;
+  }
+
+  /**
+   * Quick toggle methods for common settings
+   */
+  async toggleNotifications(userId: string, enabled: boolean): Promise<User> {
+    return this.updatePreferences(userId, { notifications: enabled });
+  }
+
+  async toggleOfflineMode(userId: string, enabled: boolean): Promise<User> {
+    return this.updatePreferences(userId, { 
+      mobile: { 
+        ...(await this.getUser(userId)).preferences?.mobile,
+        offlineMode: enabled 
+      } 
+    });
+  }
+
+  async toggleBiometricLogin(userId: string, enabled: boolean): Promise<User> {
+    return this.updatePreferences(userId, { 
+      mobile: { 
+        ...(await this.getUser(userId)).preferences?.mobile,
+        biometricLogin: enabled 
+      } 
+    });
   }
 }
 
