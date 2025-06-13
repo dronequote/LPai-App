@@ -56,7 +56,8 @@ export async function refreshOAuthToken(location: any): Promise<OAuthTokens> {
         client_id: process.env.GHL_MARKETPLACE_CLIENT_ID!,
         client_secret: process.env.GHL_MARKETPLACE_CLIENT_SECRET!,
         grant_type: 'refresh_token',
-        refresh_token: location.ghlOAuth.refreshToken
+        refresh_token: location.ghlOAuth.refreshToken,
+        user_type: location.installType || 'Location'  // ADD THIS LINE - CRITICAL!
       }),
       {
         headers: {
