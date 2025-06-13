@@ -183,7 +183,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // Now check if we have any auth method
-    if (!location.ghlOAuth?.accessToken && !location.apiKey) {
+    if (!location.ghlOAuth?.accessToken && !location.ghlOAuth.accessToken) {
       console.log(`[Location Setup] No authentication method found for location ${locationId}`);
       
       // If location is under a company, we can try to get tokens
@@ -235,7 +235,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // Now check if we have any auth method
-    if (!location.ghlOAuth?.accessToken && !location.apiKey) {
+    if (!location.ghlOAuth?.accessToken && !location.ghlOAuth.accessToken) {
       return res.status(400).json({ 
         error: 'No authentication method available for location',
         details: 'Location needs OAuth token or API key',

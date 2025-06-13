@@ -23,7 +23,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // 2️⃣ Get the API key from the locations collection
     const location = await db.collection('locations').findOne({ locationId: mongoContact.locationId });
-    const apiKey = location?.apiKey;
+    const apiKey = location?.ghlOAuth?.accessToken;
 
     // 3️⃣ Log all fetched info for debug
     console.log('[GHL SYNC] ➡️ Mongo Contact:', mongoContact);

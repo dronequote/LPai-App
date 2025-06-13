@@ -47,7 +47,7 @@ async function processBatchOperation(db: any, body: any, res: NextApiResponse) {
     
     // Get location for GHL sync
     const location = await db.collection('locations').findOne({ locationId });
-    const hasGHLSync = location?.apiKey ? true : false;
+    const hasGHLSync = location?.ghlOAuth?.accessToken ? true : false;
     
     const results = {
       success: [] as any[],
@@ -155,7 +155,7 @@ async function processBatchOperation(db: any, body: any, res: NextApiResponse) {
                   ghlPayload,
                   {
                     headers: {
-                      Authorization: `Bearer ${location.apiKey}`,
+                      Authorization: `Bearer ${location.ghlOAuth.accessToken}`,
                       Version: '2021-07-28',
                       'Content-Type': 'application/json'
                     }
@@ -234,7 +234,7 @@ async function processBatchOperation(db: any, body: any, res: NextApiResponse) {
                       updates,
                       {
                         headers: {
-                          Authorization: `Bearer ${location.apiKey}`,
+                          Authorization: `Bearer ${location.ghlOAuth.accessToken}`,
                           Version: '2021-07-28',
                           'Content-Type': 'application/json'
                         }

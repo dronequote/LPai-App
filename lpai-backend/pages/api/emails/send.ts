@@ -51,7 +51,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Get location for API key
     const location = await db.collection('locations').findOne({ locationId });
-    if (!location?.apiKey) {
+    if (!location?.ghlOAuth?.accessToken) {
       return res.status(400).json({ error: 'No API key found for location' });
     }
 
@@ -86,7 +86,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const response = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${location.apiKey}`,
+        'Authorization': `Bearer ${location.ghlOAuth.accessToken}`,
         'Version': '2021-04-15',
         'Content-Type': 'application/json'
       },

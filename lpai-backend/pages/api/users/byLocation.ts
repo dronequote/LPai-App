@@ -15,9 +15,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // 💡 Now fetching from locations, NOT users!
     const location = await db.collection('locations').findOne({ locationId });
     if (!location) return res.status(404).json({ error: 'Location not found' });
-    if (!location.apiKey) return res.status(404).json({ error: 'API key not set for this location' });
+    if (!location.ghlOAuth.accessToken) return res.status(404).json({ error: 'API key not set for this location' });
 
-    res.status(200).json({ apiKey: location.apiKey });
+    res.status(200).json({ apiKey: location.ghlOAuth.accessToken });
   } catch (err) {
     console.error('❌ Failed to fetch location by locationId:', err);
     res.status(500).json({ error: 'Server error' });

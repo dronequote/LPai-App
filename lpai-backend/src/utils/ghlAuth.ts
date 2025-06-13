@@ -23,9 +23,9 @@ export async function getAuthHeader(location: any): Promise<{ header: string; ty
       type: 'OAuth'
     };
   }
-  if (location?.apiKey) {
+  if (location?.ghlOAuth?.accessToken) {
     return {
-      header: `Bearer ${location.apiKey}`,
+      header: `Bearer ${location.ghlOAuth.accessToken}`,
       type: 'API Key'
     };
   }
@@ -56,7 +56,8 @@ export async function refreshOAuthToken(location: any): Promise<OAuthTokens> {
         client_id: process.env.GHL_MARKETPLACE_CLIENT_ID!,
         client_secret: process.env.GHL_MARKETPLACE_CLIENT_SECRET!,
         grant_type: 'refresh_token',
-        refresh_token: location.ghlOAuth.refreshToken
+        refresh_token: location.ghlOAuth.refreshToken,
+        user_type: location.installType || 'Location'  // ADD THIS LINE - CRITICAL!
       }),
       {
         headers: {

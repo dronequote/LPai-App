@@ -18,7 +18,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Get the API key for the location
     const location = await db.collection('locations').findOne({ locationId });
-    const apiKey = location?.apiKey;
+    const apiKey = location?.ghlOAuth?.accessToken;
     console.log(`[PIPELINES][API] Location doc:`, location);
     
     if (!apiKey) {
