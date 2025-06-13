@@ -14,14 +14,16 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, FONT, RADIUS, SHADOW } from '../../styles/theme';
 import { useAuth } from '../../contexts/AuthContext';
-import api from '../../lib/api';
+import { appointmentService } from '../../services/appointmentService';
 
 // Conditional import for Location
 let Location: any = null;
 try {
   Location = require('expo-location');
 } catch (error) {
-  console.log('expo-location not available');
+  if (__DEV__) {
+    console.log('expo-location not available');
+  }
 }
 
 interface DepartureWidgetProps {
@@ -71,20 +73,25 @@ export default function DepartureWidget({ onNavigate, onRunningLate }: Departure
         const location = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.Balanced,
         });
+        
         setCurrentLocation(location);
         setLocationAvailable(true);
 
+        // Subscribe to location updates
         locationSubscription = await Location.watchPositionAsync(
           {
             accuracy: Location.Accuracy.Balanced,
-            timeInterval: 60000,
-            distanceInterval: 100,
+            timeInterval: 60000, // Update every minute
+            distanceInterval: 100, // Or every 100 meters
           },
-          (newLocation) => {
-            setCurrentLocation(newLocation);
+          (location) => {
+            setCurrentLocation(location);
           }
         );
       } catch (error) {
+        if (__DEV__) {
+          console.log('Location error:', error);
+        }
         setLocationAvailable(false);
       }
     })();
@@ -96,267 +103,163 @@ export default function DepartureWidget({ onNavigate, onRunningLate }: Departure
     };
   }, []);
 
-  // Fetch next appointment
+  // Fetch appointment and calculate departure time
   useEffect(() => {
     fetchNextAppointment();
-    const interval = setInterval(fetchNextAppointment, 60000);
+    const interval = setInterval(fetchNextAppointment, 60000); // Update every minute
     return () => clearInterval(interval);
   }, [user?.locationId]);
 
-  // Calculate real-time ETA when location or appointment changes
+  // Update timer every second
   useEffect(() => {
-    if (currentLocation && nextAppointment && locationAvailable) {
-      calculateRealTimeETA();
-      const interval = setInterval(calculateRealTimeETA, 120000);
-      return () => clearInterval(interval);
-    }
-  }, [currentLocation, nextAppointment, locationAvailable]);
-
-  // Update countdown
-  useEffect(() => {
-    if (!nextAppointment) return;
-    
     const timer = setInterval(() => {
-      updateCountdown();
+      if (nextAppointment) {
+        calculateTimeToLeave();
+      }
     }, 1000);
-
-    updateCountdown();
+    
     return () => clearInterval(timer);
-  }, [nextAppointment, realTimeETA]);
+  }, [nextAppointment, currentLocation]);
+
+  // Pulse animation for when running late
+  useEffect(() => {
+    if (isLate) {
+      const pulseAnimation = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1.2,
+            duration: 500,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 500,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      pulseAnimation.start();
+      return () => pulseAnimation.stop();
+    }
+  }, [isLate]);
 
   const fetchNextAppointment = async () => {
     try {
-      setLoading(true);
+      // Use appointmentService instead of api.get
+      const appointments = await appointmentService.getTodaysAppointments(
+        user?.locationId,
+        user?.id
+      );
       
-      const res = await api.get('/api/appointments', {
-        params: {
-          locationId: user?.locationId,
-          userId: user?._id,
-        }
-      });
-
-      const appointments = res.data || [];
       const now = new Date();
-      
       const upcoming = appointments
-        .filter((a: any) => new Date(a.start || a.time) > now)
-        .sort((a: any, b: any) => new Date(a.start || a.time).getTime() - new Date(b.start || b.time).getTime());
-
+        .filter(apt => {
+          const aptTime = new Date(apt.start || apt.time);
+          return aptTime > now && apt.status !== 'Cancelled';
+        })
+        .sort((a, b) => new Date(a.start || a.time).getTime() - new Date(b.start || b.time).getTime());
+      
       if (upcoming.length > 0) {
-        const next = upcoming[0];
-        
-        try {
-          const contactRes = await api.get(`/api/contacts/${next.contactId}`);
-          const contact = contactRes.data;
-          
-          setNextAppointment({
-            ...next,
-            contact,
-            appointmentTime: new Date(next.start || next.time),
-          });
-          
-        } catch (contactError) {
-          setNextAppointment({
-            ...next,
-            contact: null,
-            appointmentTime: new Date(next.start || next.time),
-          });
-        }
+        setNextAppointment(upcoming[0]);
       } else {
         setNextAppointment(null);
       }
     } catch (error) {
-      console.error('Failed to fetch appointments:', error);
+      if (__DEV__) {
+        console.error('Failed to fetch appointments:', error);
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const calculateRealTimeETA = async () => {
-    if (!currentLocation || !nextAppointment?.contact?.address) return;
-
-    try {
-      const response = await api.post('/api/maps/calculate-eta', {
-        origin: {
-          lat: currentLocation.coords.latitude,
-          lng: currentLocation.coords.longitude,
-        },
-        destination: nextAppointment.contact.address,
-      });
-
-      if (response.data.success && response.data.duration) {
-        setRealTimeETA(response.data.duration);
-        setTrafficCondition(response.data.trafficCondition);
-      } else {
-        setRealTimeETA(null);
-        setTrafficCondition(null);
-      }
-    } catch (error) {
-      setRealTimeETA(null);
-      setTrafficCondition(null);
-    }
-  };
-
-  const updateCountdown = () => {
+  const calculateTimeToLeave = () => {
     if (!nextAppointment) return;
 
-    const appointmentTime = new Date(nextAppointment.appointmentTime);
     const now = new Date();
-    
-    // Use calculated ETA or default 20 minutes if no route available
-    const travelTime = realTimeETA || 20;
+    const appointmentTime = new Date(nextAppointment.start || nextAppointment.time);
+    const driveTime = nextAppointment.estimatedDriveTime || 15; // Default 15 min
     const bufferTime = userPrefs.arrivalBuffer;
-    const departureTime = new Date(appointmentTime.getTime() - (travelTime + bufferTime) * 60000);
     
-    const timeDiff = departureTime.getTime() - now.getTime();
-    const minutesUntilDeparture = Math.floor(timeDiff / 60000);
+    // Calculate when to leave (appointment time - drive time - buffer)
+    const departureTime = new Date(appointmentTime.getTime() - (driveTime + bufferTime) * 60000);
+    const minutesUntilDeparture = Math.floor((departureTime.getTime() - now.getTime()) / 60000);
     
     setTimeToLeave(minutesUntilDeparture);
     setIsLate(minutesUntilDeparture < 0);
 
-    if (minutesUntilDeparture < 10 && minutesUntilDeparture > 0) {
-      startPulseAnimation();
+    // Update traffic condition based on real-time data if available
+    if (realTimeETA && driveTime) {
+      const trafficRatio = realTimeETA / driveTime;
+      if (trafficRatio > 1.3) {
+        setTrafficCondition('heavy');
+      } else if (trafficRatio > 1.1) {
+        setTrafficCondition('moderate');
+      } else {
+        setTrafficCondition('normal');
+      }
     }
   };
 
-  const startPulseAnimation = () => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, {
-          toValue: 1.02,
-          duration: 1000,
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulseAnim, {
-          toValue: 1,
-          duration: 1000,
-          useNativeDriver: true,
-        }),
-      ])
-    ).start();
+  const formatTimeRemaining = (minutes: number): string => {
+    if (minutes < 0) {
+      const late = Math.abs(minutes);
+      if (late < 60) return `${late}m late`;
+      return `${Math.floor(late / 60)}h ${late % 60}m late`;
+    }
+    if (minutes < 60) return `${minutes}m`;
+    return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
   };
 
-  const handleNavigate = async () => {
-    if (!nextAppointment?.contact?.address) {
-      Alert.alert('No Address', 'No address available for navigation');
-      return;
-    }
+  const handleNavigate = () => {
+    if (!nextAppointment?.address) return;
 
-    Alert.alert(
-      'Navigation',
-      'Would you like to notify the customer that you\'re on your way?',
-      [
-        {
-          text: 'No',
-          style: 'cancel',
-          onPress: () => openNavigation(false),
-        },
-        {
-          text: 'Yes',
-          onPress: () => openNavigation(true),
-        },
-      ]
-    );
-  };
+    const address = nextAppointment.address;
+    const encodedAddress = encodeURIComponent(address);
+    
+    const urls = {
+      google: `https://www.google.com/maps/dir/?api=1&destination=${encodedAddress}`,
+      apple: `maps://app?daddr=${encodedAddress}`,
+      waze: `https://waze.com/ul?q=${encodedAddress}&navigate=yes`,
+    };
 
-  const openNavigation = async (notifyCustomer: boolean) => {
-    if (notifyCustomer) {
-      Alert.alert('Notification sent', 'Customer has been notified you\'re on the way');
-    }
-
-    const address = encodeURIComponent(nextAppointment.contact.address);
-    let url = '';
-
-    switch (userPrefs.preferredGPS) {
-      case 'apple':
-        url = `maps://app?daddr=${address}`;
-        break;
-      case 'waze':
-        url = `waze://?q=${address}&navigate=yes`;
-        break;
-      case 'google':
-      default:
-        url = Platform.OS === 'ios'
-          ? `comgooglemaps://?daddr=${address}`
-          : `google.navigation:q=${address}`;
-    }
-
+    const url = urls[userPrefs.preferredGPS as keyof typeof urls] || urls.google;
+    
     Linking.canOpenURL(url).then((supported) => {
       if (supported) {
         Linking.openURL(url);
+        onNavigate?.();
       } else {
-        Linking.openURL(`https://maps.google.com/maps?daddr=${address}`);
+        // Fallback to Google Maps web
+        Linking.openURL(urls.google);
       }
     });
-
-    onNavigate?.();
   };
 
   const handleRunningLate = () => {
     Alert.alert(
-      'Running Late',
-      'How late will you be?',
+      'Running Late?',
+      'Would you like to notify the customer?',
       [
-        { text: '5 minutes', onPress: () => sendLateNotification(5) },
-        { text: '10 minutes', onPress: () => sendLateNotification(10) },
-        { text: '15 minutes', onPress: () => sendLateNotification(15) },
-        { text: '30 minutes', onPress: () => sendLateNotification(30) },
         { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Send Notification', 
+          onPress: () => {
+            // TODO: Implement SMS notification
+            onRunningLate?.();
+            Alert.alert('Notification Sent', 'Customer has been notified');
+          }
+        },
       ]
     );
-  };
-
-  const sendLateNotification = async (minutes: number) => {
-    const newArrivalTime = new Date(nextAppointment.appointmentTime);
-    newArrivalTime.setMinutes(newArrivalTime.getMinutes() + minutes);
-    
-    const arrivalTimeString = newArrivalTime.toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-    });
-    
-    Alert.alert(
-      'Customer Notified',
-      `${nextAppointment.contact?.firstName} has been notified.\nNew arrival time: ${arrivalTimeString}`
-    );
-  };
-
-  const formatTime = (minutes: number) => {
-    if (minutes < 0) {
-      const late = Math.abs(minutes);
-      return `${late} min late`;
-    }
-    if (minutes === 0) {
-      return 'Leave now!';
-    }
-    if (minutes < 60) {
-      return `${minutes}m`;
-    }
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return `${hours}h ${mins}m`;
-  };
-
-  const getUrgencyColor = () => {
-    if (isLate) return '#FF4444';
-    if (timeToLeave < 5) return '#FF6B6B';
-    if (timeToLeave < 10) return '#FFA500';
-    return COLORS.accent;
-  };
-
-  const getTrafficColor = () => {
-    switch (trafficCondition) {
-      case 'heavy': return '#FF4444';
-      case 'moderate': return '#FFA500';
-      default: return '#27AE60';
-    }
   };
 
   if (loading) {
     return (
       <View style={styles.container}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={COLORS.accent} />
+          <ActivityIndicator size="small" color={COLORS.primary} />
+          <Text style={styles.loadingText}>Loading schedule...</Text>
         </View>
       </View>
     );
@@ -366,110 +269,136 @@ export default function DepartureWidget({ onNavigate, onRunningLate }: Departure
     return (
       <View style={styles.container}>
         <View style={styles.emptyState}>
-          <Ionicons name="checkmark-circle" size={32} color={COLORS.accent} />
+          <Ionicons name="checkmark-circle" size={48} color={COLORS.success} />
           <Text style={styles.emptyText}>No more appointments today!</Text>
         </View>
       </View>
     );
   }
 
-  const appointmentTime = new Date(nextAppointment.appointmentTime).toLocaleTimeString('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+  const timerColor = isLate ? COLORS.error : timeToLeave <= 10 ? COLORS.warning : COLORS.success;
 
   return (
-    <View style={[styles.container, { borderColor: getUrgencyColor() }]}>
-      <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.timerSection}>
-            <Ionicons name="car" size={20} color={getUrgencyColor()} />
-            <View style={styles.timerTextContainer}>
-              <Text style={[styles.leaveLabel, { color: getUrgencyColor() }]}>
-                {isLate ? 'LATE BY' : 'LEAVE IN'}
-              </Text>
-              <Text style={[styles.timerText, { color: getUrgencyColor() }]}>
-                {formatTime(timeToLeave)}
-              </Text>
-            </View>
-          </View>
-          <View style={styles.appointmentTimeContainer}>
-            <Text style={styles.appointmentTimeLabel}>Appointment</Text>
-            <Text style={styles.appointmentTime}>{appointmentTime}</Text>
+    <Animated.View 
+      style={[
+        styles.container, 
+        isLate && { transform: [{ scale: pulseAnim }] }
+      ]}
+    >
+      <View style={styles.header}>
+        <View style={styles.timerSection}>
+          <Ionicons 
+            name={isLate ? "alert-circle" : "time"} 
+            size={24} 
+            color={timerColor} 
+          />
+          <View style={styles.timerTextContainer}>
+            <Text style={[styles.leaveLabel, { color: timerColor }]}>
+              {isLate ? 'Running Late' : 'Leave In'}
+            </Text>
+            <Text style={[styles.timerText, { color: timerColor }]}>
+              {formatTimeRemaining(timeToLeave)}
+            </Text>
           </View>
         </View>
-
-        {/* Customer Info */}
-        <View style={styles.infoSection}>
-          <Text style={styles.customerName} numberOfLines={1}>
-            {nextAppointment.contact?.firstName} {nextAppointment.contact?.lastName}
+        
+        <View style={styles.appointmentTimeContainer}>
+          <Text style={styles.appointmentTimeLabel}>Appointment</Text>
+          <Text style={styles.appointmentTime}>
+            {new Date(nextAppointment.start || nextAppointment.time).toLocaleTimeString([], { 
+              hour: 'numeric', 
+              minute: '2-digit' 
+            })}
           </Text>
-          <Text style={styles.appointmentType}>{nextAppointment.title}</Text>
-          
+        </View>
+      </View>
+
+      <View style={styles.infoSection}>
+        <Text style={styles.customerName} numberOfLines={1}>
+          {nextAppointment.contactName || 'Unknown Customer'}
+        </Text>
+        <Text style={styles.appointmentType} numberOfLines={1}>
+          {nextAppointment.title || 'Appointment'}
+        </Text>
+        
+        {nextAppointment.address && (
           <View style={styles.detailsRow}>
             <Ionicons name="location-outline" size={14} color={COLORS.textGray} />
-            <Text style={styles.addressText} numberOfLines={1}>
-              {nextAppointment.contact?.address || 'No address'}
+            <Text style={styles.addressText} numberOfLines={2}>
+              {nextAppointment.address}
             </Text>
           </View>
-          
-          <View style={styles.detailsRow}>
-            <Ionicons name="car-outline" size={14} color={COLORS.textGray} />
-            <Text style={styles.driveTime}>
-              {realTimeETA !== null 
-                ? `${realTimeETA} min drive` 
-                : 'Route unavailable'}
-            </Text>
-            {realTimeETA !== null && trafficCondition && (
-              <>
-                <View style={[styles.trafficDot, { backgroundColor: getTrafficColor() }]} />
-                <Text style={[styles.trafficText, { color: getTrafficColor() }]}>
-                  {trafficCondition === 'normal' ? 'Clear' : trafficCondition === 'moderate' ? 'Moderate' : 'Heavy'}
-                </Text>
-              </>
-            )}
-          </View>
+        )}
+        
+        <View style={styles.detailsRow}>
+          <Ionicons name="car-outline" size={14} color={COLORS.textGray} />
+          <Text style={styles.driveTime}>
+            {nextAppointment.estimatedDriveTime || 15} min drive
+          </Text>
+          {trafficCondition && trafficCondition !== 'normal' && (
+            <>
+              <View 
+                style={[
+                  styles.trafficDot, 
+                  { backgroundColor: trafficCondition === 'heavy' ? COLORS.error : COLORS.warning }
+                ]} 
+              />
+              <Text 
+                style={[
+                  styles.trafficText, 
+                  { color: trafficCondition === 'heavy' ? COLORS.error : COLORS.warning }
+                ]}
+              >
+                {trafficCondition} traffic
+              </Text>
+            </>
+          )}
         </View>
+      </View>
 
-        {/* Action Buttons */}
-        <View style={styles.buttonRow}>
-          <TouchableOpacity
-            style={[styles.primaryButton, { backgroundColor: getUrgencyColor() }]}
-            onPress={handleNavigate}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="navigate" size={18} color="#fff" />
-            <Text style={styles.primaryButtonText}>Navigate</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
+      <View style={styles.buttonRow}>
+        <TouchableOpacity 
+          style={[styles.primaryButton, { backgroundColor: COLORS.primary }]}
+          onPress={handleNavigate}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="navigate" size={16} color="#fff" />
+          <Text style={styles.primaryButtonText}>Navigate</Text>
+        </TouchableOpacity>
+        
+        {isLate && (
+          <TouchableOpacity 
             style={styles.secondaryButton}
             onPress={handleRunningLate}
             activeOpacity={0.8}
           >
-            <Ionicons name="time-outline" size={18} color={COLORS.accent} />
-            <Text style={styles.secondaryButtonText}>Running Late</Text>
+            <Ionicons name="chatbubble-outline" size={16} color={COLORS.accent} />
+            <Text style={styles.secondaryButtonText}>Notify</Text>
           </TouchableOpacity>
-        </View>
-      </Animated.View>
-    </View>
+        )}
+      </View>
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: COLORS.card,
+    backgroundColor: '#fff',
     borderRadius: RADIUS.card,
     padding: 16,
-    borderWidth: 1,
-    borderColor: COLORS.accent,
+    marginBottom: 16,
     ...SHADOW.card,
   },
   loadingContainer: {
-    paddingVertical: 40,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: 40,
+    gap: 12,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: COLORS.textGray,
   },
   emptyState: {
     alignItems: 'center',
