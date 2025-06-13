@@ -27,6 +27,7 @@ import CalendarScreen from '../screens/CalendarScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import NotificationScreen from '../screens/NotificationScreen';
 import ProjectsScreen from '../screens/ProjectsScreen';
+import SettingsScreen from '../screens/SettingsScreen';  // Now using the real SettingsScreen
 
 // Import placeholder for screens that don't exist yet
 import PlaceholderScreen from '../screens/PlaceholderScreen';
@@ -98,6 +99,7 @@ export type RootStackParamList = {
   ProfileScreen: undefined;
   NotificationScreen: undefined;
   SettingsScreen: undefined;
+  ChangePasswordScreen: undefined;  // Add this
   TeamScreen: undefined;
   ProductLibraryScreen: undefined;
   TemplatesScreen: undefined;
@@ -201,14 +203,19 @@ export default function StackNavigator() {
             }}
           />
           
-          {/* Profile/Settings screens */}
+          {/* Profile/Settings screens - NOW USING REAL COMPONENTS */}
           <Stack.Screen 
             name="ProfileScreen" 
             component={ProfileScreen}
             options={{ 
-              headerShown: true,
-              title: 'Profile',
-              headerBackTitle: 'Back'
+              headerShown: false,  // ProfileScreen has its own header
+            }}
+          />
+          <Stack.Screen 
+            name="SettingsScreen" 
+            component={SettingsScreen}  // Now using the real SettingsScreen
+            options={{ 
+              headerShown: false,  // SettingsScreen has its own header
             }}
           />
           <Stack.Screen 
@@ -220,17 +227,17 @@ export default function StackNavigator() {
               headerBackTitle: 'Back'
             }}
           />
-          
-          {/* Placeholder screens */}
           <Stack.Screen 
-            name="SettingsScreen" 
+            name="ChangePasswordScreen" 
             component={PlaceholderScreen}
             options={{ 
               headerShown: true,
-              title: 'Settings',
+              title: 'Change Password',
               headerBackTitle: 'Back'
             }}
           />
+          
+          {/* Placeholder screens */}
           <Stack.Screen 
             name="TeamScreen" 
             component={PlaceholderScreen}

@@ -99,75 +99,153 @@ export interface Contact {
 }
 
 export interface User {
-  _id?: string;
-  userId: string;      // GHL userId
-  name: string;
-  email: string;
-  role: string;
-  locationId: string;
-  permissions: string[];
-  
-  // Preferences
-  preferences?: UserPreferences;
-  
-  // Enhanced fields from ACTUAL
-  hashedPassword?: string; // Backend only
-  apiKey?: string;
-  updatedAt?: string;
-  avatar?: string;
-  dateAdded?: string | null;
-  extension?: string;
-  firstName?: string;
-  isActive?: boolean;
-  lastLogin?: string | null;
-  lastName?: string;
-  lastSyncedAt?: string;
-  phone?: string;
-  roles?: {
-    type: 'account' | 'agency';
-    role: 'admin' | 'user';
-    locationIds: string[];
-  };
-  
-  // Auth status
-  reauthReason?: string;
-  requiresReauth?: boolean;
-  needsPasswordReset?: boolean;
-  
-  // System fields
-  createdAt?: string;
-  createdBySync?: boolean;
-  createdByWebhook?: string;
-  processedBy?: string;
-  webhookId?: string;
-  lastWebhookUpdate?: string;
+    // Existing fields - keeping ALL of these
+    _id?: string;
+    userId: string;
+    name: string;
+    email: string;
+    role: string;
+    locationId: string;
+    permissions: string[];
+    preferences?: UserPreferences;
+    hashedPassword?: string;
+    apiKey?: string;
+    updatedAt?: string;
+    avatar?: string;
+    dateAdded?: string | null;
+    extension?: string;
+    firstName?: string;
+    isActive?: boolean;
+    lastLogin?: string | null;
+    lastName?: string;
+    lastSyncedAt?: string;
+    phone?: string;
+    roles?: {
+        type: 'account' | 'agency';
+        role: 'admin' | 'user';
+        locationIds: string[];
+    };
+    reauthReason?: string;
+    requiresReauth?: boolean;
+    needsPasswordReset?: boolean;
+    createdAt?: string;
+    createdBySync?: boolean;
+    createdByWebhook?: string;
+    processedBy?: string;
+    webhookId?: string;
+    lastWebhookUpdate?: string;
+    
+    // New fields (if any needed)
+    ghlUserId?: string; // Alternative GHL user ID field
+    locationIds?: string[]; // For users with multiple locations
 }
 
 export interface UserPreferences {
-  // Dashboard customization
-  dashboardType?: 'service' | 'sales' | 'operations' | 'custom';
-  showGlobalTemplates?: boolean;
-  homeTabLabel?: string;
-  navigatorOrder?: string[]; // Array of navigation item IDs
-  
-  // Navigation customization
-  hiddenNavItems?: string[];
-  showHomeLabel?: boolean;
-  
-  // Widget preferences
-  customDashboard?: {
-    layout: DashboardWidget[];
-  };
-  
-  // Other preferences
-  theme?: 'light' | 'dark' | 'system';
-  notifications?: boolean | {
-    push?: boolean;
-    email?: boolean;
-    sms?: boolean;
-  };
-  defaultCalendarView?: 'day' | 'week' | 'month';
-  emailSignature?: string;
+    // Existing fields - keeping ALL of these
+    dashboardType?: 'service' | 'sales' | 'operations' | 'custom';
+    showGlobalTemplates?: boolean;
+    homeTabLabel?: string;
+    navigatorOrder?: string[];
+    hiddenNavItems?: string[];
+    showHomeLabel?: boolean;
+    customDashboard?: {
+        layout: DashboardWidget[];
+    };
+    theme?: 'light' | 'dark' | 'system';
+    notifications?: boolean | {
+        push?: boolean;
+        email?: boolean;
+        sms?: boolean;
+    };
+    defaultCalendarView?: 'day' | 'week' | 'month';
+    emailSignature?: string;
+    
+    // NEW fields being added
+    
+    // Localization
+    timezone?: string; // e.g., 'America/Denver'
+    dateFormat?: 'MM/DD/YYYY' | 'DD/MM/YYYY' | 'YYYY-MM-DD';
+    timeFormat?: '12h' | '24h';
+    firstDayOfWeek?: 0 | 1 | 6; // 0=Sunday, 1=Monday, 6=Saturday
+    language?: string; // e.g., 'en', 'es'
+    
+    // Calendar & Scheduling
+    workingHours?: {
+        enabled: boolean;
+        start: string; // "09:00"
+        end: string; // "17:00"
+        days: number[]; // [1,2,3,4,5] for Mon-Fri
+    };
+    appointmentReminders?: {
+        enabled: boolean;
+        minutesBefore: number; // 15, 30, 60
+    };
+    defaultAppointmentDuration?: number; // minutes
+    
+    // Communication Settings
+    communication?: {
+        // Phone
+        phoneProvider: 'native' | 'ghl_twilio' | 'disabled';
+        defaultPhoneNumber?: string;
+        showCallButton?: boolean;
+        autoLogCalls?: boolean;
+        
+        // SMS
+        smsProvider: 'native' | 'ghl_twilio' | 'disabled';
+        smsSignature?: string;
+        smsTemplatesEnabled?: boolean;
+        autoLogSms?: boolean;
+        
+        // Email
+        emailProvider: 'default' | 'gmail' | 'outlook' | 'ghl';
+        emailTracking?: boolean;
+        emailTemplatesEnabled?: boolean;
+        autoLogEmails?: boolean;
+        
+        // Video
+        videoProvider?: 'zoom' | 'googlemeet' | 'teams' | 'disabled';
+        defaultMeetingDuration?: number;
+        
+        // General
+        preferredContactMethod?: 'phone' | 'sms' | 'email' | 'whatsapp';
+        communicationHours?: {
+            enabled: boolean;
+            start: string;
+            end: string;
+            days: number[];
+            timezone: string;
+        };
+    };
+    
+    // Business Settings
+    business?: {
+        defaultProjectStatus?: string;
+        autoSaveQuotes?: boolean;
+        quoteExpirationDays?: number;
+        signature?: {
+            type: 'text' | 'draw' | 'upload';
+            value: string;
+        };
+        defaultTaxRate?: number;
+        measurementUnit?: 'imperial' | 'metric';
+    };
+    
+    // Privacy & Security
+    privacy?: {
+        showPhoneNumber?: boolean;
+        showEmail?: boolean;
+        activityTracking?: boolean;
+        dataRetentionDays?: number;
+    };
+    
+    // Mobile Settings
+    mobile?: {
+        offlineMode?: boolean;
+        syncOnWifiOnly?: boolean;
+        compressImages?: boolean;
+        biometricLogin?: boolean;
+        stayLoggedIn?: boolean;
+    };
 }
 
 export interface DashboardWidget {

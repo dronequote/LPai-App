@@ -969,7 +969,7 @@ Migrate from API Keys to OAuth
 javascriptasync function migrateToOAuth(locationId) {
   const location = await db.collection('locations').findOne({ locationId });
   
-  if (!location.apiKey) {
+  if (!location.ghlOAuth.accessToken) {
     console.log('No API key to migrate');
     return;
   }

@@ -116,6 +116,8 @@ export interface User {
     processedBy?: string;
     webhookId?: string;
     lastWebhookUpdate?: string;
+    ghlUserId?: string;
+    locationIds?: string[];
 }
 export interface UserPreferences {
     dashboardType?: 'service' | 'sales' | 'operations' | 'custom';
@@ -135,6 +137,70 @@ export interface UserPreferences {
     };
     defaultCalendarView?: 'day' | 'week' | 'month';
     emailSignature?: string;
+    timezone?: string;
+    dateFormat?: 'MM/DD/YYYY' | 'DD/MM/YYYY' | 'YYYY-MM-DD';
+    timeFormat?: '12h' | '24h';
+    firstDayOfWeek?: 0 | 1 | 6;
+    language?: string;
+    workingHours?: {
+        enabled: boolean;
+        start: string;
+        end: string;
+        days: number[];
+    };
+    appointmentReminders?: {
+        enabled: boolean;
+        minutesBefore: number;
+    };
+    defaultAppointmentDuration?: number;
+    communication?: {
+        phoneProvider: 'native' | 'ghl_twilio' | 'disabled';
+        defaultPhoneNumber?: string;
+        showCallButton?: boolean;
+        autoLogCalls?: boolean;
+        smsProvider: 'native' | 'ghl_twilio' | 'disabled';
+        smsSignature?: string;
+        smsTemplatesEnabled?: boolean;
+        autoLogSms?: boolean;
+        emailProvider: 'default' | 'gmail' | 'outlook' | 'ghl';
+        emailTracking?: boolean;
+        emailTemplatesEnabled?: boolean;
+        autoLogEmails?: boolean;
+        videoProvider?: 'zoom' | 'googlemeet' | 'teams' | 'disabled';
+        defaultMeetingDuration?: number;
+        preferredContactMethod?: 'phone' | 'sms' | 'email' | 'whatsapp';
+        communicationHours?: {
+            enabled: boolean;
+            start: string;
+            end: string;
+            days: number[];
+            timezone: string;
+        };
+    };
+    business?: {
+        defaultProjectStatus?: string;
+        autoSaveQuotes?: boolean;
+        quoteExpirationDays?: number;
+        signature?: {
+            type: 'text' | 'draw' | 'upload';
+            value: string;
+        };
+        defaultTaxRate?: number;
+        measurementUnit?: 'imperial' | 'metric';
+    };
+    privacy?: {
+        showPhoneNumber?: boolean;
+        showEmail?: boolean;
+        activityTracking?: boolean;
+        dataRetentionDays?: number;
+    };
+    mobile?: {
+        offlineMode?: boolean;
+        syncOnWifiOnly?: boolean;
+        compressImages?: boolean;
+        biometricLogin?: boolean;
+        stayLoggedIn?: boolean;
+    };
 }
 export interface DashboardWidget {
     id: string;
