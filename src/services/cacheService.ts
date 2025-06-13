@@ -107,6 +107,28 @@ class CacheService {
   }
 
   /**
+   * Get expired data (useful for offline mode)
+   */
+  async getExpired<T>(key: string): Promise<T | null> {
+    try {
+      const value = await AsyncStorage.getItem(key);
+      if (!value) return null;
+
+      const cacheItem: CacheItem<T> = JSON.parse(value);
+      
+      // Return data even if expired
+      if (__DEV__) {
+        console.log(`📦 Returning expired cache for: ${key}`);
+      }
+      
+      return cacheItem.data;
+    } catch (error) {
+      console.error('❌ Cache getExpired error:', error);
+      return null;
+    }
+  }
+
+  /**
    * Get with fallback - perfect for offline-first
    */
   async getWithFallback<T>(
@@ -178,12 +200,15 @@ class CacheService {
         const keys = await AsyncStorage.getAllKeys();
         const keysToRemove = keys.filter(key => key.startsWith(prefix));
         await AsyncStorage.multiRemove(keysToRemove);
+        
+        if (__DEV__) {
+          console.log(`🧹 Cleared ${keysToRemove.length} cached items with prefix: ${prefix}`);
+        }
       } else {
         await AsyncStorage.clear();
-      }
-      
-      if (__DEV__) {
-        console.log(`🧹 Cache cleared: ${prefix || 'all'}`);
+        if (__DEV__) {
+          console.log('🧹 Cleared all cache');
+        }
       }
     } catch (error) {
       console.error('❌ Cache clear error:', error);
@@ -191,7 +216,7 @@ class CacheService {
   }
 
   /**
-   * Get cache size and stats
+   * Get cache statistics
    */
   async getCacheStats(): Promise<{
     totalSize: number;
@@ -210,7 +235,7 @@ class CacheService {
           totalSize += size;
           
           // Group by prefix
-          const prefix = key.split('_')[1] || 'other';
+          const prefix = key.split('_')[0] || 'other';
           breakdown[prefix] = (breakdown[prefix] || 0) + size;
         }
       }
@@ -227,120 +252,75 @@ class CacheService {
   }
 
   /**
-   * Smart cache cleanup based on priority and age
+   * Intelligent cache warming for offline support
    */
-  async cleanup(): Promise<void> {
-    try {
-      const keys = await AsyncStorage.getAllKeys();
-      const cacheItems: Array<{ key: string; item: CacheItem<any> }> = [];
-
-      // Get all cache items
-      for (const key of keys) {
-        const value = await AsyncStorage.getItem(key);
-        if (value) {
-          try {
-            const item = JSON.parse(value);
-            if (item.timestamp) {
-              cacheItems.push({ key, item });
-            }
-          } catch {}
-        }
-      }
-
-      // Remove expired items
-      for (const { key, item } of cacheItems) {
-        if (this.isExpired(item)) {
-          await this.remove(key);
-        }
-      }
-
-      // If still over size limit, remove by priority
-      const stats = await this.getCacheStats();
-      if (stats.totalSize > this.MAX_CACHE_SIZE) {
-        // Sort by priority and age
-        cacheItems.sort((a, b) => {
-          const priorityOrder = { low: 0, medium: 1, high: 2 };
-          const aPriority = priorityOrder[a.item.priority as keyof typeof priorityOrder] || 1;
-          const bPriority = priorityOrder[b.item.priority as keyof typeof priorityOrder] || 1;
-          
-          if (aPriority !== bPriority) {
-            return aPriority - bPriority; // Lower priority first
-          }
-          return a.item.timestamp - b.item.timestamp; // Older first
-        });
-
-        // Remove until under limit
-        let currentSize = stats.totalSize;
-        for (const { key, item } of cacheItems) {
-          if (currentSize <= this.MAX_CACHE_SIZE * 0.8) break; // Keep 20% free
-          
-          await this.remove(key);
-          currentSize -= item.size || 0;
-        }
-      }
-
-      if (__DEV__) {
-        console.log('🧹 Cache cleanup completed');
-      }
-    } catch (error) {
-      console.error('❌ Cache cleanup error:', error);
+  async warmCache(locationId: string): Promise<void> {
+    if (__DEV__) {
+      console.log('🔥 Warming cache for offline support...');
     }
+    
+    // This would be implemented to pre-fetch critical data
+    // Examples:
+    // - Today's appointments
+    // - Active projects
+    // - Recent contacts
+    // - Product catalog
   }
 
-  // Helper methods
+  // Private helper methods
+
   private isExpired(item: CacheItem<any>): boolean {
     return Date.now() - item.timestamp > item.ttl;
   }
 
-  private async getExpired<T>(key: string): Promise<T | null> {
-    try {
-      const value = await AsyncStorage.getItem(key);
-      if (!value) return null;
-      
-      const cacheItem: CacheItem<T> = JSON.parse(value);
-      return cacheItem.data;
-    } catch {
-      return null;
-    }
-  }
-
   private async ensureCacheSpace(): Promise<void> {
     const stats = await this.getCacheStats();
+    
     if (stats.totalSize > this.MAX_CACHE_SIZE * 0.9) {
-      await this.cleanup();
+      // Clear low priority items first
+      await this.clearLowPriorityItems();
     }
   }
 
-  private async updateCacheMetadata(
-    key: string, 
-    size: number, 
-    remove = false
-  ): Promise<void> {
-    // Track cache metadata for analytics
-    try {
-      const metaKey = `${this.KEYS.CACHE_META}_${new Date().toISOString().split('T')[0]}`;
-      const meta = await this.get<Record<string, number>>(metaKey) || {};
-      
-      if (remove) {
-        delete meta[key];
-      } else {
-        meta[key] = size;
+  private async clearLowPriorityItems(): Promise<void> {
+    const keys = await AsyncStorage.getAllKeys();
+    const lowPriorityKeys: string[] = [];
+
+    for (const key of keys) {
+      try {
+        const value = await AsyncStorage.getItem(key);
+        if (value) {
+          const item = JSON.parse(value);
+          if (item.priority === 'low' || this.isExpired(item)) {
+            lowPriorityKeys.push(key);
+          }
+        }
+      } catch {
+        // Skip invalid items
       }
-      
-      await AsyncStorage.setItem(metaKey, JSON.stringify(meta));
-    } catch {}
+    }
+
+    if (lowPriorityKeys.length > 0) {
+      await AsyncStorage.multiRemove(lowPriorityKeys);
+      if (__DEV__) {
+        console.log(`🧹 Cleared ${lowPriorityKeys.length} low priority cache items`);
+      }
+    }
+  }
+
+  private async updateCacheMetadata(key: string, size: number, remove = false): Promise<void> {
+    // Track cache metadata for size management
+    // Implementation depends on your needs
   }
 
   private formatBytes(bytes: number): string {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return Math.round(bytes / 1024) + ' KB';
+    return Math.round(bytes / 1048576) + ' MB';
   }
 
   private async compress(data: string): Promise<string> {
-    // TODO: Implement compression if needed
+    // Compression implementation if needed
     // For now, return as-is
     return data;
   }
@@ -349,5 +329,5 @@ class CacheService {
 // Export singleton instance
 export const cacheService = new CacheService();
 
-// Export types for use in other services
+// Export types
 export type { CacheConfig, CacheItem };

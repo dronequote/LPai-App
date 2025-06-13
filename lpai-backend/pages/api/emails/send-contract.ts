@@ -86,7 +86,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     
     try {
       emailResult = await sendGHLEmailWithLocalTemplate({
-        apiKey: location.apiKey,
+        apiKey: location.ghlOAuth.accessToken,
         contactId: contact.ghlContactId,
         template,
         variables,

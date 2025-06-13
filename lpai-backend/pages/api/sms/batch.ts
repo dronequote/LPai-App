@@ -52,7 +52,7 @@ async function processBatchSMS(db: any, body: any, res: NextApiResponse) {
       userId ? db.collection('users').findOne({ _id: new ObjectId(userId) }) : null
     ]);
     
-    if (!location?.apiKey) {
+    if (!location?.ghlOAuth?.accessToken) {
       return sendError(res, 'Location not found or missing API key', 400);
     }
     

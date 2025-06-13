@@ -1,5 +1,5 @@
 // src/components/dashboard/ActiveJobsWidget.tsx
-import React, { useState, useEffect, useCallback, useRef } from 'react';  // ✅ Added useRef
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,11 +9,11 @@ import {
   Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-//import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, FONT, RADIUS, SHADOW } from '../../styles/theme';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigation } from '@react-navigation/native';
-import api from '../../lib/api';
+import { projectService } from '../../services/projectService';
+import { Project } from '../../../packages/types';
 
 interface Job {
   _id: string;
@@ -30,7 +30,8 @@ export default function ActiveJobsWidget() {
   const navigation = useNavigation();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
-  const fadeAnim = useRef(new Animated.Value(0)).current;  // ✅ Now useRef is imported
+  const [error, setError] = useState<string | null>(null);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     fetchActiveJobs();
@@ -45,37 +46,78 @@ export default function ActiveJobsWidget() {
   }, [loading]);
 
   const fetchActiveJobs = async () => {
+    if (!user?.locationId) {
+      setError('No location ID found');
+      setLoading(false);
+      return;
+    }
+
     try {
-      const res = await api.get('/api/projects', {
-        params: { locationId: user?.locationId }
+      setError(null);
+      
+      // Use projectService instead of direct API call
+      const projects = await projectService.list(user.locationId, {
+        status: 'active', // This might need adjustment based on your backend
+        limit: 10
+      }, {
+        locationId: user.locationId // Pass locationId in service options
       });
       
-      const activeJobs = res.data
-        .filter((p: any) => ['Open', 'In Progress', 'Scheduled'].includes(p.status))
+      // Filter for active statuses and map to Job format
+      const activeJobs = projects
+        .filter((p: Project) => ['in_progress', 'scheduled'].includes(p.status))
         .slice(0, 4)
-        .map((p: any) => ({
+        .map((p: Project) => ({
           _id: p._id,
           title: p.title,
-          contactName: p.contactName || 'Unknown',
+          contactName: p.contactName || p.contact?.name || 'Unknown',
           status: p.status,
-          progress: p.status === 'Open' ? 10 : p.status === 'Scheduled' ? 30 : 60,
-          priority: 'medium' // We'll add this to projects later
+          progress: calculateProgress(p),
+          priority: p.customFields?.priority || 'medium',
+          dueDate: p.customFields?.dueDate
         }));
       
       setJobs(activeJobs);
     } catch (error) {
       console.error('Failed to fetch active jobs:', error);
+      setError('Failed to load active jobs');
+      setJobs([]); // Set empty array on error
     } finally {
       setLoading(false);
     }
   };
 
+  const calculateProgress = (project: Project): number => {
+    // If project has milestones, calculate based on completed milestones
+    if (project.milestones && project.milestones.length > 0) {
+      const completed = project.milestones.filter(m => m.completed).length;
+      return Math.round((completed / project.milestones.length) * 100);
+    }
+    
+    // Otherwise use status-based defaults
+    switch (project.status) {
+      case 'open': return 10;
+      case 'scheduled': return 30;
+      case 'in_progress': return 60;
+      default: return 0;
+    }
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'Open': return '#00B3E6';
-      case 'Scheduled': return '#FFA500';
-      case 'In Progress': return '#27AE60';
+      case 'open': return '#00B3E6';
+      case 'scheduled': return '#FFA500';
+      case 'in_progress': return '#27AE60';
       default: return COLORS.textGray;
+    }
+  };
+
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case 'open': return 'Open';
+      case 'scheduled': return 'Scheduled';
+      case 'in_progress': return 'In Progress';
+      default: return status;
     }
   };
 
@@ -89,23 +131,39 @@ export default function ActiveJobsWidget() {
 
   const getPriorityColor = (priority?: string) => {
     switch (priority) {
-      case 'high': return '#FF4444';
-      case 'low': return '#00B3E6';
-      default: return '#FFA500';
+      case 'high': return '#FF4757';
+      case 'low': return '#5F9EA0';
+      default: return COLORS.textGray;
     }
+  };
+
+  const handleJobPress = (job: Job) => {
+    navigation.navigate('ProjectDetail', { projectId: job._id });
+  };
+
+  const handleViewAll = () => {
+    navigation.navigate('Projects');
   };
 
   if (loading) {
     return (
       <View style={styles.container}>
-        <View style={styles.header}>
-          <View style={styles.headerLeft}>
-            <Ionicons name="briefcase" size={24} color={COLORS.accent} />
-            <Text style={styles.title}>Active Jobs</Text>
-          </View>
-        </View>
-        <View style={styles.loadingContainer}>
+        <View style={styles.loadingState}>
           <Text style={styles.loadingText}>Loading jobs...</Text>
+        </View>
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.errorState}>
+          <Ionicons name="alert-circle" size={32} color={COLORS.error} />
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity onPress={fetchActiveJobs} style={styles.retryButton}>
+            <Text style={styles.retryText}>Retry</Text>
+          </TouchableOpacity>
         </View>
       </View>
     );
@@ -114,74 +172,82 @@ export default function ActiveJobsWidget() {
   return (
     <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
       <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <Ionicons name="briefcase" size={24} color={COLORS.accent} />
+        <View style={styles.titleRow}>
+          <Ionicons name="briefcase" size={20} color={COLORS.primary} />
           <Text style={styles.title}>Active Jobs</Text>
         </View>
-        <TouchableOpacity onPress={() => navigation.navigate('ProjectsStack' as never)}>
-          <Text style={styles.viewAll}>View All</Text>
+        <TouchableOpacity onPress={handleViewAll}>
+          <Text style={styles.viewAllText}>View All</Text>
         </TouchableOpacity>
       </View>
 
       {jobs.length === 0 ? (
         <View style={styles.emptyState}>
-          <Ionicons name="checkmark-done-circle" size={48} color={COLORS.textLight} />
-          <Text style={styles.emptyText}>No active jobs</Text>
-          <Text style={styles.emptySubtext}>All caught up! 🎉</Text>
+          <Ionicons name="checkmark-circle" size={48} color={COLORS.success} />
+          <Text style={styles.emptyTitle}>No active jobs</Text>
+          <Text style={styles.emptySubtitle}>All caught up! 🎉</Text>
         </View>
       ) : (
-        <ScrollView showsVerticalScrollIndicator={false}>
+        <ScrollView 
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.jobsList}
+        >
           {jobs.map((job, index) => (
             <TouchableOpacity
               key={job._id}
-              style={[styles.jobCard, index === jobs.length - 1 && styles.lastCard]}
-              onPress={() => navigation.navigate('ProjectDetailScreen' as never, { project: job } as never)}
-              activeOpacity={0.8}
+              style={[
+                styles.jobCard,
+                index === jobs.length - 1 && styles.lastJobCard
+              ]}
+              onPress={() => handleJobPress(job)}
+              activeOpacity={0.7}
             >
               <View style={styles.jobHeader}>
                 <View style={styles.jobInfo}>
-                  <Text style={styles.jobTitle} numberOfLines={1}>{job.title}</Text>
-                  <Text style={styles.jobClient}>{job.contactName}</Text>
-                </View>
-                <View style={styles.statusBadge}>
-                  <View style={[styles.statusDot, { backgroundColor: getStatusColor(job.status) }]} />
-                  <Text style={styles.statusText}>{job.status}</Text>
-                </View>
-              </View>
-                // In ActiveJobsWidget.tsx, replace the LinearGradient section with:
-                <View style={styles.progressContainer}>
-                <View style={styles.progressBar}>
-                    <View 
-                    style={[
-                        styles.progressFill, 
-                        { 
-                        width: `${job.progress}%`,
-                        backgroundColor: getStatusColor(job.status)
-                        }
-                    ]} 
-                    />
-                </View>
-                <Text style={styles.progressText}>{job.progress}%</Text>
-                </View>
-
-              <View style={styles.jobFooter}>
-                <View style={styles.priorityBadge}>
-                  <Ionicons 
-                    name={getPriorityIcon(job.priority) as any} 
-                    size={16} 
-                    color={getPriorityColor(job.priority)} 
-                  />
-                  <Text style={[styles.priorityText, { color: getPriorityColor(job.priority) }]}>
-                    {job.priority?.charAt(0).toUpperCase() + job.priority?.slice(1) || 'Medium'}
+                  <Text style={styles.jobTitle} numberOfLines={1}>
+                    {job.title}
+                  </Text>
+                  <Text style={styles.customerName} numberOfLines={1}>
+                    {job.contactName}
                   </Text>
                 </View>
-                {job.dueDate && (
-                  <View style={styles.dueDateContainer}>
-                    <Ionicons name="calendar-outline" size={14} color={COLORS.textGray} />
-                    <Text style={styles.dueDate}>{job.dueDate}</Text>
+                <View style={styles.jobMeta}>
+                  {job.priority && (
+                    <Ionicons 
+                      name={getPriorityIcon(job.priority)} 
+                      size={16} 
+                      color={getPriorityColor(job.priority)} 
+                    />
+                  )}
+                  <View style={[styles.statusBadge, { backgroundColor: getStatusColor(job.status) }]}>
+                    <Text style={styles.statusText}>{getStatusLabel(job.status)}</Text>
                   </View>
-                )}
+                </View>
               </View>
+
+              <View style={styles.progressContainer}>
+                <View style={styles.progressBar}>
+                  <View 
+                    style={[
+                      styles.progressFill, 
+                      { 
+                        width: `${job.progress}%`,
+                        backgroundColor: getStatusColor(job.status)
+                      }
+                    ]} 
+                  />
+                </View>
+                <Text style={styles.progressText}>{job.progress}%</Text>
+              </View>
+
+              {job.dueDate && (
+                <View style={styles.dueDateRow}>
+                  <Ionicons name="calendar-outline" size={12} color={COLORS.textGray} />
+                  <Text style={styles.dueDateText}>
+                    Due {new Date(job.dueDate).toLocaleDateString()}
+                  </Text>
+                </View>
+              )}
             </TouchableOpacity>
           ))}
         </ScrollView>
@@ -192,9 +258,10 @@ export default function ActiveJobsWidget() {
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: COLORS.card,
+    backgroundColor: '#fff',
     borderRadius: RADIUS.card,
     padding: 16,
+    marginBottom: 16,
     ...SHADOW.card,
   },
   header: {
@@ -203,51 +270,75 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
-  headerLeft: {
+  titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
   },
   title: {
-    fontSize: FONT.sectionTitle,
-    fontWeight: '600',
+    fontSize: 18,
+    fontWeight: '700',
     color: COLORS.textDark,
-    marginLeft: 8,
   },
-  viewAll: {
-    fontSize: FONT.meta,
-    color: COLORS.accent,
+  viewAllText: {
+    fontSize: 14,
+    color: COLORS.primary,
     fontWeight: '500',
   },
-  loadingContainer: {
+  loadingState: {
     paddingVertical: 40,
     alignItems: 'center',
   },
   loadingText: {
-    fontSize: FONT.input,
+    fontSize: 14,
     color: COLORS.textGray,
+  },
+  errorState: {
+    paddingVertical: 32,
+    alignItems: 'center',
+    gap: 12,
+  },
+  errorText: {
+    fontSize: 14,
+    color: COLORS.error,
+    textAlign: 'center',
+  },
+  retryButton: {
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: RADIUS.button,
+    backgroundColor: COLORS.primary,
+  },
+  retryText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '500',
   },
   emptyState: {
+    paddingVertical: 32,
     alignItems: 'center',
-    paddingVertical: 40,
+    gap: 8,
   },
-  emptyText: {
-    fontSize: FONT.input,
+  emptyTitle: {
+    fontSize: 16,
     fontWeight: '600',
     color: COLORS.textDark,
-    marginTop: 12,
   },
-  emptySubtext: {
-    fontSize: FONT.meta,
+  emptySubtitle: {
+    fontSize: 14,
     color: COLORS.textGray,
-    marginTop: 4,
+  },
+  jobsList: {
+    gap: 12,
   },
   jobCard: {
-    backgroundColor: COLORS.background,
+    padding: 12,
     borderRadius: RADIUS.small,
-    padding: 16,
-    marginBottom: 12,
+    backgroundColor: COLORS.background,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
-  lastCard: {
+  lastJobCard: {
     marginBottom: 0,
   },
   jobHeader: {
@@ -261,45 +352,42 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   jobTitle: {
-    fontSize: FONT.input,
+    fontSize: 15,
     fontWeight: '600',
     color: COLORS.textDark,
-    marginBottom: 4,
+    marginBottom: 2,
   },
-  jobClient: {
-    fontSize: FONT.meta,
+  customerName: {
+    fontSize: 13,
     color: COLORS.textGray,
   },
-  statusBadge: {
+  jobMeta: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.card,
+    gap: 8,
+  },
+  statusBadge: {
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
   },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginRight: 6,
-  },
   statusText: {
     fontSize: 11,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: '#fff',
+    textTransform: 'uppercase',
   },
   progressContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
+    gap: 8,
+    marginBottom: 8,
   },
   progressBar: {
     flex: 1,
     height: 6,
-    backgroundColor: COLORS.border,
+    backgroundColor: COLORS.inputBorder,
     borderRadius: 3,
-    marginRight: 8,
     overflow: 'hidden',
   },
   progressFill: {
@@ -307,33 +395,19 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   progressText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: COLORS.textDark,
+    fontSize: 12,
+    fontWeight: '500',
+    color: COLORS.textGray,
     minWidth: 35,
     textAlign: 'right',
   },
-  jobFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  priorityBadge: {
+  dueDateRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 4,
   },
-  priorityText: {
-    fontSize: FONT.meta,
-    fontWeight: '500',
-    marginLeft: 4,
-  },
-  dueDateContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  dueDate: {
-    fontSize: FONT.meta,
+  dueDateText: {
+    fontSize: 12,
     color: COLORS.textGray,
-    marginLeft: 4,
   },
 });

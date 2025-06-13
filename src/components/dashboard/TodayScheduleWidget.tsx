@@ -12,123 +12,131 @@ import { Ionicons } from '@expo/vector-icons';
 import { COLORS, FONT, RADIUS, SHADOW } from '../../styles/theme';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigation } from '@react-navigation/native';
-import api from '../../lib/api';
+import { appointmentService } from '../../services/appointmentService';
 
 interface TimeSlot {
   time: string;
-  appointment?: {
-    id: string;
-    title: string;
-    clientName: string;
-    duration: number;
-    color: string;
-  };
-  isCurrentTime?: boolean;
+  appointment?: any;
+  isNow?: boolean;
+  isPast?: boolean;
 }
 
 export default function TodayScheduleWidget() {
   const { user } = useAuth();
   const navigation = useNavigation();
+  const [appointments, setAppointments] = useState<any[]>([]);
   const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([]);
   const [loading, setLoading] = useState(true);
   const scrollViewRef = useRef<ScrollView>(null);
-  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    generateTimeSlots();
-    startPulseAnimation();
-  }, []);
+    fetchTodaySchedule();
+    // Refresh every 5 minutes
+    const interval = setInterval(fetchTodaySchedule, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [user?.locationId]);
 
-  const startPulseAnimation = () => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, {
-          toValue: 1.2,
-          duration: 1000,
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulseAnim, {
-          toValue: 1,
-          duration: 1000,
-          useNativeDriver: true,
-        }),
-      ])
-    ).start();
-  };
+  useEffect(() => {
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 600,
+      useNativeDriver: true,
+    }).start();
+  }, [loading]);
 
-  const generateTimeSlots = async () => {
+  const fetchTodaySchedule = async () => {
     try {
-      // Get today's appointments
-      const res = await api.get('/api/appointments', {
-        params: { 
-          locationId: user?.locationId,
-          start: new Date().setHours(0, 0, 0, 0),
-          end: new Date().setHours(23, 59, 59, 999)
-        }
-      });
-
-      const appointments = res.data || [];
+      // Use appointmentService instead of api.get
+      const todayAppointments = await appointmentService.getTodaysAppointments(
+        user?.locationId,
+        user?.id
+      );
       
-      // Generate time slots from 8 AM to 6 PM
-      const slots: TimeSlot[] = [];
-      const currentHour = new Date().getHours();
+      const activeAppointments = todayAppointments
+        .filter(apt => apt.status !== 'Cancelled')
+        .sort((a, b) => new Date(a.start || a.time).getTime() - new Date(b.start || b.time).getTime());
       
-      for (let hour = 8; hour <= 18; hour++) {
-        const timeString = hour <= 12 
-          ? `${hour === 12 ? 12 : hour} ${hour < 12 ? 'AM' : 'PM'}`
-          : `${hour - 12} PM`;
-        
-        // Find appointment for this time slot
-        const appointment = appointments.find((apt: any) => {
-          const aptHour = new Date(apt.start || apt.time).getHours();
-          return aptHour === hour;
-        });
-
-        slots.push({
-          time: timeString,
-          appointment: appointment ? {
-            id: appointment._id,
-            title: appointment.title,
-            clientName: appointment.contactName || 'Unknown',
-            duration: appointment.duration || 60,
-            color: getAppointmentColor(appointment.calendarId),
-          } : undefined,
-          isCurrentTime: hour === currentHour,
-        });
-      }
-
-      setTimeSlots(slots);
-      
-      // Auto-scroll to current time
-      const currentIndex = slots.findIndex(slot => slot.isCurrentTime);
-      if (currentIndex > -1 && scrollViewRef.current) {
-        setTimeout(() => {
-          scrollViewRef.current?.scrollTo({ y: currentIndex * 60, animated: true });
-        }, 500);
-      }
+      setAppointments(activeAppointments);
+      generateTimeSlots(activeAppointments);
     } catch (error) {
-      console.error('Failed to load schedule:', error);
+      if (__DEV__) {
+        console.error('Failed to load schedule:', error);
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const getAppointmentColor = (calendarId?: string) => {
-    // Different colors for different calendar types
-    const colors = ['#00B3E6', '#27AE60', '#9B59B6', '#F39C12', '#E74C3C'];
-    return colors[Math.floor(Math.random() * colors.length)];
+  const generateTimeSlots = (appointments: any[]) => {
+    const slots: TimeSlot[] = [];
+    const now = new Date();
+    const currentHour = now.getHours();
+    
+    // Generate slots from 8 AM to 6 PM
+    for (let hour = 8; hour <= 18; hour++) {
+      const timeString = `${hour > 12 ? hour - 12 : hour}:00 ${hour >= 12 ? 'PM' : 'AM'}`;
+      const slotTime = new Date();
+      slotTime.setHours(hour, 0, 0, 0);
+      
+      // Find appointment for this time slot
+      const appointment = appointments.find(apt => {
+        const aptHour = new Date(apt.start || apt.time).getHours();
+        return aptHour === hour;
+      });
+      
+      slots.push({
+        time: timeString,
+        appointment,
+        isNow: hour === currentHour,
+        isPast: hour < currentHour,
+      });
+    }
+    
+    setTimeSlots(slots);
+    
+    // Auto-scroll to current time
+    setTimeout(() => {
+      const currentIndex = slots.findIndex(slot => slot.isNow);
+      if (currentIndex > 0 && scrollViewRef.current) {
+        scrollViewRef.current.scrollTo({
+          y: currentIndex * 60,
+          animated: true,
+        });
+      }
+    }, 300);
+  };
+
+  const handleAppointmentPress = (appointment: any) => {
+    navigation.navigate('AppointmentDetail', { appointmentId: appointment._id });
+  };
+
+  const handleViewCalendar = () => {
+    navigation.navigate('Calendar');
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'Completed': return COLORS.success;
+      case 'In Progress': return COLORS.primary;
+      case 'No Show': return COLORS.error;
+      default: return COLORS.accent;
+    }
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'Completed': return 'checkmark-circle';
+      case 'In Progress': return 'time';
+      case 'No Show': return 'close-circle';
+      default: return 'calendar';
+    }
   };
 
   if (loading) {
     return (
       <View style={styles.container}>
-        <View style={styles.header}>
-          <View style={styles.headerLeft}>
-            <Ionicons name="time" size={24} color={COLORS.accent} />
-            <Text style={styles.title}>Today's Schedule</Text>
-          </View>
-        </View>
-        <View style={styles.loadingContainer}>
+        <View style={styles.loadingState}>
           <Text style={styles.loadingText}>Loading schedule...</Text>
         </View>
       </View>
@@ -136,79 +144,118 @@ export default function TodayScheduleWidget() {
   }
 
   return (
-    <View style={styles.container}>
+    <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
       <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <Ionicons name="time" size={24} color={COLORS.accent} />
+        <View style={styles.titleRow}>
+          <Ionicons name="time" size={20} color={COLORS.primary} />
           <Text style={styles.title}>Today's Schedule</Text>
         </View>
-        <TouchableOpacity onPress={() => navigation.navigate('Calendar' as never)}>
-          <Text style={styles.viewAll}>Full Calendar</Text>
+        <TouchableOpacity onPress={handleViewCalendar}>
+          <Text style={styles.viewAllText}>Full Calendar</Text>
         </TouchableOpacity>
       </View>
 
-      <ScrollView 
-        ref={scrollViewRef}
-        showsVerticalScrollIndicator={false}
-        style={styles.scheduleContainer}
-      >
-        {timeSlots.map((slot, index) => (
-          <View key={index} style={styles.timeSlot}>
-            <View style={styles.timeContainer}>
-              <Text style={[
-                styles.timeText,
-                slot.isCurrentTime && styles.currentTimeText
-              ]}>
-                {slot.time}
-              </Text>
-              {slot.isCurrentTime && (
-                <Animated.View style={[
-                  styles.currentTimeDot,
-                  { transform: [{ scale: pulseAnim }] }
-                ]} />
-              )}
-            </View>
-
-            <View style={styles.slotContent}>
-              {slot.appointment ? (
-                <TouchableOpacity
+      {appointments.length === 0 ? (
+        <View style={styles.emptyState}>
+          <Ionicons name="calendar-outline" size={48} color={COLORS.textGray} />
+          <Text style={styles.emptyTitle}>No appointments today</Text>
+          <Text style={styles.emptySubtitle}>Enjoy your free time!</Text>
+        </View>
+      ) : (
+        <ScrollView
+          ref={scrollViewRef}
+          showsVerticalScrollIndicator={false}
+          style={styles.scheduleContainer}
+          contentContainerStyle={styles.scheduleContent}
+        >
+          {timeSlots.map((slot, index) => (
+            <View 
+              key={index} 
+              style={[
+                styles.timeSlot,
+                slot.isNow && styles.currentTimeSlot,
+                slot.isPast && styles.pastTimeSlot,
+              ]}
+            >
+              <View style={styles.timeColumn}>
+                <Text 
                   style={[
-                    styles.appointmentCard,
-                    { borderLeftColor: slot.appointment.color }
+                    styles.timeText,
+                    slot.isNow && styles.currentTimeText,
+                    slot.isPast && styles.pastTimeText,
                   ]}
-                  onPress={() => navigation.navigate('AppointmentDetail' as never, {
-                    appointmentId: slot.appointment!.id
-                  } as never)}
-                  activeOpacity={0.8}
                 >
-                  <Text style={styles.appointmentTitle} numberOfLines={1}>
-                    {slot.appointment.title}
-                  </Text>
-                  <View style={styles.appointmentDetails}>
-                    <Ionicons name="person-outline" size={12} color={COLORS.textGray} />
-                    <Text style={styles.clientName}>{slot.appointment.clientName}</Text>
-                    <Text style={styles.duration}>• {slot.appointment.duration} min</Text>
+                  {slot.time}
+                </Text>
+                {slot.isNow && (
+                  <View style={styles.nowIndicator}>
+                    <Text style={styles.nowText}>NOW</Text>
                   </View>
-                </TouchableOpacity>
-              ) : (
-                <View style={[styles.emptySlot, slot.isCurrentTime && styles.currentEmptySlot]}>
-                  <Text style={styles.emptySlotText}>Available</Text>
-                </View>
-              )}
+                )}
+              </View>
+
+              <View style={styles.appointmentColumn}>
+                {slot.appointment ? (
+                  <TouchableOpacity
+                    style={[
+                      styles.appointmentCard,
+                      { borderLeftColor: getStatusColor(slot.appointment.status) }
+                    ]}
+                    onPress={() => handleAppointmentPress(slot.appointment)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.appointmentHeader}>
+                      <Text style={styles.appointmentTitle} numberOfLines={1}>
+                        {slot.appointment.title}
+                      </Text>
+                      <Ionicons
+                        name={getStatusIcon(slot.appointment.status)}
+                        size={16}
+                        color={getStatusColor(slot.appointment.status)}
+                      />
+                    </View>
+                    <Text style={styles.customerName} numberOfLines={1}>
+                      {slot.appointment.contactName || 'Unknown Customer'}
+                    </Text>
+                    {slot.appointment.address && (
+                      <View style={styles.locationRow}>
+                        <Ionicons name="location-outline" size={12} color={COLORS.textGray} />
+                        <Text style={styles.locationText} numberOfLines={1}>
+                          {slot.appointment.address}
+                        </Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.emptySlot}>
+                    {!slot.isPast && (
+                      <TouchableOpacity 
+                        style={styles.addButton}
+                        onPress={() => navigation.navigate('CreateAppointment', { 
+                          defaultTime: slot.time 
+                        })}
+                      >
+                        <Ionicons name="add" size={16} color={COLORS.primary} />
+                        <Text style={styles.addText}>Add</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                )}
+              </View>
             </View>
-          </View>
-        ))}
-      </ScrollView>
-    </View>
+          ))}
+        </ScrollView>
+      )}
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: COLORS.card,
+    backgroundColor: '#fff',
     borderRadius: RADIUS.card,
     padding: 16,
-    maxHeight: 400,
+    marginBottom: 16,
     ...SHADOW.card,
   },
   header: {
@@ -217,105 +264,148 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
-  headerLeft: {
+  titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
   },
   title: {
-    fontSize: FONT.sectionTitle,
-    fontWeight: '600',
+    fontSize: 18,
+    fontWeight: '700',
     color: COLORS.textDark,
-    marginLeft: 8,
   },
-  viewAll: {
-    fontSize: FONT.meta,
-    color: COLORS.accent,
+  viewAllText: {
+    fontSize: 14,
+    color: COLORS.primary,
     fontWeight: '500',
   },
-  loadingContainer: {
+  loadingState: {
     paddingVertical: 40,
     alignItems: 'center',
   },
   loadingText: {
-    fontSize: FONT.input,
+    fontSize: 14,
+    color: COLORS.textGray,
+  },
+  emptyState: {
+    paddingVertical: 32,
+    alignItems: 'center',
+    gap: 8,
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.textDark,
+  },
+  emptySubtitle: {
+    fontSize: 14,
     color: COLORS.textGray,
   },
   scheduleContainer: {
-    flex: 1,
+    maxHeight: 300,
+  },
+  scheduleContent: {
+    paddingBottom: 8,
   },
   timeSlot: {
     flexDirection: 'row',
-    marginBottom: 16,
-    minHeight: 44,
+    minHeight: 60,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.inputBorder,
   },
-  timeContainer: {
-    width: 70,
-    alignItems: 'flex-end',
+  currentTimeSlot: {
+    backgroundColor: `${COLORS.primary}10`,
+  },
+  pastTimeSlot: {
+    opacity: 0.6,
+  },
+  timeColumn: {
+    width: 80,
     paddingRight: 12,
-    position: 'relative',
+    paddingVertical: 8,
+    alignItems: 'flex-end',
   },
   timeText: {
-    fontSize: FONT.meta,
-    color: COLORS.textGray,
+    fontSize: 12,
     fontWeight: '500',
+    color: COLORS.textGray,
   },
   currentTimeText: {
-    color: COLORS.accent,
+    color: COLORS.primary,
     fontWeight: '700',
   },
-  currentTimeDot: {
-    position: 'absolute',
-    right: 0,
-    top: 6,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: COLORS.accent,
+  pastTimeText: {
+    color: COLORS.textGray,
   },
-  slotContent: {
+  nowIndicator: {
+    marginTop: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    backgroundColor: COLORS.primary,
+    borderRadius: 10,
+  },
+  nowText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  appointmentColumn: {
     flex: 1,
+    paddingVertical: 8,
   },
   appointmentCard: {
     backgroundColor: COLORS.background,
     borderRadius: RADIUS.small,
-    padding: 12,
-    borderLeftWidth: 4,
+    padding: 10,
+    borderLeftWidth: 3,
   },
-  appointmentTitle: {
-    fontSize: FONT.input,
-    fontWeight: '600',
-    color: COLORS.textDark,
+  appointmentHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 4,
   },
-  appointmentDetails: {
+  appointmentTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.textDark,
+    flex: 1,
+    marginRight: 8,
+  },
+  customerName: {
+    fontSize: 12,
+    color: COLORS.textGray,
+    marginBottom: 4,
+  },
+  locationRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 4,
   },
-  clientName: {
-    fontSize: FONT.meta,
+  locationText: {
+    fontSize: 11,
     color: COLORS.textGray,
-    marginLeft: 4,
     flex: 1,
   },
-  duration: {
-    fontSize: FONT.meta,
-    color: COLORS.textLight,
-    marginLeft: 4,
-  },
   emptySlot: {
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderStyle: 'dashed',
-    borderRadius: RADIUS.small,
-    padding: 12,
+    height: 44,
+    justifyContent: 'center',
+  },
+  addButton: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: RADIUS.small,
+    borderWidth: 1,
+    borderColor: COLORS.inputBorder,
+    borderStyle: 'dashed',
+    alignSelf: 'flex-start',
   },
-  currentEmptySlot: {
-    borderColor: COLORS.accent,
-    backgroundColor: COLORS.accentMuted + '10',
-  },
-  emptySlotText: {
-    fontSize: FONT.meta,
-    color: COLORS.textLight,
+  addText: {
+    fontSize: 12,
+    color: COLORS.primary,
+    fontWeight: '500',
   },
 });

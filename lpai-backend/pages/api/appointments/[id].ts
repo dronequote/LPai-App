@@ -46,14 +46,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
         if (!appt) return res.status(404).json({ error: 'Appointment not found' });
         const location = await db.collection('locations').findOne({ locationId: appt.locationId });
-        if (!location?.apiKey || !appt.ghlAppointmentId) {
+        if (!location?.ghlOAuth?.accessToken || !appt.ghlAppointmentId) {
           return res.status(400).json({ error: 'Missing GHL data for this appointment' });
         }
         const ghlRes = await axios.get(
           `${GHL_BASE_URL}/calendars/events/appointments/${appt.ghlAppointmentId}`,
           {
             headers: {
-              'Authorization': `Bearer ${location.apiKey}`,
+              'Authorization': `Bearer ${location.ghlOAuth.accessToken}`,
               'Version': '2021-04-15',
               'Accept': 'application/json',
             }
@@ -78,7 +78,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const appt = await db.collection('appointments').findOne({ _id: new ObjectId(id) });
       if (!appt) return res.status(404).json({ error: 'Appointment not found' });
       const location = await db.collection('locations').findOne({ locationId: appt.locationId });
-      if (!location?.apiKey || !appt.ghlAppointmentId) {
+      if (!location?.ghlOAuth?.accessToken || !appt.ghlAppointmentId) {
         return res.status(400).json({ error: 'Missing GHL data for this appointment' });
       }
 
@@ -97,7 +97,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             { appointmentStatus: 'cancelled' },
             {
               headers: {
-                'Authorization': `Bearer ${location.apiKey}`,
+                'Authorization': `Bearer ${location.ghlOAuth.accessToken}`,
                 'Version': '2021-04-15',
                 'Accept': 'application/json',
                 'Content-Type': 'application/json',
@@ -150,7 +150,7 @@ ${JSON.stringify(ghlErr?.response?.data || ghlErr.message, null, 2)}
         payload,
         {
           headers: {
-            'Authorization': `Bearer ${location.apiKey}`,
+            'Authorization': `Bearer ${location.ghlOAuth.accessToken}`,
             'Version': '2021-04-15',
             'Accept': 'application/json',
             'Content-Type': 'application/json',

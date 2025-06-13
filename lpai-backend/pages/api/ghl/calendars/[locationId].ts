@@ -20,7 +20,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Get the API key for the location
     const location = await db.collection('locations').findOne({ locationId });
     console.log('[CALENDARS][API] Location doc:', location);
-    const apiKey = location?.apiKey;
+    const apiKey = location?.ghlOAuth?.accessToken;
     if (!apiKey) {
       console.warn('[CALENDARS][API] No API key for location', locationId);
       return res.status(400).json({ error: 'API key not found for this location' });

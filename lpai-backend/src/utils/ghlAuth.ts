@@ -23,9 +23,9 @@ export async function getAuthHeader(location: any): Promise<{ header: string; ty
       type: 'OAuth'
     };
   }
-  if (location?.apiKey) {
+  if (location?.ghlOAuth?.accessToken) {
     return {
-      header: `Bearer ${location.apiKey}`,
+      header: `Bearer ${location.ghlOAuth.accessToken}`,
       type: 'API Key'
     };
   }

@@ -45,6 +45,9 @@ const SCREEN_COMPONENTS: Record<string, React.ComponentType<any>> = {
   QuoteBuilder: QuoteBuilderScreen,
   Conversation: ConversationScreen,
   JobCompletion: JobCompletionScreen,
+  // Add these two missing mappings:
+  ProjectsStack: ProjectsScreen,
+  QuotesStack: QuoteBuilderScreen,
 };
 
 // Quick add options - memoized to prevent re-creation

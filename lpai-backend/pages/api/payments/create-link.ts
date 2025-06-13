@@ -42,7 +42,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Get location data for GHL API access
     const location = await db.collection('locations').findOne({ locationId });
-    if (!location?.apiKey) {
+    if (!location?.ghlOAuth?.accessToken) {
       return res.status(404).json({ error: 'Location not found or API key missing' });
     }
 
@@ -192,7 +192,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     console.log('[Payment Link API] EXACT GHL REQUEST:', {
       url: 'https://services.leadconnectorhq.com/invoices/',
       headers: {
-        Authorization: `Bearer ${location.apiKey}`,
+        Authorization: `Bearer ${location.ghlOAuth.accessToken}`,
         Version: '2021-07-28',
         'Content-Type': 'application/json',
         Accept: 'application/json'
@@ -207,7 +207,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         invoicePayload,
         {
           headers: {
-            Authorization: `Bearer ${location.apiKey}`,
+            Authorization: `Bearer ${location.ghlOAuth.accessToken}`,
             Version: '2021-07-28',
             'Content-Type': 'application/json',
             Accept: 'application/json'
@@ -240,7 +240,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             invoicePayload,
             {
               headers: {
-                Authorization: `Bearer ${location.apiKey}`,
+                Authorization: `Bearer ${location.ghlOAuth.accessToken}`,
                 Version: '2021-07-28',
                 'Content-Type': 'application/json',
                 Accept: 'application/json'
@@ -286,7 +286,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         sendPayload,
         {
           headers: {
-            Authorization: `Bearer ${location.apiKey}`,
+            Authorization: `Bearer ${location.ghlOAuth.accessToken}`,
             Version: '2021-07-28',
             'Content-Type': 'application/json',
             Accept: 'application/json'

@@ -50,7 +50,7 @@ export async function createPaymentLinkHandler(req, res) {
     },
     {
       headers: {
-        Authorization: `Bearer ${location?.apiKey}`,
+        Authorization: `Bearer ${location?.ghlOAuth?.accessToken}`,
         Version: '2021-07-28'
       }
     }
@@ -70,7 +70,7 @@ export async function createPaymentLinkHandler(req, res) {
     },
     {
       headers: {
-        Authorization: `Bearer ${location?.apiKey}`,
+        Authorization: `Bearer ${location?.ghlOAuth?.accessToken}`,
         Version: '2021-07-28'
       }
     }

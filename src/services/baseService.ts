@@ -20,9 +20,24 @@ interface OfflineConfig {
   priority?: 'high' | 'medium' | 'low';
 }
 
+// Standard API response format from your backend
+interface ApiResponse<T> {
+  success: boolean;
+  data: T;
+  message?: string;
+  error?: string;
+  pagination?: {
+    total: number;
+    limit: number;
+    offset: number;
+    hasMore: boolean;
+  };
+}
+
 export class BaseService {
   protected locationId?: string;
   protected userId?: string;
+  protected cacheService = cacheService;
 
   constructor(context?: { locationId?: string; userId?: string }) {
     this.locationId = context?.locationId;
@@ -61,7 +76,7 @@ export class BaseService {
 
     try {
       // Add location ID to params if available
-      if (locationId) {
+      if (locationId && config.method === 'GET') {
         config.params = {
           ...config.params,
           locationId,
@@ -69,15 +84,30 @@ export class BaseService {
       }
 
       // Make the API request
-      const response: AxiosResponse<T> = await api.request(config);
+      const response: AxiosResponse<ApiResponse<T>> = await api.request(config);
 
-      // Cache successful GET requests
-      if (cacheKey && config.method === 'GET' && response.data) {
-        const cacheConfig = typeof cache === 'object' ? cache : undefined;
-        await cacheService.set(cacheKey, response.data, cacheConfig);
+      // Extract data from standard response format
+      let responseData: T;
+      
+      // Check if response has our standard format
+      if (response.data && typeof response.data === 'object' && 'success' in response.data && 'data' in response.data) {
+        // Standard format: { success: true, data: T }
+        if (!response.data.success) {
+          throw new Error(response.data.error || 'Request failed');
+        }
+        responseData = response.data.data;
+      } else {
+        // Non-standard format, use as-is
+        responseData = response.data as unknown as T;
       }
 
-      return response.data;
+      // Cache successful GET requests with extracted data
+      if (cacheKey && config.method === 'GET' && responseData) {
+        const cacheConfig = typeof cache === 'object' ? cache : undefined;
+        await cacheService.set(cacheKey, responseData, cacheConfig);
+      }
+
+      return responseData;
     } catch (error) {
       // Handle offline scenario
       if (this.isNetworkError(error) && offline && offlineConfig) {
@@ -108,6 +138,7 @@ export class BaseService {
       {
         method: 'GET',
         url: endpoint,
+        params: options.locationId ? { locationId: options.locationId } : undefined,
       },
       options,
       offlineConfig
@@ -115,7 +146,7 @@ export class BaseService {
   }
 
   /**
-   * POST request with offline queue
+   * POST request
    */
   protected async post<T>(
     endpoint: string,
@@ -123,6 +154,11 @@ export class BaseService {
     options: ServiceOptions = {},
     offlineConfig?: OfflineConfig
   ): Promise<T> {
+    // Add locationId to data if available
+    if (options.locationId && !data.locationId) {
+      data.locationId = options.locationId;
+    }
+
     return this.request<T>(
       {
         method: 'POST',
@@ -135,7 +171,7 @@ export class BaseService {
   }
 
   /**
-   * PATCH request with offline queue
+   * PATCH request
    */
   protected async patch<T>(
     endpoint: string,
@@ -155,7 +191,7 @@ export class BaseService {
   }
 
   /**
-   * PUT request with offline queue
+   * PUT request
    */
   protected async put<T>(
     endpoint: string,
@@ -175,7 +211,7 @@ export class BaseService {
   }
 
   /**
-   * DELETE request with offline queue
+   * DELETE request
    */
   protected async delete<T>(
     endpoint: string,
@@ -206,21 +242,21 @@ export class BaseService {
       console.log(`📴 Offline: Queueing ${config.method} ${config.url}`);
     }
 
-    // For GET requests, try to return stale cache
+    // For GET requests, try to return cached data
     if (config.method === 'GET' && cacheKey) {
-      const staleData = await cacheService.get<T>(cacheKey);
-      if (staleData) {
+      const cached = await cacheService.getExpired<T>(cacheKey);
+      if (cached) {
         if (__DEV__) {
-          console.log(`📦 Returning stale cache for: ${config.url}`);
+          console.log(`📦 Using expired cache for offline mode`);
         }
-        return staleData;
+        return cached;
       }
     }
 
-    // Queue the action for later
+    // Queue the action for later sync
     await syncQueueService.addToQueue({
-      type: config.method === 'POST' ? 'create' : 
-            config.method === 'DELETE' ? 'delete' : 'update',
+      action: config.method === 'POST' ? 'create' : 
+              config.method === 'DELETE' ? 'delete' : 'update',
       entity: offlineConfig.entity,
       endpoint: config.url!,
       method: offlineConfig.method,
@@ -289,7 +325,7 @@ export class BaseService {
   /**
    * Handle API errors
    */
-  private handleError(error: AxiosError, showError: boolean): void {
+  private handleError(error: AxiosError<ApiResponse<any>>, showError: boolean): void {
     if (__DEV__) {
       console.error('❌ API Error:', {
         url: error.config?.url,
@@ -305,7 +341,7 @@ export class BaseService {
     
     if (error.response) {
       // Server responded with error
-      const data = error.response.data as any;
+      const data = error.response.data;
       message = data?.error || data?.message || `Error: ${error.response.status}`;
       
       // Handle specific status codes
@@ -321,7 +357,13 @@ export class BaseService {
           message = 'The requested resource was not found.';
           break;
         case 422:
-          message = 'Please check your input and try again.';
+          // Extract validation details if available
+          if (data?.details) {
+            const details = Object.values(data.details).join(', ');
+            message = `Validation failed: ${details}`;
+          } else {
+            message = 'Please check your input and try again.';
+          }
           break;
         case 500:
           message = 'Server error. Please try again later.';
@@ -368,4 +410,4 @@ export class BaseService {
 }
 
 // Export types
-export type { ServiceOptions, OfflineConfig };
+export type { ServiceOptions, OfflineConfig, ApiResponse };

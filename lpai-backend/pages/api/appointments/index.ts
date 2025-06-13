@@ -196,7 +196,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Get the API key for this location
     const location = await db.collection('locations').findOne({ locationId });
-    if (!location?.apiKey) {
+    if (!location?.ghlOAuth?.accessToken) {
       return sendError(res, 'No GHL API key found for locationId', 400);
     }
 
@@ -236,7 +236,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         ghlPayload,
         {
           headers: {
-            'Authorization': `Bearer ${location.apiKey}`,
+            'Authorization': `Bearer ${location.ghlOAuth.accessToken}`,
             'Version': '2021-04-15',
             'Accept': 'application/json',
             'Content-Type': 'application/json',

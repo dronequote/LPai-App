@@ -26,7 +26,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Get location for API key
     const location = await db.collection('locations').findOne({ locationId });
-    if (!location?.apiKey) {
+    if (!location?.ghlOAuth?.accessToken) {
       return res.status(404).json({ error: 'Location not found or API key missing' });
     }
 
@@ -72,7 +72,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       paymentPayload,
       {
         headers: {
-          Authorization: `Bearer ${location.apiKey}`,
+          Authorization: `Bearer ${location.ghlOAuth.accessToken}`,
           Version: '2021-07-28',
           'Content-Type': 'application/json',
           Accept: 'application/json'
