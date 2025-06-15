@@ -55,13 +55,21 @@ export default function ProjectsScreen() {
 
   const fetchProjects = async () => {
     try {
+      console.log('Fetching projects for location:', user?.locationId);
       const res = await api.get('/api/projects', {
         params: { locationId: user?.locationId },
       });
-      setProjects(res.data);
-      setFiltered(res.data);
+      console.log('Projects API response:', res.data);
+      // Ensure we always have an array
+      const projectsData = Array.isArray(res.data) ? res.data : [];
+      console.log('Setting projects:', projectsData.length, 'items');
+      setProjects(projectsData);
+      setFiltered(projectsData);
     } catch (err) {
       console.error('Failed to fetch projects:', err);
+      Alert.alert('Error', 'Failed to load projects');
+      setProjects([]);
+      setFiltered([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -78,6 +86,12 @@ export default function ProjectsScreen() {
   }, [user?.locationId]);
 
   const applyFilters = () => {
+    // Ensure projects is an array before spreading
+    if (!Array.isArray(projects)) {
+      setFiltered([]);
+      return;
+    }
+    
     let result = [...projects];
 
     if (topFilter !== 'All') {
@@ -92,7 +106,7 @@ export default function ProjectsScreen() {
       const q = search.toLowerCase();
       result = result.filter(
         (p) =>
-          p.title.toLowerCase().includes(q) ||
+          p.title?.toLowerCase().includes(q) ||
           p.contactName?.toLowerCase().includes(q) ||
           p.phone?.toLowerCase().includes(q)
       );
@@ -100,7 +114,7 @@ export default function ProjectsScreen() {
 
     if (projectFilter.trim()) {
       result = result.filter((p) =>
-        p.title.toLowerCase().includes(projectFilter.toLowerCase())
+        p.title?.toLowerCase().includes(projectFilter.toLowerCase())
       );
     }
 
@@ -195,7 +209,7 @@ export default function ProjectsScreen() {
             ))}
           </View>
 
-          <Text style={styles.countText}>Total Projects: {filtered.length}</Text>
+          <Text style={styles.countText}>Total Projects: {filtered?.length || 0}</Text>
 
           {(statusFilter || projectFilter || phoneFilter) && (
             <View style={styles.activeFilters}>
@@ -212,21 +226,23 @@ export default function ProjectsScreen() {
             </View>
           )}
 
-          {filtered.map((project) => (
-            <ProjectCard
-              key={project._id}
-              title={project.title}
-              name={project.contactName}
-              phone={project.phone}
-              status={project.status}
-              onPress={() => {
-                navigation.navigate('ProjectDetailScreen', { project });
-              }}
-            />
-          ))}
-
-          {!loading && Array.isArray(filtered) && filtered.length === 0 && (
-            <Text style={styles.empty}>No projects match your filters.</Text>
+          {filtered && filtered.length > 0 ? (
+            filtered.map((project) => (
+              <ProjectCard
+                key={project._id}
+                title={project.title}
+                name={project.contactName}
+                phone={project.phone}
+                status={project.status}
+                onPress={() => {
+                  navigation.navigate('ProjectDetailScreen', { project });
+                }}
+              />
+            ))
+          ) : (
+            !loading && (
+              <Text style={styles.empty}>No projects match your filters.</Text>
+            )
           )}
         </ScrollView>
 
