@@ -2,7 +2,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
-import { ensureUserPreferences, deepMergePreferences } from '../../../src/utils/userPreferences';
 
 // Default preferences for all users
 const DEFAULT_USER_PREFERENCES = {
@@ -163,25 +162,41 @@ async function getUser(db: any, userId: string, res: NextApiResponse) {
 // ✏️ PATCH: Update user (mainly for preferences)
 async function updateUser(db: any, userId: string, body: any, res: NextApiResponse) {
   try {
+    console.log('[USERS API] Update request for userId:', userId);
+    console.log('[USERS API] Update body:', JSON.stringify(body, null, 2));
+    
     const { preferences, ...otherUpdates } = body;
     
     let updateData: any = {};
     
+    // First, find the user to make sure they exist
+    let currentUser;
+    
+    // Try multiple ways to find the user
+    if (ObjectId.isValid(userId) && userId.length === 24) {
+      console.log('[USERS API] Searching by ObjectId...');
+      currentUser = await db.collection('users').findOne({ _id: new ObjectId(userId) });
+    }
+    
+    if (!currentUser) {
+      console.log('[USERS API] Searching by userId field...');
+      currentUser = await db.collection('users').findOne({ userId: userId });
+    }
+    
+    if (!currentUser) {
+      console.log('[USERS API] Searching by ghlUserId field...');
+      currentUser = await db.collection('users').findOne({ ghlUserId: userId });
+    }
+    
+    if (!currentUser) {
+      console.log('[USERS API] User not found with any method');
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    console.log('[USERS API] Found user:', currentUser.email);
+    
     // Handle preferences update with deep merge
     if (preferences) {
-      // Get current user to merge preferences
-      let currentUser;
-      if (ObjectId.isValid(userId)) {
-        currentUser = await db.collection('users').findOne({ _id: new ObjectId(userId) });
-      }
-      if (!currentUser) {
-        currentUser = await db.collection('users').findOne({ userId: userId });
-      }
-      
-      if (!currentUser) {
-        return res.status(404).json({ error: 'User not found' });
-      }
-      
       // Deep merge existing preferences with new ones
       const existingPreferences = currentUser.preferences || DEFAULT_USER_PREFERENCES;
       updateData.preferences = deepMergePreferences(existingPreferences, preferences);
@@ -198,30 +213,19 @@ async function updateUser(db: any, userId: string, body: any, res: NextApiRespon
     // Add timestamp
     updateData.updatedAt = new Date().toISOString();
     
-    let result;
-    
-    // Try to update by ObjectId first, then by userId field
-    if (ObjectId.isValid(userId)) {
-      result = await db.collection('users').findOneAndUpdate(
-        { _id: new ObjectId(userId) },
-        { $set: updateData },
-        { returnDocument: 'after' }
-      );
-    }
+    // Update using the _id we found
+    const result = await db.collection('users').findOneAndUpdate(
+      { _id: currentUser._id },
+      { $set: updateData },
+      { returnDocument: 'after' }
+    );
     
     if (!result?.value) {
-      result = await db.collection('users').findOneAndUpdate(
-        { userId: userId },
-        { $set: updateData },
-        { returnDocument: 'after' }
-      );
+      console.log('[USERS API] Update failed - no result returned');
+      return res.status(500).json({ error: 'Failed to update user' });
     }
     
-    if (!result?.value) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    
-    console.log(`[USERS API] Updated user: ${result.value.name} - Preferences:`, preferences);
+    console.log(`[USERS API] Successfully updated user: ${result.value.name}`);
     return res.status(200).json(result.value);
     
   } catch (error) {

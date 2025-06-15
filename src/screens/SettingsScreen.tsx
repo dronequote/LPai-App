@@ -1,3 +1,7 @@
+// src/screens/SettingsScreen.tsx
+// Updated: June 13, 2025
+// Description: App settings screen with tabbed interface for user preferences
+
 import React, { useState, useRef } from 'react';
 import {
   View,
@@ -143,6 +147,12 @@ export default function SettingsScreen({ navigation }) {
   const handleSave = async () => {
     if (__DEV__) {
       console.log('💾 [Settings] Saving preferences:', preferences);
+      console.log('User ID:', user?._id);
+    }
+    
+    if (!user?._id) {
+      Alert.alert('Error', 'User session invalid. Please log out and log back in.');
+      return;
     }
     
     setSaving(true);
@@ -154,11 +164,15 @@ export default function SettingsScreen({ navigation }) {
       if (__DEV__) {
         console.log('✅ [Settings] Preferences saved successfully');
       }
-    } catch (error) {
+    } catch (error: any) {
       if (__DEV__) {
         console.error('❌ [Settings] Failed to save preferences:', error);
+        console.error('Error response:', error.response?.data);
+        console.error('Error status:', error.response?.status);
       }
-      Alert.alert('Error', 'Failed to save settings');
+      
+      const errorMessage = error.response?.data?.error || error.message || 'Failed to save settings';
+      Alert.alert('Error', errorMessage);
     } finally {
       setSaving(false);
     }
