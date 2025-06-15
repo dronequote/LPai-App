@@ -7,7 +7,6 @@ export interface OAuthTokens {
   refreshToken: string;
   expiresAt: Date;
   tokenType: string;
-  userType?: string;
 }
 
 export async function getAuthHeader(location: any): Promise<{ header: string; type: string }> {
@@ -23,9 +22,9 @@ export async function getAuthHeader(location: any): Promise<{ header: string; ty
       type: 'OAuth'
     };
   }
-  if (location?.ghlOAuth?.accessToken) {
+  if (location?.ghlApiKey) {
     return {
-      header: `Bearer ${location.ghlOAuth.accessToken}`,
+      header: `Bearer ${location.ghlApiKey}`,
       type: 'API Key'
     };
   }
@@ -56,8 +55,8 @@ export async function refreshOAuthToken(location: any): Promise<OAuthTokens> {
         client_id: process.env.GHL_MARKETPLACE_CLIENT_ID!,
         client_secret: process.env.GHL_MARKETPLACE_CLIENT_SECRET!,
         grant_type: 'refresh_token',
-        refresh_token: location.ghlOAuth.refreshToken,
-        user_type: location.installType || 'Location'  // ADD THIS LINE - CRITICAL!
+        refresh_token: location.ghlOAuth.refreshToken
+        // No user_type parameter - GHL determines this from the refresh token
       }),
       {
         headers: {
@@ -67,7 +66,7 @@ export async function refreshOAuthToken(location: any): Promise<OAuthTokens> {
       }
     );
 
-    const { access_token, refresh_token, expires_in } = response.data;
+    const { access_token, refresh_token, expires_in, locationId, companyId } = response.data;
     
     // Calculate new expiry
     const expiresAt = new Date(Date.now() + (expires_in * 1000));
@@ -99,6 +98,8 @@ export async function refreshOAuthToken(location: any): Promise<OAuthTokens> {
 
     console.log(`[OAuth Refresh] Successfully refreshed tokens for location ${location.locationId}`);
     console.log(`[OAuth Refresh] New token expires at: ${expiresAt.toISOString()}`);
+    console.log(`[OAuth Refresh] Response locationId: ${locationId || 'not specified'}`);
+    console.log(`[OAuth Refresh] Response companyId: ${companyId || 'not specified'}`);
     console.log(`[OAuth Refresh] This is refresh #${(location.ghlOAuth.refreshCount || 0) + 1}`);
 
     return {
