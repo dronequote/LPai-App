@@ -3,31 +3,36 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
 import axios from 'axios';
+import { createInvoiceSchema } from '../../../schemas/invoice.schema'
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-    const client = await clientPromise;
-    const db = client.db('lpai');
-  const { projectId, locationId, title, amount, type, amountType, amountValue } = req.body;
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'Method Not Allowed' });
+    }
   
-  const invoice = {
-    _id: new ObjectId(),
-    projectId,
-    locationId,
-    invoiceNumber: generateInvoiceNumber(), // INV-2025-XXX
-    title,
-    amount,
-    type, // 'deposit', 'progress', 'final'
-    amountType, // 'percentage', 'fixed'
-    amountValue,
-    status: 'pending',
-    createdAt: new Date(),
-    createdBy: ''
-  };
+    try {
+      const data = await createInvoiceSchema.validate(req.body, {
+        abortEarly: false,
+      });
   
-  await db.collection('invoices').insertOne(invoice);
+      const client = await clientPromise;
+      const db = client.db('lpai');
   
-  return res.json({ success: true, invoice });
-}
+      const invoice = {
+        _id: new ObjectId(),
+        ...data,
+        invoiceNumber: generateInvoiceNumber(),
+        createdAt: new Date(),
+        createdBy: ''
+      };
+  
+      await db.collection('invoices').insertOne(invoice);
+      return res.status(201).json({ success: true, invoice });
+    } catch (err: any) {
+      console.error('Validation failed', err);
+      return res.status(400).json({ error: 'Invalid request', details: err.errors });
+    }
+  }
 
 // /api/payments/create-link.ts
 // @ts-ignore

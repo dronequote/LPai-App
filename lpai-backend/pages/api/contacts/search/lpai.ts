@@ -7,8 +7,10 @@ import {
   sendServerError,
 } from '../../../../src/utils/httpResponses';
 import clientPromise from '@/lib/mongodb';
+import cors from '@/lib/cors';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    await cors(req, res);
   if (req.method !== 'GET') {
     return sendBadRequest(res, 'Method not allowed', 'Invalid Method');
   }

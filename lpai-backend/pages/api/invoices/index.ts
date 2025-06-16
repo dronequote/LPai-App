@@ -19,8 +19,10 @@ import {
   sendServerError,
   sendMethodNotAllowed 
 } from '../../../src/utils/response';
+import cors from '@/lib/cors';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    await cors(req, res);
   const client = await clientPromise;
   const db = client.db('lpai');
 

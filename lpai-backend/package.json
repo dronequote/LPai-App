@@ -26,7 +26,8 @@
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "react-native-dotenv": "^3.4.11",
-    "resend": "^4.5.1"
+    "resend": "^4.5.1",
+    "yup": "^1.6.1"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.0.0",
