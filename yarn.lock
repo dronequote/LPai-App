@@ -7343,6 +7343,7 @@ __metadata:
     resend: "npm:^4.5.1"
     ts-node: "npm:^10.9.2"
     typescript: "npm:^5.8.3"
+    yup: "npm:^1.6.1"
   languageName: unknown
   linkType: soft
 
