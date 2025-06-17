@@ -1,3 +1,7 @@
+// src/screens/ContactsScreen.tsx
+// Updated: 2025-01-06
+// Using services instead of direct API calls
+
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
@@ -13,12 +17,12 @@ import {
 } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '@react-navigation/native';
+import { contactService } from '../services/contactService';
 import ContactCard from '../components/ContactCard';
 import FilterModal from '../components/FilterModal';
 import AddContactForm from '../components/AddContactForm';
 import ContactDetail from '../components/ContactDetail';
 import { Contact, Project } from '../../packages/types/dist';
-import api from '../lib/api';
 
 const topFilters = ['All', 'Open', 'Quoted', 'Scheduled'];
 
@@ -43,14 +47,27 @@ export default function ContactsScreen() {
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
 
   const fetchContacts = async () => {
+    if (!user?.locationId) {
+      setLoading(false);
+      return;
+    }
+
     try {
-      const res = await api.get('/api/contacts/withProjects', {
-        params: { locationId: user?.locationId },
-      });
-      setContacts(res.data);
-      setFiltered(res.data);
+      // Check if we should use getWithProjects or regular list
+      const data = await contactService.getWithProjects 
+        ? await contactService.getWithProjects(user.locationId)
+        : await contactService.list(user.locationId, { includeProjects: true });
+      
+      // Ensure data is an array
+      const contactsArray = Array.isArray(data) ? data : [];
+      
+      setContacts(contactsArray);
+      setFiltered(contactsArray);
     } catch (err) {
       console.error('Failed to fetch contacts with projects:', err);
+      // Set empty arrays on error
+      setContacts([]);
+      setFiltered([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -60,13 +77,18 @@ export default function ContactsScreen() {
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     fetchContacts();
-  }, []);
+  }, [user?.locationId]);
 
   useEffect(() => {
     if (user?.locationId) fetchContacts();
   }, [user?.locationId]);
 
   const applyFilters = () => {
+    if (!Array.isArray(contacts)) {
+      setFiltered([]);
+      return;
+    }
+
     let result = [...contacts];
 
     if (topFilter !== 'All') {
@@ -121,24 +143,21 @@ export default function ContactsScreen() {
   }, [search, topFilter, statusFilter, projectFilter, phoneFilter, contacts]);
 
   const handleCreateContact = async (contactData: any) => {
+    if (!user?.locationId) {
+      Alert.alert('Error', 'Location information missing');
+      return;
+    }
+
     try {
-      const response = await api.post('/api/contacts', {
+      const newContact = await contactService.create({
         ...contactData,
-        status: 'Open',
-        locationId: user?.locationId,
+        locationId: user.locationId,
       });
       
       setIsAddModalVisible(false);
       await fetchContacts();
       
       // Navigate to the new contact detail screen
-      const newContact = { 
-        _id: response.data.contactId, 
-        ...contactData,
-        status: 'Open',
-        locationId: user?.locationId,
-        projects: []
-      };
       navigation.navigate('ContactDetailScreen', { contact: newContact });
     } catch (error) {
       console.error('Failed to create contact:', error);

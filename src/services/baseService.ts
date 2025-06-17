@@ -1,5 +1,4 @@
-// services/baseService.ts
-// Updated: 2025-06-16
+// src/services/baseService.ts
 import { AxiosError, AxiosRequestConfig, AxiosResponse } from 'axios';
 import api from '../lib/api';
 import { cacheService, CacheConfig } from './cacheService';
@@ -76,12 +75,9 @@ export class BaseService {
     }
 
     try {
-      // Add location ID to params if available
-      if (locationId && config.method === 'GET') {
-        config.params = {
-          ...config.params,
-          locationId,
-        };
+      // Log the request for debugging
+      if (__DEV__) {
+        console.log(`[BaseService] ${config.method} ${config.url}`, config.params);
       }
 
       // Make the API request
@@ -130,29 +126,30 @@ export class BaseService {
   /**
    * GET request with caching
    */
-protected async get<T>(
-  endpoint: string,
-  config?: any,
-  offlineConfig?: any
-): Promise<T> {
-  try {
-    // Ensure params are passed to axios correctly
-    const requestConfig = {
-      ...config,
-      params: config?.params || {},
-    };
+  protected async get<T>(
+    endpoint: string,
+    config?: {
+      params?: any;
+      cache?: boolean | CacheConfig;
+      offline?: boolean;
+      showError?: boolean;
+      locationId?: string;
+      userId?: string;
+    },
+    offlineConfig?: OfflineConfig
+  ): Promise<T> {
+    const { params, ...options } = config || {};
     
-    if (__DEV__) {
-      console.log(`[${this.constructor.name}] GET ${endpoint}`, requestConfig.params);
-    }
-    
-    const response = await api.get(endpoint, requestConfig);
-    return response.data;
-  } catch (error) {
-    console.error(`[${this.constructor.name}] GET ${endpoint} failed:`, error);
-    throw error;
+    return this.request<T>(
+      {
+        method: 'GET',
+        url: endpoint,
+        params: params,
+      },
+      options,
+      offlineConfig
+    );
   }
-}
 
   /**
    * POST request
@@ -163,7 +160,7 @@ protected async get<T>(
     options: ServiceOptions = {},
     offlineConfig?: OfflineConfig
   ): Promise<T> {
-    // Add locationId to data if available
+    // Add locationId to data if available and not already present
     if (options.locationId && !data.locationId) {
       data.locationId = options.locationId;
     }
