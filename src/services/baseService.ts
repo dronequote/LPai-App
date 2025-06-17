@@ -4,13 +4,16 @@ import api from '../lib/api';
 import { cacheService, CacheConfig } from './cacheService';
 import { syncQueueService } from './syncQueueService';
 import { Alert } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface ServiceOptions {
   cache?: boolean | CacheConfig;
   offline?: boolean;
   showError?: boolean;
-  locationId?: string;
-  userId?: string;
+  requireAuth?: boolean; // Default true
+  clearRelatedCache?: string[];
+  retryCount?: number;
+  timeout?: number;
 }
 
 interface OfflineConfig {
@@ -20,7 +23,6 @@ interface OfflineConfig {
   priority?: 'high' | 'medium' | 'low';
 }
 
-// Standard API response format from your backend
 interface ApiResponse<T> {
   success: boolean;
   data: T;
@@ -34,18 +36,64 @@ interface ApiResponse<T> {
   };
 }
 
-export class BaseService {
-  protected locationId?: string;
-  protected userId?: string;
-  protected cacheService = cacheService;
+// Related entity mapping for automatic cache clearing
+const RELATED_ENTITIES = {
+  project: ['contact', 'appointment', 'quote', 'dashboard'],
+  contact: ['project', 'appointment', 'quote', 'dashboard'],
+  appointment: ['contact', 'project', 'calendar', 'dashboard'],
+  quote: ['project', 'contact', 'dashboard'],
+  payment: ['quote', 'project', 'dashboard'],
+  location: ['calendar', 'user', 'dashboard'],
+  sms: ['contact', 'conversation'],
+};
 
-  constructor(context?: { locationId?: string; userId?: string }) {
-    this.locationId = context?.locationId;
-    this.userId = context?.userId;
+// Service registry for dependency injection
+const serviceRegistry = new Map<string, BaseService>();
+
+export abstract class BaseService {
+  protected abstract serviceName: string;
+  private static authContext: { user?: any; token?: string } | null = null;
+  private retryQueue = new Map<string, Promise<any>>();
+
+  constructor() {
+    // Register service instance
+    serviceRegistry.set(this.constructor.name, this);
   }
 
   /**
-   * Make API request with caching and offline support
+   * Set auth context (called from AuthContext)
+   */
+  static setAuthContext(context: { user?: any; token?: string } | null) {
+    BaseService.authContext = context;
+    
+    // Update API default headers
+    if (context?.token) {
+      api.defaults.headers.common['Authorization'] = `Bearer ${context.token}`;
+    } else {
+      delete api.defaults.headers.common['Authorization'];
+    }
+  }
+
+  /**
+   * Get current auth context with validation
+   */
+  protected getAuthContext(requireAuth: boolean = true) {
+    const context = BaseService.authContext;
+    
+    if (requireAuth && (!context?.user?.locationId || !context?.token)) {
+      throw new Error('Authentication required. Please login again.');
+    }
+    
+    return {
+      locationId: context?.user?.locationId,
+      userId: context?.user?._id || context?.user?.id,
+      token: context?.token,
+      user: context?.user,
+    };
+  }
+
+  /**
+   * Make API request with all features
    */
   protected async request<T>(
     config: AxiosRequestConfig,
@@ -56,95 +104,216 @@ export class BaseService {
       cache = false,
       offline = true,
       showError = true,
-      locationId = this.locationId,
-      userId = this.userId,
+      requireAuth = true,
+      clearRelatedCache = [],
+      retryCount = 3,
+      timeout = 30000,
     } = options;
 
-    // Build cache key if caching is enabled
-    const cacheKey = cache ? this.buildCacheKey(config) : null;
+    // Get auth context if required
+    let authData: any = {};
+    try {
+      authData = this.getAuthContext(requireAuth);
+    } catch (error) {
+      if (requireAuth) {
+        this.handleError(error as Error, showError);
+        throw error;
+      }
+    }
 
-    // Try to get from cache first
+    // Add locationId to params if not present
+    if (authData.locationId && config.method === 'GET') {
+      config.params = {
+        ...config.params,
+        locationId: config.params?.locationId || authData.locationId,
+      };
+    }
+
+    // Add locationId to body for mutations if not present
+    if (authData.locationId && config.method !== 'GET' && config.data) {
+      config.data = {
+        ...config.data,
+        locationId: config.data.locationId || authData.locationId,
+      };
+    }
+
+    // Set timeout
+    config.timeout = timeout;
+
+    // Build cache key
+    const cacheKey = cache ? this.buildCacheKey(config) : null;
+    
+    // Check for existing retry promise
+    const retryKey = `${config.method}_${config.url}_${JSON.stringify(config.params || {})}`;
+    if (this.retryQueue.has(retryKey)) {
+      return this.retryQueue.get(retryKey);
+    }
+
+    // Try cache first for GET requests
     if (cacheKey && config.method === 'GET') {
       const cached = await cacheService.get<T>(cacheKey);
       if (cached) {
         if (__DEV__) {
-          console.log(`📦 Cache hit: ${config.url}`);
+          console.log(`📦 [${this.serviceName}] Cache hit:`, config.url);
         }
         return cached;
       }
     }
 
+    // Make request with retry logic
+    const requestPromise = this.executeRequestWithRetry<T>(
+      config,
+      cacheKey,
+      offlineConfig,
+      authData,
+      showError,
+      retryCount,
+      options // Pass the full options object
+    );
+
+    // Store in retry queue
+    this.retryQueue.set(retryKey, requestPromise);
+
     try {
-      // Log the request for debugging
+      const result = await requestPromise;
+      
+      // Clear related caches after mutations
+      if (config.method !== 'GET' && offlineConfig) {
+        await this.clearRelatedCaches(offlineConfig.entity, clearRelatedCache);
+      }
+      
+      return result;
+    } finally {
+      // Clean up retry queue
+      this.retryQueue.delete(retryKey);
+    }
+  }
+
+  /**
+   * Execute request with retry logic
+   */
+  private async executeRequestWithRetry<T>(
+    config: AxiosRequestConfig,
+    cacheKey: string | null,
+    offlineConfig: OfflineConfig | undefined,
+    authData: any,
+    showError: boolean,
+    maxRetries: number,
+    options: ServiceOptions, // Add options parameter
+    currentRetry = 0
+  ): Promise<T> {
+    try {
       if (__DEV__) {
-        console.log(`[BaseService] ${config.method} ${config.url}`, config.params);
+        console.log(`🌐 [${this.serviceName}] ${config.method} ${config.url}`, {
+          params: config.params,
+          retry: currentRetry > 0 ? currentRetry : undefined,
+        });
       }
 
-      // Make the API request
       const response: AxiosResponse<ApiResponse<T>> = await api.request(config);
-
-      // Extract data from standard response format
-      let responseData: T;
       
-      // Check if response has our standard format
+      // Extract data
+      let responseData: T;
       if (response.data && typeof response.data === 'object' && 'success' in response.data && 'data' in response.data) {
-        // Standard format: { success: true, data: T }
         if (!response.data.success) {
           throw new Error(response.data.error || 'Request failed');
         }
         responseData = response.data.data;
       } else {
-        // Non-standard format, use as-is
         responseData = response.data as unknown as T;
       }
 
-      // Cache successful GET requests with extracted data
+      // Cache successful GET requests
       if (cacheKey && config.method === 'GET' && responseData) {
-        const cacheConfig = typeof cache === 'object' ? cache : undefined;
+        const cacheConfig = typeof options.cache === 'object' ? options.cache : undefined;
         await cacheService.set(cacheKey, responseData, cacheConfig);
       }
 
       return responseData;
     } catch (error) {
+      const axiosError = error as AxiosError;
+      
+      // Check if we should retry
+      if (
+        currentRetry < maxRetries &&
+        this.shouldRetry(axiosError) &&
+        !this.isNetworkError(axiosError)
+      ) {
+        if (__DEV__) {
+          console.log(`🔄 [${this.serviceName}] Retrying request (${currentRetry + 1}/${maxRetries})`);
+        }
+        
+        // Exponential backoff
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, currentRetry) * 1000));
+        
+        return this.executeRequestWithRetry(
+          config,
+          cacheKey,
+          offlineConfig,
+          authData,
+          showError,
+          maxRetries,
+          options, // Pass options through
+          currentRetry + 1
+        );
+      }
+
       // Handle offline scenario
-      if (this.isNetworkError(error) && offline && offlineConfig) {
+      if (this.isNetworkError(axiosError) && options.offline && offlineConfig) {
         return this.handleOfflineRequest<T>(
           config,
           offlineConfig,
           cacheKey,
-          locationId,
-          userId
+          authData
         );
       }
 
-      // Handle other errors
-      this.handleError(error as AxiosError, showError);
+      // Handle token expiry
+      if (axiosError.response?.status === 401) {
+        await this.handleTokenExpiry();
+      }
+
+      this.handleError(axiosError, showError);
       throw error;
     }
   }
 
   /**
-   * GET request with caching
+   * Should retry request based on error
+   */
+  private shouldRetry(error: AxiosError): boolean {
+    if (!error.response) return true; // Network errors
+    
+    const status = error.response.status;
+    // Retry on 5xx errors and specific 4xx errors
+    return status >= 500 || status === 408 || status === 429;
+  }
+
+  /**
+   * Handle token expiry
+   */
+  private async handleTokenExpiry(): Promise<void> {
+    // Clear auth data
+    await AsyncStorage.multiRemove(['@lpai_token', '@lpai_user']);
+    BaseService.setAuthContext(null);
+    
+    // Emit logout event (you'd implement this)
+    // EventEmitter.emit('auth:logout', 'Session expired');
+  }
+
+  /**
+   * GET request
    */
   protected async get<T>(
     endpoint: string,
-    config?: {
-      params?: any;
-      cache?: boolean | CacheConfig;
-      offline?: boolean;
-      showError?: boolean;
-      locationId?: string;
-      userId?: string;
-    },
+    options?: ServiceOptions & { params?: any },
     offlineConfig?: OfflineConfig
   ): Promise<T> {
-    const { params, ...options } = config || {};
-    
     return this.request<T>(
       {
         method: 'GET',
         url: endpoint,
-        params: params,
+        params: options?.params,
       },
       options,
       offlineConfig
@@ -156,16 +325,11 @@ export class BaseService {
    */
   protected async post<T>(
     endpoint: string,
-    data: any,
-    options: ServiceOptions = {},
+    data?: any,
+    options?: ServiceOptions,
     offlineConfig?: OfflineConfig
   ): Promise<T> {
-    // Add locationId to data if available and not already present
-    if (options.locationId && !data.locationId) {
-      data.locationId = options.locationId;
-    }
-
-    return this.request<T>(
+    const result = await this.request<T>(
       {
         method: 'POST',
         url: endpoint,
@@ -174,6 +338,9 @@ export class BaseService {
       options,
       offlineConfig
     );
+
+    await this.clearCache();
+    return result;
   }
 
   /**
@@ -182,10 +349,10 @@ export class BaseService {
   protected async patch<T>(
     endpoint: string,
     data: any,
-    options: ServiceOptions = {},
+    options?: ServiceOptions,
     offlineConfig?: OfflineConfig
   ): Promise<T> {
-    return this.request<T>(
+    const result = await this.request<T>(
       {
         method: 'PATCH',
         url: endpoint,
@@ -194,6 +361,9 @@ export class BaseService {
       options,
       offlineConfig
     );
+
+    await this.clearCache();
+    return result;
   }
 
   /**
@@ -202,10 +372,10 @@ export class BaseService {
   protected async put<T>(
     endpoint: string,
     data: any,
-    options: ServiceOptions = {},
+    options?: ServiceOptions,
     offlineConfig?: OfflineConfig
   ): Promise<T> {
-    return this.request<T>(
+    const result = await this.request<T>(
       {
         method: 'PUT',
         url: endpoint,
@@ -214,6 +384,9 @@ export class BaseService {
       options,
       offlineConfig
     );
+
+    await this.clearCache();
+    return result;
   }
 
   /**
@@ -221,10 +394,10 @@ export class BaseService {
    */
   protected async delete<T>(
     endpoint: string,
-    options: ServiceOptions = {},
+    options?: ServiceOptions,
     offlineConfig?: OfflineConfig
   ): Promise<T> {
-    return this.request<T>(
+    const result = await this.request<T>(
       {
         method: 'DELETE',
         url: endpoint,
@@ -232,159 +405,156 @@ export class BaseService {
       options,
       offlineConfig
     );
+
+    await this.clearCache();
+    return result;
   }
 
   /**
-   * Handle offline requests
+   * Build cache key
+   */
+  private buildCacheKey(config: AxiosRequestConfig): string {
+    const { method = 'GET', url = '', params } = config;
+    const queryString = params ? JSON.stringify(params) : '';
+    return `@lpai_cache_${method}_${url}_${queryString}`;
+  }
+
+  /**
+   * Check if network error
+   */
+  private isNetworkError(error: any): boolean {
+    return (
+      !error.response ||
+      error.code === 'NETWORK_ERROR' ||
+      error.code === 'ECONNABORTED' ||
+      error.message === 'Network Error'
+    );
+  }
+
+  /**
+   * Handle offline request
    */
   private async handleOfflineRequest<T>(
     config: AxiosRequestConfig,
     offlineConfig: OfflineConfig,
     cacheKey: string | null,
-    locationId?: string,
-    userId?: string
+    authData: any
   ): Promise<T> {
-    if (__DEV__) {
-      console.log(`📴 Offline: Queueing ${config.method} ${config.url}`);
-    }
-
-    // For GET requests, try to return cached data
     if (config.method === 'GET' && cacheKey) {
-      const cached = await cacheService.getExpired<T>(cacheKey);
-      if (cached) {
+      const staleData = await cacheService.get<T>(cacheKey, true);
+      if (staleData) {
         if (__DEV__) {
-          console.log(`📦 Using expired cache for offline mode`);
+          console.log(`📴 [${this.serviceName}] Offline: Using stale cache`);
         }
-        return cached;
+        return staleData;
       }
-    }
-
-    // Queue the action for later sync
-    await syncQueueService.addToQueue({
-      action: config.method === 'POST' ? 'create' : 
-              config.method === 'DELETE' ? 'delete' : 'update',
-      entity: offlineConfig.entity,
-      endpoint: config.url!,
-      method: offlineConfig.method,
-      data: config.data,
-      params: config.params,
-      priority: offlineConfig.priority || 'medium',
-      locationId,
-      userId,
-    });
-
-    // For mutations, return optimistic response
-    if (config.method !== 'GET') {
-      // Create optimistic response
-      const optimisticResponse = {
-        ...config.data,
-        _id: `temp_${Date.now()}`,
-        __optimistic: true,
-        __pendingSync: true,
-      } as T;
-
-      // Cache optimistic response
-      if (cacheKey) {
-        await cacheService.set(cacheKey, optimisticResponse, {
-          priority: 'high',
-          ttl: 24 * 60 * 60 * 1000, // 24 hours
-        });
-      }
-
-      return optimisticResponse;
-    }
-
-    // No data available
-    throw new Error('No data available offline');
-  }
-
-  /**
-   * Build cache key from request config
-   */
-  private buildCacheKey(config: AxiosRequestConfig): string {
-    const method = config.method || 'GET';
-    const url = config.url || '';
-    const params = config.params ? JSON.stringify(config.params) : '';
-    
-    return `@lpai_cache_${method}_${url}_${params}`;
-  }
-
-  /**
-   * Check if error is network-related
-   */
-  private isNetworkError(error: any): boolean {
-    if (!error.response && error.code === 'NETWORK_ERROR') {
-      return true;
-    }
-    
-    if (error.message === 'Network Error') {
-      return true;
-    }
-    
-    if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
-      return true;
-    }
-    
-    return false;
-  }
-
-  /**
-   * Handle API errors
-   */
-  private handleError(error: AxiosError<ApiResponse<any>>, showError: boolean): void {
-    if (__DEV__) {
-      console.error('❌ API Error:', {
-        url: error.config?.url,
-        method: error.config?.method,
-        status: error.response?.status,
-        data: error.response?.data,
+    } else if (config.method !== 'GET') {
+      await syncQueueService.addToQueue({
+        ...offlineConfig,
+        data: config.data,
+        params: config.params,
+        locationId: authData.locationId,
+        userId: authData.userId,
       });
+
+      if (__DEV__) {
+        console.log(`📴 [${this.serviceName}] Offline: Queued for sync`);
+      }
+
+      return {} as T;
     }
 
+    throw new Error('No offline data available');
+  }
+
+  /**
+   * Handle errors
+   */
+  private handleError(error: Error | AxiosError, showError: boolean): void {
     if (!showError) return;
 
-    let message = 'An error occurred';
+    let message = 'An unexpected error occurred';
     
-    if (error.response) {
-      // Server responded with error
-      const data = error.response.data;
-      message = data?.error || data?.message || `Error: ${error.response.status}`;
-      
-      // Handle specific status codes
-      switch (error.response.status) {
+    if ('response' in error && error.response) {
+      const status = error.response.status;
+      const data = error.response.data as any;
+
+      switch (status) {
+        case 400:
+          message = data?.message || 'Invalid request';
+          break;
         case 401:
           message = 'Session expired. Please login again.';
-          // TODO: Trigger logout
           break;
         case 403:
-          message = 'You do not have permission to perform this action.';
+          message = 'Permission denied';
           break;
         case 404:
-          message = 'The requested resource was not found.';
+          message = 'Resource not found';
           break;
         case 422:
-          // Extract validation details if available
-          if (data?.details) {
-            const details = Object.values(data.details).join(', ');
-            message = `Validation failed: ${details}`;
-          } else {
-            message = 'Please check your input and try again.';
-          }
+          message = data?.message || 'Validation failed';
+          break;
+        case 429:
+          message = 'Too many requests. Please try again later.';
           break;
         case 500:
-          message = 'Server error. Please try again later.';
+          message = 'Server error. Please try again.';
           break;
+        default:
+          message = data?.message || message;
       }
-    } else if (error.request) {
-      // No response received
-      message = 'Unable to connect to server. Please check your connection.';
+    } else if ('message' in error) {
+      message = error.message;
     }
 
     Alert.alert('Error', message);
   }
 
   /**
-   * Batch multiple requests
+   * Clear related caches
+   */
+  protected async clearRelatedCaches(
+    entity: string,
+    additionalServices: string[] = []
+  ): Promise<void> {
+    const relatedEntities = RELATED_ENTITIES[entity] || [];
+    const allServices = [...new Set([...relatedEntities, ...additionalServices])];
+    
+    if (__DEV__) {
+      console.log(`🧹 [${this.serviceName}] Clearing related caches:`, allServices);
+    }
+
+    for (const service of allServices) {
+      await this.clearServiceCache(service);
+    }
+  }
+
+  /**
+   * Clear service cache
+   */
+  protected async clearServiceCache(serviceName: string): Promise<void> {
+    const cachePrefix = `@lpai_cache_GET_/api/${serviceName}`;
+    await cacheService.clear(cachePrefix);
+  }
+
+  /**
+   * Clear own cache
+   */
+  public async clearCache(prefix?: string): Promise<void> {
+    const cachePrefix = prefix || `@lpai_cache_GET_/api/${this.serviceName}`;
+    await cacheService.clear(cachePrefix);
+  }
+
+  /**
+   * Get related service instance
+   */
+  protected getService<T extends BaseService>(serviceName: string): T | undefined {
+    return serviceRegistry.get(serviceName) as T;
+  }
+
+  /**
+   * Batch requests
    */
   protected async batch<T>(
     requests: Array<() => Promise<T>>
@@ -393,27 +563,21 @@ export class BaseService {
   }
 
   /**
-   * Clear cache for this service
+   * Health check
    */
-  protected async clearCache(prefix?: string): Promise<void> {
-    const cachePrefix = prefix || '@lpai_cache_';
-    await cacheService.clear(cachePrefix);
-  }
-
-  /**
-   * Get cache stats
-   */
-  protected async getCacheStats() {
-    return cacheService.getCacheStats();
-  }
-
-  /**
-   * Force sync queued actions
-   */
-  protected async forceSync(): Promise<void> {
-    await syncQueueService.syncNow();
+  public async healthCheck(): Promise<boolean> {
+    try {
+      await this.get('/api/health', { 
+        cache: false, 
+        showError: false,
+        requireAuth: false,
+        timeout: 5000,
+      });
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
 
-// Export types
 export type { ServiceOptions, OfflineConfig, ApiResponse };

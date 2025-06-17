@@ -32,7 +32,7 @@ import api from '../lib/api';
 import { COLORS, FONT, RADIUS, SHADOW } from '../styles/theme';
 
 // --- TYPES ---
-import type { Appointment, Contact, Calendar, Project, User } from '../../packages/types/dist';
+import type { Appointment, Contact, Calendar, Project, User } from '@lp-ai/types';
 import type { StackNavigationProp } from '@react-navigation/stack';
 
 type Props = {

@@ -1,3 +1,4 @@
+// Updated: 2025-06-17
 import React, { useEffect, useState } from 'react';
 import {
   View,
@@ -15,7 +16,8 @@ import { Contact, Project } from '../../packages/types/dist';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/StackNavigator';
-import api from '../lib/api';
+import { contactService } from '../services/contactService';
+import { projectService } from '../services/projectService';
 import { useAuth } from '../contexts/AuthContext';
 
 interface Props {
@@ -29,7 +31,7 @@ export default function ContactDetail({ isVisible, onClose, contact }: Props) {
   const [loading, setLoading] = useState(false);
   const [syncedContact, setSyncedContact] = useState<Contact | null>(contact);
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { token } = useAuth();
+  const { token, user } = useAuth();
 
   useEffect(() => {
     const syncAndLoad = async () => {
@@ -40,19 +42,12 @@ export default function ContactDetail({ isVisible, onClose, contact }: Props) {
       try {
         // 1. 🔄 Sync with GHL if GHL contact exists
         if (contact.ghlContactId) {
-          console.log('[ContactDetail] Attempting to sync contact from /api/ghl/[id]');
+          console.log('[ContactDetail] Attempting to sync contact from GHL');
           try {
-            // GET request to your backend sync endpoint
-            const syncRes = await api.get(
-              `/api/ghl/${contact._id}`,
-              { headers: { Authorization: `Bearer ${token}` } }
-            );
-            updated = syncRes.data.contact;
-            if (syncRes.data.synced) {
-              console.log('[ContactDetail] Contact was synced from GHL');
-            } else {
-              console.log('[ContactDetail] Contact already in sync with GHL');
-            }
+            // Use contactService to sync with GHL
+            const syncedData = await contactService.syncFromGHL(contact._id, user?.locationId || contact.locationId);
+            updated = syncedData;
+            console.log('[ContactDetail] Contact synced successfully');
           } catch (err: any) {
             // Log out error response
             console.error('[ContactDetail] Error syncing contact:', err?.response?.data || err?.message || err);
@@ -66,16 +61,10 @@ export default function ContactDetail({ isVisible, onClose, contact }: Props) {
 
         // 2. 📦 Fetch Projects
         try {
-          const projRes = await api.get('/api/projects/byContact', {
-            params: {
-              contactId: updated._id,
-              locationId: updated.locationId,
-            },
-            headers: { Authorization: `Bearer ${token}` },
-          });
+          const projectsData = await projectService.getByContact(updated._id, updated.locationId);
 
           setProjects(
-            projRes.data.map((project: Project) => ({
+            projectsData.map((project: Project) => ({
               ...project,
               contactName: `${updated.firstName} ${updated.lastName}`,
             }))
@@ -93,7 +82,7 @@ export default function ContactDetail({ isVisible, onClose, contact }: Props) {
     if (isVisible && contact?._id) {
       syncAndLoad();
     }
-  }, [isVisible, contact?._id, token]);
+  }, [isVisible, contact?._id, token, user?.locationId]);
 
   if (!isVisible || !syncedContact) return null;
 

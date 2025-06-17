@@ -47,6 +47,7 @@ interface RescheduleInput {
 }
 
 class AppointmentService extends BaseService {
+  protected serviceName = 'appointments';
   /**
    * List appointments with filters
    */

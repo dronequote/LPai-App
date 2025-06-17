@@ -1,5 +1,5 @@
 // src/screens/ProjectDetailScreen.tsx
-// Updated: 2025-06-16
+// Updated: 2025-06-17
 
 import React, { useEffect, useState } from 'react';
 import {
@@ -26,7 +26,9 @@ import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import { useAuth } from '../contexts/AuthContext';
 import { useCalendar } from '../contexts/CalendarContext';
-import api from '../lib/api';
+import { projectService } from '../services/projectService';
+import { contactService } from '../services/contactService';
+import { appointmentService } from '../services/appointmentService';
 import { COLORS, FONT, RADIUS, SHADOW } from '../styles/theme';
 import CompactAppointmentCard from '../components/CompactAppointmentCard';
 import ProjectCard from '../components/ProjectCard';
@@ -124,11 +126,7 @@ export default function ProjectDetailScreen() {
         setLoading(true);
         
         // 🔥 NEW: Fetch enhanced project data from API
-        const enhancedProjectRes = await api.get(
-          `/api/projects/${project._id}?locationId=${user?.locationId}`
-        );
-        
-        const enhancedProject = enhancedProjectRes.data;
+        const enhancedProject = await projectService.getById(project._id, user?.locationId || '');
         
         // Set form fields from enhanced project
         setTitle(enhancedProject.title || '');
@@ -161,11 +159,9 @@ export default function ProjectDetailScreen() {
           
           // Try to fetch the full contact details
           try {
-            const contactRes = await api.get(`/api/contacts/${enhancedProject.contactId}`, {
-              params: { locationId: user?.locationId },
-            });
-            if (contactRes.data) {
-              setContact(contactRes.data);
+            const contactData = await contactService.getById(enhancedProject.contactId, user?.locationId || '');
+            if (contactData) {
+              setContact(contactData);
             }
           } catch (contactError) {
             console.log('Could not fetch full contact details, using project contact info');
@@ -174,10 +170,8 @@ export default function ProjectDetailScreen() {
 
         // Fetch all contacts for appointment modal
         try {
-          const contactsRes = await api.get('/api/contacts', {
-            params: { locationId: user?.locationId },
-          });
-          setAllContacts(contactsRes.data || []);
+          const contactsData = await contactService.list(user?.locationId || '');
+          setAllContacts(contactsData || []);
         } catch (contactError) {
           console.error('Failed to fetch contacts:', contactError);
           setAllContacts([]); // Set empty array on error
@@ -206,17 +200,16 @@ export default function ProjectDetailScreen() {
       setSaving(true);
       
       // Update project with all fields
-      const updatedProject = await api.patch(`/api/projects/${project._id}`, {
+      const updatedProject = await projectService.update(project._id, user?.locationId || '', {
         title,
         status,
         notes,
         scopeOfWork,
         products,
         milestones,
-        locationId: user?.locationId,
       });
 
-      setProject(updatedProject.data);
+      setProject(updatedProject);
       setEditing(false);
       Alert.alert('Success', 'Project updated successfully');
     } catch (err) {
@@ -235,7 +228,7 @@ export default function ProjectDetailScreen() {
 
   const handleCreateAppointment = async (appointmentData: any) => {
     try {
-      await api.post('/api/appointments', {
+      await appointmentService.create({
         ...appointmentData,
         contactId: contact?._id || project.contactId, // Use contact._id or fallback to project.contactId
         userId: user?._id,
@@ -245,11 +238,9 @@ export default function ProjectDetailScreen() {
       setShowCreateAppointment(false);
       
       // Refresh appointments
-      const appointmentsRes = await api.get('/api/appointments', {
-        params: { locationId: user?.locationId },
-      });
+      const appointmentsData = await appointmentService.list(user?.locationId || '');
       
-      const projectAppointments = appointmentsRes.data?.filter(
+      const projectAppointments = appointmentsData?.filter(
         (apt: Appointment) => apt.contactId === contact?._id
       ) || [];
       

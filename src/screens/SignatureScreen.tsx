@@ -1,4 +1,7 @@
 // src/screens/SignatureScreen.tsx - UPDATED with Opportunity Integration
+// Updated: 2025-06-17
+// Using services instead of direct API calls
+
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -14,7 +17,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
-import api from '../lib/api';
+import { locationService } from '../services/locationService';
+import { signatureService } from '../services/signatureService';
+import { projectService } from '../services/projectService';
+import { paymentService } from '../services/paymentService';
 import emailService from '../services/emailService';
 import SignatureCanvas from '../components/SignatureCanvas';
 import PhotoCaptureModal from '../components/PhotoCaptureModal'; // ADD THIS IMPORT
@@ -79,10 +85,8 @@ export default function SignatureScreen() {
     if (!user?.locationId) return;
     
     try {
-      const response = await api.get('/api/locations/byLocation', {
-        params: { locationId: user.locationId }
-      });
-      setCompanyData(response.data.companyInfo || {});
+      const response = await locationService.getDetails(user.locationId);
+      setCompanyData(response.companyInfo || {});
     } catch (error) {
       console.warn('[SignatureScreen] Failed to load company data:', error);
       setCompanyData({});
@@ -145,28 +149,38 @@ export default function SignatureScreen() {
       console.log('[SignatureScreen] Saving signatures to MongoDB...');
       
       // Save consultant signature first
-      const consultantResponse = await api.post(`/api/quotes/${quote._id}/sign`, {
-        locationId: user.locationId,
-        signatureType: 'consultant',
-        signature: signatures.consultant.signature,
-        signedBy: user._id,
-        deviceInfo: 'iPad App'
-      });
+      const consultantResponse = await signatureService.submitSignatures(
+        quote._id,
+        user.locationId,
+        {
+          consultant: {
+            type: 'consultant',
+            signature: signatures.consultant.signature,
+            signedAt: new Date().toISOString(),
+            name: user.name,
+          }
+        }
+      );
 
-      if (!consultantResponse.data.success) {
+      if (!consultantResponse.success) {
         throw new Error('Failed to save consultant signature');
       }
 
       // Save customer signature
-      const customerResponse = await api.post(`/api/quotes/${quote._id}/sign`, {
-        locationId: user.locationId,
-        signatureType: 'customer',
-        signature: customerSignature.signature,
-        signedBy: quote.customerName,
-        deviceInfo: 'iPad App'
-      });
+      const customerResponse = await signatureService.submitSignatures(
+        quote._id,
+        user.locationId,
+        {
+          customer: {
+            type: 'customer',
+            signature: customerSignature.signature,
+            signedAt: new Date().toISOString(),
+            name: quote.customerName,
+          }
+        }
+      );
 
-      if (!customerResponse.data.success) {
+      if (!customerResponse.success) {
         throw new Error('Failed to save customer signature');
       }
 
@@ -174,20 +188,18 @@ export default function SignatureScreen() {
 
       // Step 2: Generate PDF with embedded signatures
       console.log('[SignatureScreen] Generating signed PDF...');
-      const pdfResponse = await api.post(`/api/quotes/${quote._id}/pdf`, {
-        locationId: user.locationId
-      });
+      const pdfResponse = await signatureService.generateSignedPDF(quote._id, user.locationId);
 
-      if (!pdfResponse.data.success) {
+      if (!pdfResponse.success) {
         throw new Error('Failed to generate PDF');
       }
 
       // ✅ FIX: Get the fileId from the correct path in the response
-      const pdfFileId = pdfResponse.data.pdf?.fileId || pdfResponse.data.fileId;
+      const pdfFileId = pdfResponse.pdfUrl || pdfResponse.fileId;
       console.log('[SignatureScreen] PDF generated successfully:', pdfFileId);
 
       if (!pdfFileId) {
-        console.error('[SignatureScreen] PDF fileId not found in response:', pdfResponse.data);
+        console.error('[SignatureScreen] PDF fileId not found in response:', pdfResponse);
         throw new Error('PDF generated but fileId not returned');
       }
 
@@ -200,35 +212,26 @@ export default function SignatureScreen() {
       setEmailSending(true);
       
       try {
-        // Call the email API directly instead of using emailService
-        const emailResponse = await api.post('/api/emails/send-contract', {
-          quoteId: quote._id,
-          locationId: user.locationId,
-          contactId: quote.contactId || quote.contact?._id,
-          pdfFileId: pdfFileId,
-          quoteData: {
-            ...quote,
-            customerName: quote.customerName || quote.contactName,
-            projectTitle: quote.projectTitle || quote.title
-          },
-          companyData: {
-            ...companyData,
-            ...template?.companyOverrides
+        // Call the email service to send contract
+        const emailResponse = await emailService.sendSignedQuote(
+          quote._id,
+          user.locationId,
+          {
+            recipientEmail: quote.contact?.email || quote.customerEmail,
+            includePDF: true,
           }
-        });
+        );
 
         setEmailSending(false);
 
-        if (emailResponse.data.success) {
+        if (emailResponse.success) {
           setEmailSent(true);
           console.log('[SignatureScreen] Email sent successfully:', {
-            templateUsed: emailResponse.data.templateUsed,
-            fallbackUsed: emailResponse.data.fallbackUsed,
-            emailId: emailResponse.data.emailId
+            messageId: emailResponse.messageId,
           });
         } else {
           setEmailError('Email failed to send');
-          console.warn('[SignatureScreen] Email failed:', emailResponse.data);
+          console.warn('[SignatureScreen] Email failed:', emailResponse);
         }
       } catch (emailError) {
         setEmailSending(false);
@@ -268,29 +271,21 @@ export default function SignatureScreen() {
         day: '2-digit'
       });
 
-      console.log('[SignatureScreen] Making PATCH request to:', `/api/projects/${quote.projectId}`);
-      console.log('[SignatureScreen] With locationId from query:', user.locationId);
-      console.log('[SignatureScreen] With body data:', {
-        locationId: user.locationId,
-        signedDate: signedDate,
-        status: 'won',
-        notes: `Contract signed on ${signedDate} via iPad app. Signatures captured from consultant and customer.`
-      });
+      console.log('[SignatureScreen] Making project update request');
       
-      // Update project with signed date (triggers opportunity update)
-      const updateResponse = await api.patch(
-        `/api/projects/${quote.projectId}?locationId=${user.locationId}`, // Add locationId to query string
+      // Update project with signed date using signatureService
+      const updateResponse = await signatureService.updateProjectAfterSigning(
+        quote.projectId,
+        user.locationId,
         {
-          locationId: user.locationId, // Also in body for backward compatibility
           signedDate: signedDate,
-          status: 'won', // Update project status
-          notes: `Contract signed on ${signedDate} via iPad app. Signatures captured from consultant and customer.`
+          status: 'won',
         }
       );
 
-      console.log('[SignatureScreen] PATCH response:', updateResponse.data);
+      console.log('[SignatureScreen] Project update response:', updateResponse);
 
-      if (updateResponse.data.success) {
+      if (updateResponse) {
         setOpportunityUpdated(true);
         console.log('[SignatureScreen] Opportunity updated successfully');
         
@@ -317,12 +312,14 @@ export default function SignatureScreen() {
     if (!quote?.projectId) return;
     
     try {
-      // Just update the notes field directly, not using $push
-      await api.patch(`/api/projects/${quote.projectId}?locationId=${user.locationId}`, {
-        locationId: user.locationId,
-        notes: noteText,  // Simple string update
-        updatedAt: new Date()
-      });
+      // Update project notes using projectService
+      await projectService.update(
+        quote.projectId,
+        user.locationId,
+        {
+          notes: noteText,
+        }
+      );
       console.log('[SignatureScreen] Project note added successfully');
     } catch (error) {
       console.warn('[SignatureScreen] Failed to add project note:', error);
@@ -342,8 +339,8 @@ export default function SignatureScreen() {
     try {
       setLoading(true);
       
-      // Create payment link via API
-      const response = await api.post('/api/payments/create-link', {
+      // Create payment link via payment service
+      const response = await paymentService.createPaymentLink({
         projectId: quote.projectId || quote.project?._id,
         quoteId: quote._id,
         contactId: quote.contactId || quote.contact?._id,
@@ -354,12 +351,12 @@ export default function SignatureScreen() {
         userId: user._id
       });
       
-      if (response.data.success && response.data.paymentUrl) {
+      if (response.success && response.paymentUrl) {
         // Navigate to payment WebView
         navigation.navigate('PaymentWebView', {
-          paymentUrl: response.data.paymentUrl,
-          paymentId: response.data.paymentId,
-          amount: response.data.amount,
+          paymentUrl: response.paymentUrl,
+          paymentId: response.paymentId,
+          amount: response.amount,
           onSuccess: () => {
             // Payment completed successfully
             if (quote.project) {
@@ -397,8 +394,9 @@ export default function SignatureScreen() {
       const projectId = quote.projectId || quote.project?._id;
       
       if (projectId) {
-        await api.patch(
-          `/api/projects/${projectId}?locationId=${user.locationId}`,
+        await projectService.update(
+          projectId,
+          user.locationId,
           {
             paymentPreference: method,
             depositExpected: quote.depositAmount > 0,
@@ -413,8 +411,8 @@ export default function SignatureScreen() {
         // Existing card payment flow
         await handleCardPayment();
       } else if (method === 'check' || method === 'cash') {
-        // Create invoice (or get existing one)
-        const response = await api.post('/api/payments/create-link', {
+        // Create invoice using payment service
+        const response = await paymentService.createPaymentLink({
           projectId: quote.projectId || quote.project?._id,
           quoteId: quote._id,
           contactId: quote.contactId || quote.contact?._id,
@@ -425,26 +423,26 @@ export default function SignatureScreen() {
           userId: user._id
         });
         
-        if (response.data.success) {
+        if (response.success) {
           // Handle both new and existing invoices
-          console.log('Invoice response:', response.data);
+          console.log('Invoice response:', response);
           
           // Extract the GHL invoice ID from the URL if not provided directly
-          let ghlInvoiceId = response.data.ghlInvoiceId;
-          if (!ghlInvoiceId && response.data.paymentUrl) {
+          let ghlInvoiceId = response.ghlInvoiceId;
+          if (!ghlInvoiceId && response.paymentUrl) {
             // Extract from URL: https://updates.leadprospecting.ai/invoice/[ID]
-            const match = response.data.paymentUrl.match(/\/invoice\/([a-f0-9]+)$/);
+            const match = response.paymentUrl.match(/\/invoice\/([a-f0-9]+)$/);
             if (match) {
               ghlInvoiceId = match[1];
             }
           }
           
           // Store invoice info for photo capture
-          setManualPaymentId(response.data.paymentId);
+          setManualPaymentId(response.paymentId);
           setManualInvoiceId(ghlInvoiceId);
           setShowPhotoModal(true);
         } else {
-          throw new Error(response.data.error || 'Failed to create invoice');
+          throw new Error(response.error || 'Failed to create invoice');
         }
       }
       

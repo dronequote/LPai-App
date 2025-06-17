@@ -1,3 +1,4 @@
+// Updated: 2025-06-17
 import React, { useEffect, useState } from 'react';
 import {
   View,
@@ -18,7 +19,8 @@ import { Ionicons } from '@expo/vector-icons';
 import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import { useAuth } from '../contexts/AuthContext';
 import { useCalendar } from '../contexts/CalendarContext';
-import api from '../lib/api';
+import { appointmentService } from '../services/appointmentService';
+import { contactService } from '../services/contactService';
 import { COLORS, FONT, RADIUS, SHADOW, DROPDOWN, Z_INDEX } from '../styles/theme';
 import type { Appointment, Contact, Calendar } from '../../packages/types/dist';
 
@@ -78,8 +80,7 @@ export default function AppointmentDetailScreen() {
         setLoading(true);
         
         // Fetch appointment
-        const appointmentRes = await api.get(`/api/appointments/${appointmentId}`);
-        const appointmentData = appointmentRes.data;
+        const appointmentData = await appointmentService.getById(appointmentId, user?.locationId || '');
         setAppointment(appointmentData);
         
         // Set form fields
@@ -103,8 +104,8 @@ export default function AppointmentDetailScreen() {
         // Fetch contact if contactId exists
         if (appointmentData.contactId) {
           try {
-            const contactRes = await api.get(`/api/contacts/${appointmentData.contactId}`);
-            setContact(contactRes.data);
+            const contactData = await contactService.getById(appointmentData.contactId, user?.locationId || '');
+            setContact(contactData);
           } catch (err) {
             console.error('Failed to fetch contact:', err);
           }
@@ -119,10 +120,8 @@ export default function AppointmentDetailScreen() {
         }
 
         // Fetch all contacts for editing
-        const contactsRes = await api.get('/api/contacts', {
-          params: { locationId: user?.locationId },
-        });
-        setAllContacts(contactsRes.data);
+        const contactsData = await contactService.list(user?.locationId || '');
+        setAllContacts(contactsData);
 
       } catch (err) {
         console.error('Failed to fetch data:', err);
@@ -149,7 +148,7 @@ export default function AppointmentDetailScreen() {
       const finalDuration = duration === 'Custom' ? parseInt(customDuration) || 60 : duration;
       const endDate = new Date(date.getTime() + finalDuration * 60000);
       
-      await api.patch(`/api/appointments/${appointment._id}`, {
+      await appointmentService.update(appointment._id, user?.locationId || '', {
         title,
         notes,
         locationType,

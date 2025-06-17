@@ -1,5 +1,5 @@
 // src/screens/CalendarScreen.tsx
-// Updated: 2025-01-06
+// Updated: 2025-06-16
 // Description: Calendar screen with upcoming appointments list - using services only
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';

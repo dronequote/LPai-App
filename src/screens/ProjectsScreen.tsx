@@ -1,5 +1,5 @@
 // src/screens/ProjectsScreen.tsx
-// Updated: 2025-06-16
+// Updated: 2025-06-17
 
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
@@ -100,7 +100,8 @@ export default function ProjectsScreen() {
         console.log('[ProjectsScreen] Fetching projects with options:', options);
       }
 
-      const result = await projectService.list(user.locationId, options);
+      // Use the new API - no locationId parameter needed
+      const result = await projectService.list(options);
       
       // Ensure result is an array
       const projectsArray = Array.isArray(result) ? result : [];
@@ -162,18 +163,8 @@ export default function ProjectsScreen() {
   const loadInitialData = async () => {
     setLoading(true);
     try {
-      // Load pipelines from location settings if service is available
-      if (projectService.locationService) {
-        try {
-          const locationData = await projectService.locationService.getDetails(user!.locationId);
-          if (locationData?.pipelines && Array.isArray(locationData.pipelines)) {
-            setPipelines(locationData.pipelines);
-          }
-        } catch (error) {
-          console.error('[ProjectsScreen] Error loading pipelines:', error);
-          // Continue without pipelines
-        }
-      }
+      // Load pipelines from location settings if available
+      // TODO: Implement location service to get pipelines
       
       // Load projects
       await fetchProjects(true);
@@ -206,9 +197,9 @@ export default function ProjectsScreen() {
 
   const handleAddProject = async (projectData: any) => {
     try {
+      // BaseService adds locationId automatically
       await projectService.create({
         ...projectData,
-        locationId: user!.locationId,
         userId: user!._id || user!.userId,
       });
       
@@ -223,25 +214,19 @@ export default function ProjectsScreen() {
     }
   };
 
-  const syncPipelines = async () => {
-    if (!user?.locationId) return;
-    
-    setIsSyncingPipelines(true);
+  const handleUpdateProject = async (projectId: string, updates: any) => {
     try {
-      if (projectService.locationService?.syncPipelines) {
-        const result = await projectService.locationService.syncPipelines(user.locationId, true);
-        if (result?.success) {
-          Alert.alert('Success', 'Pipelines synced successfully!');
-          loadInitialData();
-        }
-      } else {
-        Alert.alert('Info', 'Pipeline sync not available');
-      }
+      // BaseService handles locationId automatically
+      await projectService.update(projectId, updates);
+      handleRefresh();
     } catch (error) {
-      Alert.alert('Error', 'Failed to sync pipelines');
-    } finally {
-      setIsSyncingPipelines(false);
+      Alert.alert('Error', 'Failed to update project');
     }
+  };
+
+  const syncPipelines = async () => {
+    // TODO: Implement pipeline sync when location service is available
+    Alert.alert('Info', 'Pipeline sync will be available soon');
   };
 
   // Filter projects based on search - with proper array checks
@@ -390,14 +375,7 @@ export default function ProjectsScreen() {
     <ProjectCard
       project={item}
       onPress={() => handleProjectPress(item)}
-      onStatusChange={async (newStatus) => {
-        try {
-          await projectService.update(item._id, user!.locationId, { status: newStatus });
-          handleRefresh();
-        } catch (error) {
-          Alert.alert('Error', 'Failed to update project status');
-        }
-      }}
+      onStatusChange={(newStatus) => handleUpdateProject(item._id, { status: newStatus })}
     />
   );
 
@@ -445,19 +423,17 @@ export default function ProjectsScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Projects</Text>
         <View style={styles.headerActions}>
-          {projectService.locationService && (
-            <TouchableOpacity 
-              onPress={syncPipelines}
-              style={styles.headerButton}
-              disabled={isSyncingPipelines}
-            >
-              {isSyncingPipelines ? (
-                <ActivityIndicator size="small" color={COLORS.accent} />
-              ) : (
-                <Ionicons name="sync-outline" size={24} color={COLORS.accent} />
-              )}
-            </TouchableOpacity>
-          )}
+          <TouchableOpacity 
+            onPress={syncPipelines}
+            style={styles.headerButton}
+            disabled={isSyncingPipelines}
+          >
+            {isSyncingPipelines ? (
+              <ActivityIndicator size="small" color={COLORS.accent} />
+            ) : (
+              <Ionicons name="sync-outline" size={24} color={COLORS.accent} />
+            )}
+          </TouchableOpacity>
           <TouchableOpacity 
             onPress={() => setIsAddModalVisible(true)}
             style={styles.headerButton}

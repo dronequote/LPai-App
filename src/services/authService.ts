@@ -1,371 +1,213 @@
-// services/authService.ts (COMPLETE VERSION)
-import { BaseService } from './baseService';
+// src/services/authService.ts
+import axios from 'axios';
+import { LoginCredentials, LoginResponse, User } from '@lpai/types';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { User } from '../../packages/types';
-import api from '../lib/api';
+// Import BaseService to update its auth context
+import { BaseService } from './baseService';
 
-interface LoginCredentials {
-  email: string;
-  password: string;
-}
+const API_BASE_URL = process.env.API_BASE_URL || 'https://lpai-backend-omega.vercel.app';
 
-interface LoginResponse {
-  token: string;
-  userId: string;
-  locationId: string;
-  name: string;
-  permissions: string[];
-  role: string;
-  _id: string;
-  email: string;
-  preferences?: any;
-}
+// Create axios instance
+const api = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 30000,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
 
-interface OAuthLoginResponse extends LoginResponse {
-  noEmailFound?: boolean;
-}
-
-class AuthService extends BaseService {
-  private currentUser: User | null = null;
-  private refreshTimer: NodeJS.Timeout | null = null;
-
-  /**
-   * Login with email/password
-   */
+class AuthService {
   async login(credentials: LoginCredentials): Promise<LoginResponse> {
-    const endpoint = '/api/login';
+    try {
       if (__DEV__) {
-    console.log('🔐 [authService] Login request:', {
-      endpoint,
-      credentials,
-      baseURL: api.defaults.baseURL
-    });
-  }
-    try {
-      const response = await this.post<LoginResponse>(
-        endpoint,
-        credentials,
-        {
-          cache: false,
-          offline: false, // Login must be online
-          showError: true,
-        },
-        {
-          endpoint,
-          method: 'POST',
-          entity: 'contact', // Using contact as generic
-          priority: 'high',
-        }
-      );
-
-      // Save auth data
-      await this.saveAuthData(response);
-      
-      // Set auth token on api instance
-      api.defaults.headers.common['Authorization'] = `Bearer ${response.token}`;
-      
-      // Start token refresh timer
-      this.startRefreshTimer();
-      
-      return response;
-    } catch (error) {
-      throw error;
-    }
-  }
-
-  /**
-   * OAuth login (Google)
-   */
-  async oauthLogin(email: string): Promise<OAuthLoginResponse> {
-    const endpoint = '/api/login/oauth';
-    
-    try {
-      const response = await this.post<OAuthLoginResponse>(
-        endpoint,
-        email, // Just email for OAuth
-        {
-          cache: false,
-          offline: false,
-          showError: true,
-        },
-        {
-          endpoint,
-          method: 'POST',
-          entity: 'contact',
-          priority: 'high',
-        }
-      );
-
-      // Check if user not found
-      if (response.noEmailFound) {
-        return response;
+        console.log('🔐 [authService] Login request:', {
+          endpoint: '/api/login',
+          credentials: { 
+            email: credentials.email, 
+            password: credentials.password 
+          },
+          baseURL: API_BASE_URL,
+        });
       }
 
-      // Save auth data
-      await this.saveAuthData(response);
+      const response = await api.post<LoginResponse>('/api/login', credentials);
       
-      // Set auth token
-      api.defaults.headers.common['Authorization'] = `Bearer ${response.token}`;
+      if (__DEV__) {
+        console.log('🔐 [authService] Login response received:', {
+          status: response.status,
+          hasData: !!response.data,
+          hasToken: !!response.data?.token,
+        });
+      }
+
+      const loginData = response.data;
+
+      if (!loginData.token) {
+        throw new Error('No token received from server');
+      }
+
+      // Store token and user data
+      await this.storeAuthData(loginData.token, loginData);
       
-      // Start token refresh timer
-      this.startRefreshTimer();
+      // Set auth header for future requests
+      api.defaults.headers.common['Authorization'] = `Bearer ${loginData.token}`;
       
-      return response;
-    } catch (error) {
-      throw error;
+      // IMPORTANT: Update BaseService auth context for other services
+      BaseService.setAuthContext({
+        user: loginData,
+        token: loginData.token
+      });
+
+      if (__DEV__) {
+        console.log('🔐 [authService] Login successful:', {
+          userId: loginData._id,
+          name: loginData.name,
+          role: loginData.role,
+          locationId: loginData.locationId,
+        });
+      }
+
+      return loginData;
+    } catch (error: any) {
+      console.error('❌ [authService] Login failed:', error);
+      console.error('❌ [authService] Error details:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+      });
+      
+      // Re-throw with better error messages
+      if (error.response?.status === 401) {
+        throw new Error('Invalid email or password');
+      } else if (error.response?.status === 404) {
+        throw new Error('User not found');
+      } else if (error.response?.data?.error) {
+        throw new Error(error.response.data.error);
+      } else if (error.message === 'Network Error') {
+        throw new Error('Network error. Please check your connection.');
+      } else {
+        throw new Error('Login failed. Please try again.');
+      }
     }
   }
 
-  /**
-   * Logout
-   */
   async logout(): Promise<void> {
     try {
-      // Stop refresh timer
-      this.stopRefreshTimer();
+      if (__DEV__) {
+        console.log('🔐 [authService] Logout initiated');
+      }
       
-      // Clear all stored data
-      await AsyncStorage.multiRemove([
-        '@lpai_auth_token',
-        '@lpai_user_data',
-        '@lpai_location_id',
-        '@lpai_user_id',
-      ]);
-
-      // Clear API token
+      // Clear auth header
       delete api.defaults.headers.common['Authorization'];
       
-      // Clear current user
-      this.currentUser = null;
-
-      // Clear all caches
-      await this.clearCache();
+      // Clear BaseService auth context
+      BaseService.setAuthContext(null);
       
-      // Clear sync queue
-      const { syncQueueService } = await import('./syncQueueService');
-      await syncQueueService.clearQueue();
+      // Clear local storage
+      await this.clearAuthData();
       
-      // Clear sync data
-      const { syncService } = await import('./syncService');
-      await syncService.clearSyncData();
-      
-    } catch (error) {
-      console.error('Logout error:', error);
-    }
-  }
-
-  /**
-   * Get current user
-   */
-  async getCurrentUser(): Promise<User | null> {
-    if (this.currentUser) {
-      return this.currentUser;
-    }
-
-    try {
-      const userData = await AsyncStorage.getItem('@lpai_user_data');
-      if (userData) {
-        this.currentUser = JSON.parse(userData);
-        return this.currentUser;
+      if (__DEV__) {
+        console.log('🔐 [authService] Logout complete');
       }
     } catch (error) {
-      console.error('Error getting current user:', error);
-    }
-
-    return null;
-  }
-
-  /**
-   * Check if user is authenticated
-   */
-  async isAuthenticated(): Promise<boolean> {
-    try {
-      const token = await AsyncStorage.getItem('@lpai_auth_token');
-      if (!token) return false;
-      
-      // Check if token is expired (basic check)
-      const userData = await this.getCurrentUser();
-      if (!userData) return false;
-      
-      return true;
-    } catch {
-      return false;
+      console.error('❌ [authService] Logout error:', error);
+      throw error;
     }
   }
 
-  /**
-   * Get stored auth token
-   */
-  async getToken(): Promise<string | null> {
-    try {
-      return await AsyncStorage.getItem('@lpai_auth_token');
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Get stored location ID
-   */
-  async getLocationId(): Promise<string | null> {
-    try {
-      return await AsyncStorage.getItem('@lpai_location_id');
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Get stored user ID
-   */
-  async getUserId(): Promise<string | null> {
-    try {
-      return await AsyncStorage.getItem('@lpai_user_id');
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Initialize auth (on app start)
-   */
   async initialize(): Promise<boolean> {
     try {
       const token = await this.getToken();
+      const user = await this.getCurrentUser();
       
-      if (token) {
-        // Set token on API
+      if (token && user) {
+        // Set auth header
         api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
         
-        // Load user data
-        await this.getCurrentUser();
+        // Update BaseService auth context
+        BaseService.setAuthContext({ user, token });
         
-        // Start refresh timer
-        this.startRefreshTimer();
+        if (__DEV__) {
+          console.log('🔐 [authService] Initialized with existing token');
+        }
         
         return true;
       }
-      
       return false;
     } catch (error) {
-      console.error('Auth initialization error:', error);
+      console.error('❌ [authService] Initialize error:', error);
       return false;
     }
   }
 
-  /**
-   * Refresh auth token (JWT refresh not implemented in backend yet)
-   */
-  async refreshToken(): Promise<boolean> {
+  async getCurrentUser(): Promise<User | null> {
     try {
-      // For now, just validate the token is still there
-      const token = await this.getToken();
-      return !!token;
-      
-      // When backend implements refresh:
-      // const endpoint = '/api/auth/refresh';
-      // const response = await this.post(endpoint, { token });
-      // await AsyncStorage.setItem('@lpai_auth_token', response.token);
-      // api.defaults.headers.common['Authorization'] = `Bearer ${response.token}`;
-      
+      const userString = await AsyncStorage.getItem('@lpai_user');
+      return userString ? JSON.parse(userString) : null;
     } catch (error) {
-      console.error('Token refresh error:', error);
-      return false;
+      console.error('❌ [authService] Get current user error:', error);
+      return null;
     }
   }
 
-  /**
-   * Update stored preferences (after user service updates)
-   */
+  async getToken(): Promise<string | null> {
+    try {
+      return await AsyncStorage.getItem('@lpai_token');
+    } catch (error) {
+      console.error('❌ [authService] Get token error:', error);
+      return null;
+    }
+  }
+
+  async updateStoredUser(user: User): Promise<void> {
+    try {
+      await AsyncStorage.setItem('@lpai_user', JSON.stringify(user));
+    } catch (error) {
+      console.error('❌ [authService] Update stored user error:', error);
+      throw error;
+    }
+  }
+
   async updateStoredPreferences(preferences: any): Promise<void> {
     try {
-      const userData = await AsyncStorage.getItem('@lpai_user_data');
-      if (userData) {
-        const user = JSON.parse(userData);
+      const user = await this.getCurrentUser();
+      if (user) {
         user.preferences = preferences;
-        
-        await AsyncStorage.setItem('@lpai_user_data', JSON.stringify(user));
-        this.currentUser = user;
+        await this.updateStoredUser(user);
       }
     } catch (error) {
-      console.error('Error updating stored preferences:', error);
+      console.error('❌ [authService] Update stored preferences error:', error);
+      throw error;
     }
   }
 
-  /**
-   * Save auth data to storage
-   */
-  private async saveAuthData(data: LoginResponse): Promise<void> {
-    const user: User = {
-      _id: data._id,
-      userId: data.userId,
-      name: data.name,
-      email: data.email,
-      role: data.role,
-      locationId: data.locationId,
-      permissions: data.permissions,
-      preferences: data.preferences,
-    };
-
-    // Save all auth data
-    await AsyncStorage.multiSet([
-      ['@lpai_auth_token', data.token],
-      ['@lpai_user_data', JSON.stringify(user)],
-      ['@lpai_location_id', data.locationId],
-      ['@lpai_user_id', data.userId],
-    ]);
-
-    this.currentUser = user;
-  }
-
-  /**
-   * Handle session expiry
-   */
-  async handleSessionExpired(): Promise<void> {
-    await this.logout();
-    // The app should navigate to login screen
-    // This would be handled by the auth context/provider
-  }
-
-  /**
-   * Start token refresh timer
-   */
-  private startRefreshTimer(): void {
-    // Refresh token every 6 hours
-    this.refreshTimer = setInterval(() => {
-      this.refreshToken();
-    }, 6 * 60 * 60 * 1000);
-  }
-
-  /**
-   * Stop token refresh timer
-   */
-  private stopRefreshTimer(): void {
-    if (this.refreshTimer) {
-      clearInterval(this.refreshTimer);
-      this.refreshTimer = null;
+  private async storeAuthData(token: string, user: LoginResponse): Promise<void> {
+    try {
+      await AsyncStorage.multiSet([
+        ['@lpai_token', token],
+        ['@lpai_user', JSON.stringify(user)],
+      ]);
+      
+      if (__DEV__) {
+        console.log('🔐 [authService] Auth data stored successfully');
+      }
+    } catch (error) {
+      console.error('❌ [authService] Store auth data error:', error);
+      throw error;
     }
   }
 
-  /**
-   * Check if user has permission
-   */
-  hasPermission(permission: string): boolean {
-    return this.currentUser?.permissions?.includes(permission) || false;
-  }
-
-  /**
-   * Check if user has role
-   */
-  hasRole(role: string): boolean {
-    return this.currentUser?.role === role;
-  }
-
-  /**
-   * Is admin user
-   */
-  isAdmin(): boolean {
-    return this.hasRole('admin');
+  private async clearAuthData(): Promise<void> {
+    try {
+      await AsyncStorage.multiRemove(['@lpai_token', '@lpai_user']);
+      
+      if (__DEV__) {
+        console.log('🔐 [authService] Auth data cleared');
+      }
+    } catch (error) {
+      console.error('❌ [authService] Clear auth data error:', error);
+      throw error;
+    }
   }
 }
 
