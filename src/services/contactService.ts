@@ -32,18 +32,28 @@ class ContactService extends BaseService {
   /**
    * Get contacts from MongoDB (already synced from GHL)
    */
+// Fix for src/services/contactService.ts
+// Update the list method to properly pass locationId as a query parameter
+
   async list(
     locationId: string,
     options: ContactListOptions = {}
   ): Promise<Contact[]> {
-    // Using YOUR endpoint: /api/contacts/search/lpai
+    // Build params object
+    const params: any = { locationId };
+    
+    if (options.limit) params.limit = options.limit;
+    if (options.offset) params.offset = options.offset;
+    if (options.search) params.search = options.search;
+    if (options.includeProjects) params.includeProjects = options.includeProjects;
+    
     const endpoint = '/api/contacts/search/lpai';
     
     return this.get<Contact[]>(
       endpoint,
       {
+        params, // Pass params in the config object
         cache: { priority: 'high', ttl: 10 * 60 * 1000 }, // 10 min
-        locationId,
       },
       {
         endpoint,
@@ -173,13 +183,15 @@ class ContactService extends BaseService {
   async getWithProjects(
     locationId: string
   ): Promise<Contact[]> {
+    // The endpoint expects locationId as a query parameter
+    const params = { locationId };
     const endpoint = '/api/contacts/withProjects';
     
     return this.get<Contact[]>(
       endpoint,
       {
-        cache: { priority: 'medium' },
-        locationId,
+        params, // Pass params in the config object
+        cache: { priority: 'medium', ttl: 10 * 60 * 1000 }, // 10 min
       },
       {
         endpoint,

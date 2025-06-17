@@ -1,24 +1,30 @@
+// src/components/AddProjectForm.tsx
+// Updated: 2025-01-06
+// Fixed contacts filter error and added service integration
+
 import React, { useState, useEffect } from 'react';
 import {
-  Modal,
   View,
   Text,
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  FlatList,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
-  Dimensions,
+  Modal,
+  FlatList,
   Animated,
+  Dimensions,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { PanGestureHandler, State } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
-import api from '../lib/api';
-import { COLORS, FONT, RADIUS, SHADOW } from '../styles/theme';
+import { contactService } from '../services/contactService';
+import { locationService } from '../services/locationService';
+import { COLORS, FONT, RADIUS, SHADOW, INPUT } from '../styles/theme';
 import type { Contact, Pipeline } from '../../packages/types/dist';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -27,46 +33,51 @@ const MODAL_HEIGHT = SCREEN_HEIGHT * 0.85;
 interface Props {
   visible: boolean;
   onClose: () => void;
-  onSubmit: (data: any) => void;
-  onAddContactPress: () => void;
+  onSubmit: (projectData: any) => Promise<void>;
+  contacts?: Contact[]; // Accept contacts as prop
   preSelectedContact?: Contact;
-  isModal?: boolean; // New prop to control modal behavior
+  isModal?: boolean;
 }
 
 export default function AddProjectForm({
   visible,
   onClose,
   onSubmit,
-  onAddContactPress,
+  contacts: propContacts, // Rename to avoid conflict
   preSelectedContact,
-  isModal = false, // Default to false for backward compatibility
+  isModal = false,
 }: Props) {
   const { user } = useAuth();
   const locationId = user?.locationId;
 
-  // Animation
+  // Animation states for modal
   const [translateY] = useState(new Animated.Value(MODAL_HEIGHT));
   const [overlayOpacity] = useState(new Animated.Value(0));
 
-  // Form state
-  const [contacts, setContacts] = useState<Contact[]>([]);
-  const [contactSearch, setContactSearch] = useState('');
-  const [filteredContacts, setFilteredContacts] = useState<Contact[]>([]);
-  const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
-  const [showContactSearch, setShowContactSearch] = useState(false);
-
+  // Form states
+  const [contacts, setContacts] = useState<Contact[]>(propContacts || []);
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
+  const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
+  const [filteredContacts, setFilteredContacts] = useState<Contact[]>([]);
+  const [contactSearch, setContactSearch] = useState('');
+  const [showContactSearch, setShowContactSearch] = useState(false);
+  
+  const [title, setTitle] = useState('');
+  const [notes, setNotes] = useState('');
+  const [scopeOfWork, setScopeOfWork] = useState('');
+  const [status, setStatus] = useState('open');
   const [selectedPipelineId, setSelectedPipelineId] = useState('');
   const [selectedPipelineName, setSelectedPipelineName] = useState('');
   const [showPipelineDropdown, setShowPipelineDropdown] = useState(false);
-
-  const [title, setTitle] = useState('');
-  const [status, setStatus] = useState('Open');
-  const [notes, setNotes] = useState('');
-  const [scopeOfWork, setScopeOfWork] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // Gesture handlers
+  // Handle add contact press
+  const onAddContactPress = () => {
+    // Navigate to add contact screen or show modal
+    console.log('Add new contact pressed');
+  };
+
+  // Gesture event handlers for modal
   const onGestureEvent = Animated.event(
     [{ nativeEvent: { translationY: translateY } }],
     { useNativeDriver: true }
@@ -104,7 +115,7 @@ export default function AddProjectForm({
     });
   };
 
-  // Setup when modal opens (only for modal mode)
+  // Setup when modal opens
   useEffect(() => {
     if (visible && isModal) {
       // Reset form
@@ -157,33 +168,44 @@ export default function AddProjectForm({
     }
   }, [visible, preSelectedContact, isModal]);
 
-  // Load contacts
+  // Update contacts when prop changes
+  useEffect(() => {
+    if (propContacts && propContacts.length > 0) {
+      setContacts(propContacts);
+    }
+  }, [propContacts]);
+
+  // Load contacts using service
   const loadContacts = async () => {
+    // If contacts were passed as props, use them
+    if (propContacts && propContacts.length > 0) {
+      setContacts(propContacts);
+      return;
+    }
+    
+    // Otherwise load from API
     if (!locationId) return;
     try {
-      const res = await api.get('/api/contacts', {
-        params: { locationId },
-      });
-      setContacts(res.data);
+      const contactsData = await contactService.list(locationId, { limit: 100 });
+      setContacts(Array.isArray(contactsData) ? contactsData : []);
     } catch (err) {
       console.error('Failed to fetch contacts:', err);
+      setContacts([]);
     }
   };
 
-  // Load pipelines
+  // Load pipelines using service
   const loadPipelines = async () => {
     if (!locationId) return;
     try {
-      const locRes = await api.get('/api/locations/byLocation', {
-        params: { locationId },
-      });
-      const mongoPipes = locRes.data?.pipelines || [];
-      setPipelines(mongoPipes);
+      const pipelinesData = await locationService.getPipelines(locationId);
+      const pipelines = Array.isArray(pipelinesData) ? pipelinesData : [];
+      setPipelines(pipelines);
       
       // Auto-select first pipeline
-      if (mongoPipes.length) {
-        setSelectedPipelineId(mongoPipes[0].id);
-        setSelectedPipelineName(mongoPipes[0].name);
+      if (pipelines.length > 0) {
+        setSelectedPipelineId(pipelines[0].id);
+        setSelectedPipelineName(pipelines[0].name);
       }
     } catch (err) {
       console.error('Failed to fetch pipelines:', err);
@@ -191,8 +213,14 @@ export default function AddProjectForm({
     }
   };
 
-  // Filter contacts
+  // Filter contacts - FIXED with safety check
   useEffect(() => {
+    // Ensure contacts is an array before filtering
+    if (!Array.isArray(contacts)) {
+      setFilteredContacts([]);
+      return;
+    }
+    
     const q = contactSearch.toLowerCase();
     const matches = contacts.filter(
       (c) =>
@@ -378,80 +406,69 @@ export default function AddProjectForm({
               <TouchableOpacity
                 style={[
                   styles.dropdown,
-                  selectedPipelineId ? styles.inputValid : null
+                  selectedPipelineId ? styles.inputValid : null,
+                  showPipelineDropdown ? styles.inputActive : null
                 ]}
                 onPress={() => setShowPipelineDropdown(!showPipelineDropdown)}
               >
-                <Text style={[
-                  styles.dropdownText,
-                  !selectedPipelineId && styles.placeholderText
-                ]}>
-                  {selectedPipelineName || 'Select Pipeline'}
-                </Text>
                 <View style={styles.dropdownRight}>
-                  {selectedPipelineId && (
-                    <Ionicons name="checkmark-circle" size={16} color="#27AE60" style={{ marginRight: 8 }} />
-                  )}
+                  <Text style={styles.dropdownText}>
+                    {selectedPipelineName || 'Select Pipeline'}
+                  </Text>
                   <Ionicons 
                     name={showPipelineDropdown ? "chevron-up" : "chevron-down"} 
-                    size={20} 
+                    size={24} 
                     color={COLORS.textGray} 
                   />
                 </View>
               </TouchableOpacity>
             ) : (
-              <View style={styles.noPipelinesContainer}>
-                <Text style={styles.noPipelinesText}>No pipelines found</Text>
-              </View>
+              <Text style={styles.noPipelinesText}>
+                No pipelines available. Please sync from GoHighLevel.
+              </Text>
             )}
+            
             {showPipelineDropdown && pipelines.length > 0 && (
               <View style={styles.dropdownList}>
-                <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false}>
-                  {pipelines.map((pipeline) => (
-                    <TouchableOpacity
-                      key={pipeline.id}
-                      style={styles.dropdownItem}
-                      onPress={() => handlePipelineChange(pipeline)}
-                    >
-                      <Text style={styles.dropdownItemText}>{pipeline.name}</Text>
-                      {pipeline.id === selectedPipelineId && (
-                        <Ionicons name="checkmark" size={16} color={COLORS.accent} />
-                      )}
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
+                {pipelines.map((pipeline) => (
+                  <TouchableOpacity
+                    key={pipeline.id}
+                    style={styles.dropdownOption}
+                    onPress={() => handlePipelineChange(pipeline)}
+                  >
+                    <Text style={styles.dropdownOptionText}>{pipeline.name}</Text>
+                    {selectedPipelineId === pipeline.id && (
+                      <Ionicons name="checkmark" size={20} color={COLORS.accent} />
+                    )}
+                  </TouchableOpacity>
+                ))}
               </View>
             )}
           </View>
 
-          {/* Project Title */}
+          {/* Title */}
           <View style={styles.section}>
             <Text style={styles.label}>
-              Project Title <Text style={styles.required}>*</Text>
+              Title <Text style={styles.required}>*</Text>
             </Text>
             <TextInput
               style={[
                 styles.input,
-                title.length > 0 ? styles.inputValid : null
+                title.trim() ? styles.inputValid : null
               ]}
-              placeholder="Kitchen remodel, bathroom renovation, etc."
+              placeholder="Project title (e.g., Kitchen Remodel)"
               value={title}
               onChangeText={setTitle}
               placeholderTextColor={COLORS.textGray}
             />
-            {title.length > 0 && (
-              <View style={styles.inputValidation}>
-                <Ionicons name="checkmark-circle" size={16} color="#27AE60" />
-              </View>
-            )}
           </View>
 
           {/* Scope of Work */}
           <View style={styles.section}>
             <Text style={styles.label}>Scope of Work</Text>
             <TextInput
-              style={styles.textArea}
-              placeholder="Describe the scope of work"
+              style={[styles.input, styles.textArea]}
+              placeholder="Describe the work to be done..."
               value={scopeOfWork}
               onChangeText={setScopeOfWork}
               multiline
@@ -465,8 +482,8 @@ export default function AddProjectForm({
           <View style={styles.section}>
             <Text style={styles.label}>Notes</Text>
             <TextInput
-              style={styles.textArea}
-              placeholder="Optional notes..."
+              style={[styles.input, styles.textArea]}
+              placeholder="Additional notes..."
               value={notes}
               onChangeText={setNotes}
               multiline
@@ -476,51 +493,53 @@ export default function AddProjectForm({
             />
           </View>
 
-          {/* Bottom spacing for action bar */}
-          <View style={{ height: 100 }} />
+          {/* Bottom spacing */}
+          <View style={{ height: 20 }} />
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Bottom Action Bar */}
-      <View style={styles.actionBar}>
-        <TouchableOpacity style={styles.cancelButton} onPress={onClose}>
+      {/* Footer Buttons */}
+      <View style={styles.footer}>
+        <TouchableOpacity
+          style={[styles.button, styles.cancelButton]}
+          onPress={isModal ? handleClose : onClose}
+        >
           <Text style={styles.cancelButtonText}>Cancel</Text>
         </TouchableOpacity>
-        
-        <TouchableOpacity 
+        <TouchableOpacity
           style={[
-            styles.saveButton,
-            !isFormValid() ? styles.saveButtonDisabled : styles.saveButtonEnabled
-          ]} 
+            styles.button,
+            styles.submitButton,
+            (!isFormValid() || submitting) && styles.submitButtonDisabled
+          ]}
           onPress={handleSubmit}
           disabled={!isFormValid() || submitting}
         >
-          <Text style={[
-            styles.saveButtonText,
-            !isFormValid() ? styles.saveButtonTextDisabled : styles.saveButtonTextEnabled
-          ]}>
-            {submitting ? 'Creating...' : 'Create Project'}
-          </Text>
+          {submitting ? (
+            <ActivityIndicator color="#fff" size="small" />
+          ) : (
+            <Text style={styles.submitButtonText}>Create Project</Text>
+          )}
         </TouchableOpacity>
       </View>
     </>
   );
 
-  // Return modal version or content only version
+  // For modal mode
   if (isModal) {
     return (
       <Modal
         visible={visible}
         transparent
         animationType="none"
-        onRequestClose={onClose}
+        onRequestClose={handleClose}
       >
         {/* Overlay */}
         <Animated.View style={[styles.overlay, { opacity: overlayOpacity }]}>
           <TouchableOpacity
             style={StyleSheet.absoluteFill}
             activeOpacity={1}
-            onPress={onClose}
+            onPress={handleClose}
           />
         </Animated.View>
 
@@ -544,17 +563,18 @@ export default function AddProjectForm({
         </PanGestureHandler>
       </Modal>
     );
-  } else {
-    // Return just the content for use in existing modals
-    return (
-      <View style={styles.contentOnly}>
-        {renderFormContent()}
-      </View>
-    );
   }
+
+  // For non-modal mode
+  return (
+    <SafeAreaView style={styles.nonModalContainer}>
+      {renderFormContent()}
+    </SafeAreaView>
+  );
 }
 
 const styles = StyleSheet.create({
+  // Modal styles
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -565,24 +585,33 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: MODAL_HEIGHT,
-    backgroundColor: COLORS.background,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    backgroundColor: COLORS.white,
+    borderTopLeftRadius: RADIUS.large,
+    borderTopRightRadius: RADIUS.large,
+    ...SHADOW.large,
   },
   modalContent: {
     flex: 1,
   },
   handleContainer: {
     alignItems: 'center',
-    paddingTop: 8,
+    paddingTop: 12,
     paddingBottom: 4,
   },
   handle: {
-    width: 40,
+    width: 36,
     height: 4,
-    backgroundColor: COLORS.textLight,
+    backgroundColor: COLORS.border,
     borderRadius: 2,
   },
+  
+  // Non-modal container
+  nonModalContainer: {
+    flex: 1,
+    backgroundColor: COLORS.white,
+  },
+  
+  // Common styles
   header: {
     alignItems: 'center',
     paddingHorizontal: 20,
@@ -632,26 +661,11 @@ const styles = StyleSheet.create({
     borderColor: '#27AE60',
     borderWidth: 2,
   },
-  inputValidation: {
-    position: 'absolute',
-    right: 12,
-    top: 40,
-  },
   textArea: {
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: RADIUS.input,
-    backgroundColor: COLORS.card,
-    padding: 12,
-    fontSize: FONT.input,
-    color: COLORS.textDark,
     minHeight: 100,
     textAlignVertical: 'top',
   },
-  placeholderText: {
-    color: COLORS.textGray,
-  },
-
+  
   // Contact styles
   contactList: {
     backgroundColor: COLORS.card,
@@ -736,7 +750,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: COLORS.accent,
   },
-
+  
   // Dropdown styles
   dropdown: {
     borderWidth: 1,
@@ -752,6 +766,8 @@ const styles = StyleSheet.create({
   dropdownRight: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
+    justifyContent: 'space-between',
   },
   dropdownText: {
     fontSize: FONT.input,
@@ -767,86 +783,64 @@ const styles = StyleSheet.create({
     maxHeight: 200,
     ...SHADOW.card,
   },
-  dropdownItem: {
+  dropdownOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     padding: 12,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
   },
-  dropdownItemText: {
+  dropdownOptionText: {
     fontSize: FONT.input,
     color: COLORS.textDark,
-    flex: 1,
-  },
-  noPipelinesContainer: {
-    padding: 16,
-    backgroundColor: COLORS.card,
-    borderRadius: RADIUS.input,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    alignItems: 'center',
   },
   noPipelinesText: {
     fontSize: FONT.input,
-    color: COLORS.textLight,
+    color: COLORS.textGray,
     fontStyle: 'italic',
+    padding: 12,
+    textAlign: 'center',
   },
-
-  // Action bar styles
-  actionBar: {
+  
+  // Footer styles
+  footer: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: COLORS.card,
+    padding: 20,
+    paddingBottom: Platform.OS === 'ios' ? 30 : 20,
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
-    ...SHADOW.card,
+    backgroundColor: COLORS.white,
+  },
+  button: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: RADIUS.input,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 48,
   },
   cancelButton: {
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: RADIUS.button,
-    backgroundColor: COLORS.background,
+    backgroundColor: COLORS.card,
+    marginRight: 10,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  cancelButtonText: {
-    fontSize: FONT.input,
-    fontWeight: '600',
-    color: COLORS.textGray,
-  },
-  saveButton: {
-    flex: 1,
-    marginLeft: 12,
-    paddingVertical: 14,
-    borderRadius: RADIUS.button,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  saveButtonEnabled: {
+  submitButton: {
     backgroundColor: COLORS.accent,
+    marginLeft: 10,
   },
-  saveButtonDisabled: {
-    backgroundColor: COLORS.border,
+  submitButtonDisabled: {
+    opacity: 0.5,
   },
-  saveButtonText: {
-    fontSize: FONT.input,
+  cancelButtonText: {
+    fontSize: FONT.button,
     fontWeight: '600',
+    color: COLORS.textDark,
   },
-  saveButtonTextEnabled: {
-    color: '#fff',
-  },
-  saveButtonTextDisabled: {
-    color: COLORS.textLight,
-  },
-
-  // Content-only mode (for use in existing modals)
-  contentOnly: {
-    flex: 1,
-    backgroundColor: COLORS.background,
+  submitButtonText: {
+    fontSize: FONT.button,
+    fontWeight: '600',
+    color: COLORS.white,
   },
 });

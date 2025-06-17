@@ -1,4 +1,6 @@
-// services/appointmentService.ts
+// src/services/appointmentService.ts
+// Updated: 2025-01-06
+
 import { BaseService } from './baseService';
 import { Appointment, Contact, Project, Calendar } from '../../packages/types';
 
@@ -67,11 +69,11 @@ class AppointmentService extends BaseService {
     return this.get<Appointment[]>(
       endpoint,
       {
+        params,
         cache: { 
           priority: 'high', 
-          ttl: 5 * 60 * 1000 // 5 min - appointments change frequently
+          ttl: 5 * 60 * 1000 
         },
-        locationId,
       },
       {
         endpoint,
@@ -79,168 +81,6 @@ class AppointmentService extends BaseService {
         entity: 'appointment',
       }
     );
-  }
-
-  /**
-   * Get single appointment details
-   */
-  async getDetails(
-    appointmentId: string,
-    options?: { source?: 'local' | 'ghl' }
-  ): Promise<Appointment> {
-    const params = options?.source ? `?source=${options.source}` : '';
-    const endpoint = `/api/appointments/${appointmentId}${params}`;
-    
-    return this.get<Appointment>(
-      endpoint,
-      {
-        cache: { priority: 'high' },
-      },
-      {
-        endpoint,
-        method: 'GET',
-        entity: 'appointment',
-      }
-    );
-  }
-
-  /**
-   * Create appointment - Creates in MongoDB & GHL
-   */
-  async create(
-    data: CreateAppointmentInput
-  ): Promise<Appointment> {
-    const endpoint = '/api/appointments';
-    
-    // Prepare appointment data
-    const appointmentData = {
-      ...data,
-      time: data.start, // Legacy field some endpoints expect
-      duration: data.duration || 60, // Default 60 minutes
-    };
-    
-    const newAppointment = await this.post<any>(
-      endpoint,
-      appointmentData,
-      {
-        offline: true,
-      },
-      {
-        endpoint,
-        method: 'POST',
-        entity: 'appointment',
-        priority: 'high',
-      }
-    );
-    
-    // Clear cache for the day
-    const date = new Date(data.start).toISOString().split('T')[0];
-    await this.clearCache(`@lpai_cache_GET_/api/appointments_.*${date}`);
-    
-    return newAppointment.appointment || newAppointment;
-  }
-
-  /**
-   * Update appointment - Updates MongoDB & GHL
-   */
-  async update(
-    appointmentId: string,
-    data: UpdateAppointmentInput
-  ): Promise<Appointment> {
-    const endpoint = `/api/appointments/${appointmentId}`;
-    
-    const updated = await this.patch<Appointment>(
-      endpoint,
-      data,
-      {
-        offline: true,
-      },
-      {
-        endpoint,
-        method: 'PATCH',
-        entity: 'appointment',
-        priority: 'high',
-      }
-    );
-    
-    // Update cache
-    const cacheKey = `@lpai_cache_GET_/api/appointments/${appointmentId}`;
-    await this.cacheService.set(cacheKey, updated, { priority: 'high' });
-    
-    return updated;
-  }
-
-  /**
-   * Cancel appointment
-   */
-  async cancel(
-    appointmentId: string,
-    reason?: string
-  ): Promise<void> {
-    await this.update(appointmentId, {
-      status: 'cancelled',
-      notes: reason ? `Cancelled: ${reason}` : undefined,
-    });
-    
-    // Clear related caches
-    await this.clearCache(`@lpai_cache_GET_/api/appointments/${appointmentId}`);
-  }
-
-  /**
-   * Reschedule appointment
-   */
-  async reschedule(
-    appointmentId: string,
-    data: RescheduleInput
-  ): Promise<Appointment> {
-    return this.update(appointmentId, {
-      start: data.start,
-      end: data.end,
-      status: 'rescheduled',
-      notes: data.reason ? `Rescheduled: ${data.reason}` : undefined,
-    });
-  }
-
-  /**
-   * Mark appointment as completed
-   */
-  async complete(
-    appointmentId: string,
-    notes?: string
-  ): Promise<Appointment> {
-    return this.update(appointmentId, {
-      status: 'completed',
-      notes: notes || 'Appointment completed',
-    });
-  }
-
-  /**
-   * Mark as no-show
-   */
-  async markNoShow(
-    appointmentId: string
-  ): Promise<Appointment> {
-    return this.update(appointmentId, {
-      status: 'no_show',
-      notes: 'Customer did not show up',
-    });
-  }
-
-  /**
-   * Get appointments by date range
-   */
-  async getByDateRange(
-    locationId: string,
-    start: Date | string,
-    end: Date | string,
-    options?: { userId?: string; calendarId?: string }
-  ): Promise<Appointment[]> {
-    return this.list(locationId, {
-      start,
-      end,
-      userId: options?.userId,
-      calendarId: options?.calendarId,
-    });
   }
 
   /**
@@ -256,12 +96,212 @@ class AppointmentService extends BaseService {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
     
-    return this.getByDateRange(
-      locationId,
-      today.toISOString(),
-      tomorrow.toISOString(),
-      { userId }
+    const options: AppointmentListOptions = {
+      start: today.toISOString(),
+      end: tomorrow.toISOString(),
+    };
+    
+    if (userId) {
+      options.userId = userId;
+    }
+    
+    if (__DEV__) {
+      console.log('[AppointmentService] Getting today\'s appointments:', {
+        locationId,
+        userId,
+        start: options.start,
+        end: options.end,
+      });
+    }
+    
+    return this.list(locationId, options);
+  }
+
+  /**
+   * Get single appointment details
+   */
+  async getDetails(
+    appointmentId: string,
+    options?: { source?: 'local' | 'ghl' }
+  ): Promise<Appointment> {
+    const params = options?.source ? { source: options.source } : {};
+    const endpoint = `/api/appointments/${appointmentId}`;
+    
+    return this.get<Appointment>(
+      endpoint,
+      {
+        params,
+        cache: { priority: 'high' },
+      },
+      {
+        endpoint,
+        method: 'GET',
+        entity: 'appointment',
+      }
     );
+  }
+
+  /**
+   * Create new appointment
+   */
+  async create(data: CreateAppointmentInput): Promise<Appointment> {
+    const endpoint = '/api/appointments';
+    
+    const newAppointment = await this.post<Appointment>(
+      endpoint,
+      data,
+      {
+        locationId: data.locationId,
+      },
+      {
+        endpoint,
+        method: 'POST',
+        entity: 'appointment',
+      }
+    );
+
+    // Clear list cache
+    await this.clearListCache(data.locationId);
+    
+    return newAppointment;
+  }
+
+  /**
+   * Update appointment
+   */
+  async update(
+    appointmentId: string,
+    data: UpdateAppointmentInput,
+    locationId: string
+  ): Promise<Appointment> {
+    const endpoint = `/api/appointments/${appointmentId}`;
+    
+    const updated = await this.patch<Appointment>(
+      endpoint,
+      { ...data, locationId },
+      {},
+      {
+        endpoint,
+        method: 'PATCH',
+        entity: 'appointment',
+      }
+    );
+
+    // Clear caches
+    await this.clearListCache(locationId);
+    await this.clearDetailsCache(appointmentId);
+    
+    return updated;
+  }
+
+  /**
+   * Reschedule appointment
+   */
+  async reschedule(
+    appointmentId: string,
+    data: RescheduleInput,
+    locationId: string
+  ): Promise<Appointment> {
+    const endpoint = `/api/appointments/${appointmentId}/reschedule`;
+    
+    const updated = await this.post<Appointment>(
+      endpoint,
+      { ...data, locationId },
+      {},
+      {
+        endpoint,
+        method: 'POST',
+        entity: 'appointment',
+      }
+    );
+
+    // Clear caches
+    await this.clearListCache(locationId);
+    await this.clearDetailsCache(appointmentId);
+    
+    return updated;
+  }
+
+  /**
+   * Cancel appointment
+   */
+  async cancel(
+    appointmentId: string,
+    reason: string,
+    locationId: string
+  ): Promise<Appointment> {
+    const endpoint = `/api/appointments/${appointmentId}/cancel`;
+    
+    const updated = await this.post<Appointment>(
+      endpoint,
+      { reason, locationId },
+      {},
+      {
+        endpoint,
+        method: 'POST',
+        entity: 'appointment',
+      }
+    );
+
+    // Clear caches
+    await this.clearListCache(locationId);
+    await this.clearDetailsCache(appointmentId);
+    
+    return updated;
+  }
+
+  /**
+   * Complete appointment
+   */
+  async complete(
+    appointmentId: string,
+    notes: string,
+    locationId: string
+  ): Promise<Appointment> {
+    const endpoint = `/api/appointments/${appointmentId}/complete`;
+    
+    const updated = await this.post<Appointment>(
+      endpoint,
+      { notes, locationId },
+      {},
+      {
+        endpoint,
+        method: 'POST',
+        entity: 'appointment',
+      }
+    );
+
+    // Clear caches
+    await this.clearListCache(locationId);
+    await this.clearDetailsCache(appointmentId);
+    
+    return updated;
+  }
+
+  /**
+   * Delete appointment
+   */
+  async deleteAppointment(
+    appointmentId: string,
+    locationId: string
+  ): Promise<void> {
+    const endpoint = `/api/appointments/${appointmentId}`;
+    
+    await this.delete<void>(
+      endpoint,
+      {
+        params: { locationId },
+      },
+      {
+        endpoint,
+        method: 'DELETE',
+        entity: 'appointment',
+      }
+    );
+
+    // Clear caches
+    await this.clearListCache(locationId);
+    await this.clearDetailsCache(appointmentId);
   }
 
   /**
@@ -269,28 +309,12 @@ class AppointmentService extends BaseService {
    */
   async getByContact(
     contactId: string,
-    locationId: string,
-    options?: { upcoming?: boolean }
+    locationId: string
   ): Promise<Appointment[]> {
-    const allAppointments = await this.list(locationId, {
-      limit: 100, // Get more appointments
+    return this.list(locationId, { 
+      contactId,
+      limit: 50,
     });
-    
-    // Filter by contact
-    let filtered = allAppointments.filter(apt => apt.contactId === contactId);
-    
-    // If upcoming only, filter future appointments
-    if (options?.upcoming) {
-      const now = new Date();
-      filtered = filtered.filter(apt => new Date(apt.start) > now);
-    }
-    
-    // Sort by date
-    filtered.sort((a, b) => 
-      new Date(a.start).getTime() - new Date(b.start).getTime()
-    );
-    
-    return filtered;
   }
 
   /**
@@ -300,107 +324,106 @@ class AppointmentService extends BaseService {
     projectId: string,
     locationId: string
   ): Promise<Appointment[]> {
-    const allAppointments = await this.list(locationId, {
-      limit: 100,
-    });
+    const endpoint = `/api/projects/${projectId}/appointments`;
     
-    return allAppointments.filter(apt => apt.projectId === projectId);
-  }
-
-  /**
-   * Sync appointments from GHL
-   */
-  async syncFromGHL(
-    locationId: string,
-    options?: { 
-      startDate?: string; 
-      endDate?: string; 
-      fullSync?: boolean 
-    }
-  ): Promise<{ synced: number; errors: number }> {
-    const endpoint = '/api/sync/appointments';
-    
-    const result = await this.post<any>(
+    return this.get<Appointment[]>(
       endpoint,
-      { 
-        locationId,
-        ...options,
-      },
       {
-        showError: false,
+        params: { locationId },
+        cache: { priority: 'medium', ttl: 5 * 60 * 1000 },
       },
       {
         endpoint,
-        method: 'POST',
+        method: 'GET',
         entity: 'appointment',
-        priority: 'low',
       }
     );
-    
-    // Clear appointment caches after sync
-    await this.clearCache('@lpai_cache_GET_/api/appointments');
-    
-    return {
-      synced: (result.created || 0) + (result.updated || 0),
-      errors: result.errors || 0,
-    };
   }
 
   /**
-   * Get appointment statistics
+   * Get upcoming appointments for a user
    */
-  async getStats(
-    locationId: string,
-    dateRange?: { start: string; end: string }
-  ): Promise<{
-    total: number;
-    completed: number;
-    cancelled: number;
-    noShow: number;
-    upcoming: number;
-  }> {
-    const appointments = await this.list(locationId, dateRange);
-    const now = new Date();
-    
-    return {
-      total: appointments.length,
-      completed: appointments.filter(a => a.status === 'completed').length,
-      cancelled: appointments.filter(a => a.status === 'cancelled').length,
-      noShow: appointments.filter(a => a.status === 'no_show').length,
-      upcoming: appointments.filter(a => new Date(a.start) > now).length,
-    };
-  }
-
-  /**
-   * Check for appointment conflicts
-   */
-  async checkConflicts(
-    locationId: string,
+  async getUpcoming(
     userId: string,
-    start: string,
-    end: string,
-    excludeAppointmentId?: string
+    locationId: string,
+    days: number = 7
   ): Promise<Appointment[]> {
-    const appointments = await this.list(locationId, {
+    const start = new Date();
+    const end = new Date();
+    end.setDate(end.getDate() + days);
+    
+    return this.list(locationId, {
       userId,
-      start: new Date(new Date(start).getTime() - 24 * 60 * 60 * 1000).toISOString(), // Day before
-      end: new Date(new Date(end).getTime() + 24 * 60 * 60 * 1000).toISOString(), // Day after
+      start: start.toISOString(),
+      end: end.toISOString(),
+      status: 'scheduled',
     });
+  }
+
+  /**
+   * Get appointment availability
+   */
+  async getAvailability(
+    userId: string,
+    calendarId: string,
+    date: Date,
+    locationId: string
+  ): Promise<{
+    slots: Array<{ start: string; end: string; available: boolean }>;
+  }> {
+    const endpoint = `/api/appointments/availability`;
     
-    const startTime = new Date(start).getTime();
-    const endTime = new Date(end).getTime();
+    return this.get<any>(
+      endpoint,
+      {
+        params: {
+          userId,
+          calendarId,
+          date: date.toISOString().split('T')[0],
+          locationId,
+        },
+      }
+    );
+  }
+
+  /**
+   * Clear list cache
+   */
+  private async clearListCache(locationId: string): Promise<void> {
+    const prefix = `@lpai_cache_GET_/api/appointments_`;
+    await this.cacheService.clear(prefix);
+  }
+
+  /**
+   * Clear details cache
+   */
+  private async clearDetailsCache(appointmentId: string): Promise<void> {
+    const prefix = `@lpai_cache_GET_/api/appointments/${appointmentId}`;
+    await this.cacheService.clear(prefix);
+  }
+
+  /**
+   * Get calendars for location
+   */
+  async getCalendars(locationId: string): Promise<Calendar[]> {
+    const endpoint = `/api/locations/${locationId}/calendars`;
     
-    return appointments.filter(apt => {
-      if (excludeAppointmentId && apt._id === excludeAppointmentId) return false;
-      if (apt.status === 'cancelled') return false;
-      
-      const aptStart = new Date(apt.start).getTime();
-      const aptEnd = new Date(apt.end).getTime();
-      
-      // Check for overlap
-      return (startTime < aptEnd && endTime > aptStart);
-    });
+    return this.get<Calendar[]>(
+      endpoint,
+      {
+        cache: { priority: 'high', ttl: 60 * 60 * 1000 }, // 1 hour
+      }
+    );
   }
 }
 
+// Export singleton instance
 export const appointmentService = new AppointmentService();
+
+// Export types
+export type {
+  AppointmentListOptions,
+  CreateAppointmentInput,
+  UpdateAppointmentInput,
+  RescheduleInput,
+};
