@@ -11,6 +11,9 @@ export const GHL_ENDPOINTS = {
       base: `${BASE_URL}/appointments`,
       get: (appointmentId: string) => `${BASE_URL}/appointments/${appointmentId}`,
     },
+    INVOICES: {
+        base: `${BASE_URL}/invoices/`,
+      },
     LOCATIONS: {
       search: `${BASE_URL}/locations/search`,
       get: (locationId: string) => `${BASE_URL}/locations/${locationId}`,
