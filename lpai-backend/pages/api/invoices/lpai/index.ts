@@ -1,16 +1,16 @@
 // pages/api/invoices/index.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
-import clientPromise from '../../../src/lib/mongodb';
+import clientPromise from '../../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
 import { 
   paginate, 
   buildDateRangeFilter, 
   buildSearchFilter 
-} from '../../../src/utils/pagination';
+} from '../../../../src/utils/pagination';
 import { 
   parseQueryParams, 
   buildInvoiceFilter 
-} from '../../../src/utils/filters';
+} from '../../../../src/utils/filters';
 import { 
   sendPaginatedSuccess, 
   sendSuccess, 
@@ -18,7 +18,7 @@ import {
   sendValidationError,
   sendServerError,
   sendMethodNotAllowed 
-} from '../../../src/utils/response';
+} from '../../../../src/utils/response';
 import cors from '@/lib/cors';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -278,8 +278,7 @@ async function getInvoices(db: any, query: any, res: NextApiResponse) {
       res,
       result.data,
       result.pagination,
-      'Invoices retrieved successfully',
-      (result as any).summary ? { summary: (result as any).summary } : undefined
+      'Invoices retrieved successfully'
     );
     
   } catch (error) {

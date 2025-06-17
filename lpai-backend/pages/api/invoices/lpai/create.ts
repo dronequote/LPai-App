@@ -1,9 +1,9 @@
 // /api/invoices/create.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
-import clientPromise from '../../../src/lib/mongodb';
+import clientPromise from '../../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
 import axios from 'axios';
-import { createInvoiceSchema } from '../../../schemas/invoice.schema'
+import { invoiceSchema } from '../../../../schemas/invoice.schema'
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
     if (req.method !== 'POST') {
@@ -11,7 +11,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   
     try {
-      const data = await createInvoiceSchema.validate(req.body, {
+      const data = await invoiceSchema.validate(req.body, {
         abortEarly: false,
       });
   

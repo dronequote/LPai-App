@@ -11,7 +11,7 @@ import {
 import cors from '@/lib/cors';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-    await cors(req, res);
+  await cors(req, res);
   if (req.method !== 'GET') {
     return sendMethodNotAllowed(res, ['GET']);
   }
