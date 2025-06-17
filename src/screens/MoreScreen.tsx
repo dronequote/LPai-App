@@ -1,4 +1,5 @@
 // src/screens/MoreScreen.tsx
+// Updated: 2025-06-16
 import React from 'react';
 import {
   View,
@@ -103,10 +104,10 @@ export default function MoreScreen() {
       icon: 'pricetag-outline',
       onPress: () => handleNavigate('ProductLibraryScreen'),
     },
-    {
+{
       id: 'templates',
       label: 'Templates',
-      icon: 'document-duplicate-outline',
+      icon: 'copy-outline',
       onPress: () => handleNavigate('TemplatesScreen'),
     },
   ].filter(item => {

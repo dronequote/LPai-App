@@ -1,4 +1,5 @@
 // services/quoteService.ts
+// Updated: 2025-06-16
 import { BaseService } from './baseService';
 import { Quote, QuoteSection, QuoteLineItem, Payment, Project, Contact } from '../../packages/types';
 
@@ -65,25 +66,30 @@ class QuoteService extends BaseService {
   /**
    * List quotes with filters
    */
-  async list(
-    locationId: string,
-    options: QuoteListOptions = {}
-  ): Promise<Quote[]> {
-    const params: any = { locationId };
-    
-    if (options.status) params.status = options.status;
-    if (options.projectId) params.projectId = options.projectId;
-    if (options.contactId) params.contactId = options.contactId;
-    if (options.limit) params.limit = options.limit;
-    if (options.offset) params.offset = options.offset;
-    
-    const endpoint = '/api/quotes';
-    
-    return this.get<Quote[]>(
+async list(
+  locationId: string,
+  options: QuoteListOptions = {}
+): Promise<Quote[]> {
+  const params: any = { locationId };
+  
+  if (options.status) params.status = options.status;
+  if (options.projectId) params.projectId = options.projectId;
+  if (options.contactId) params.contactId = options.contactId;
+  if (options.limit) params.limit = options.limit;
+  if (options.offset) params.offset = options.offset;
+  
+  const endpoint = '/api/quotes';
+  
+  if (__DEV__) {
+    console.log('[QuoteService] Fetching quotes with params:', params);
+  }
+  
+  try {
+    const response = await this.get<Quote[]>(
       endpoint,
       {
+        params, // Pass params correctly
         cache: { priority: 'high', ttl: 10 * 60 * 1000 },
-        locationId,
       },
       {
         endpoint,
@@ -91,7 +97,18 @@ class QuoteService extends BaseService {
         entity: 'quote',
       }
     );
+    
+    if (__DEV__) {
+      console.log('[QuoteService] Response:', response);
+    }
+    
+    // Handle different response formats
+    return Array.isArray(response) ? response : response?.data || [];
+  } catch (error) {
+    console.error('[QuoteService] Failed to fetch quotes:', error);
+    throw error;
   }
+}
 
   /**
    * Get quote details

@@ -1,4 +1,5 @@
 // src/screens/QuoteBuilderScreen.tsx
+// Updated: 2025-06-16
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
@@ -15,9 +16,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
-import api from '../lib/api';
+import { projectService } from '../services/projectService';
+import { quoteService } from '../services/quoteService';
 import { COLORS, FONT, RADIUS, SHADOW } from '../styles/theme';
-import type { Project, Quote, Contact } from '@lp-ai/types';
+import type { Project, Quote } from '../../packages/types/dist';
 
 type QuoteBuilderScreenProps = {
   navigation: any;
@@ -26,7 +28,7 @@ type QuoteBuilderScreenProps = {
 export default function QuoteBuilderScreen({ navigation }: QuoteBuilderScreenProps) {
   const { user } = useAuth();
   
-  // State
+  // State - Initialize as empty arrays
   const [projects, setProjects] = useState<Project[]>([]);
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [loading, setLoading] = useState(true);
@@ -34,29 +36,56 @@ export default function QuoteBuilderScreen({ navigation }: QuoteBuilderScreenPro
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTab, setSelectedTab] = useState<'projects' | 'quotes'>('projects');
 
-  // Load data
+  // Load data using services
   const loadData = useCallback(async () => {
-    if (!user?.locationId) return;
+    if (!user?.locationId) {
+      console.warn('[QuoteBuilder] No locationId available');
+      return;
+    }
     
     try {
       setLoading(true);
       
-      // Load projects and quotes in parallel
-      const [projectsRes, quotesRes] = await Promise.all([
-        api.get('/api/projects', {
-          params: { locationId: user.locationId },
-        }),
-        api.get('/api/quotes', {
-          params: { locationId: user.locationId },
-        }),
-      ]);
+      if (__DEV__) {
+        console.log('[QuoteBuilder] Loading data for location:', user.locationId);
+      }
       
-      setProjects(projectsRes.data || []);
-      setQuotes(quotesRes.data || []);
+      // Load projects using the correct service method
+      const projectsData = await projectService.list(user.locationId);
+      
+      // Load quotes - the service expects locationId as first parameter
+      const quotesResponse = await quoteService.list(user.locationId);
+      
+      if (__DEV__) {
+        console.log('[QuoteBuilder] Projects response:', projectsData);
+        console.log('[QuoteBuilder] Quotes response:', quotesResponse);
+        console.log('[QuoteBuilder] Quotes full data:', JSON.stringify(quotesResponse, null, 2));
+      }
+      
+      // Handle the response - it might be the array directly or wrapped in data
+      const projectsArray = Array.isArray(projectsData) ? projectsData : projectsData?.data || [];
+      const quotesArray = Array.isArray(quotesResponse) ? quotesResponse : quotesResponse?.data || [];
+      
+      if (__DEV__) {
+        console.log('[QuoteBuilder] Setting projects:', projectsArray.length);
+        console.log('[QuoteBuilder] Setting quotes:', quotesArray.length);
+      }
+      
+      setProjects(projectsArray);
+      setQuotes(quotesArray);
       
     } catch (error) {
       console.error('[QuoteBuilder] Failed to load data:', error);
+      if (__DEV__) {
+        console.error('[QuoteBuilder] Error details:', {
+          message: error.message,
+          response: error.response?.data,
+          status: error.response?.status,
+        });
+      }
       Alert.alert('Error', 'Failed to load projects and quotes');
+      setProjects([]);
+      setQuotes([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -74,17 +103,29 @@ export default function QuoteBuilderScreen({ navigation }: QuoteBuilderScreenPro
     loadData();
   }, [loadData]);
 
-  // Filter data based on search
-  const filteredProjects = projects.filter(project => 
-    project.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    project.contactName?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Filter data based on search - with proper array checks
+  const filteredProjects = React.useMemo(() => {
+    if (!Array.isArray(projects)) return [];
+    if (!searchQuery.trim()) return projects;
+    
+    const query = searchQuery.toLowerCase();
+    return projects.filter(project => 
+      project.title?.toLowerCase().includes(query) ||
+      project.contactName?.toLowerCase().includes(query)
+    );
+  }, [projects, searchQuery]);
 
-  const filteredQuotes = quotes.filter(quote => 
-    quote.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    quote.contactName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    quote.quoteNumber.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredQuotes = React.useMemo(() => {
+    if (!Array.isArray(quotes)) return [];
+    if (!searchQuery.trim()) return quotes;
+    
+    const query = searchQuery.toLowerCase();
+    return quotes.filter(quote => 
+      quote.title?.toLowerCase().includes(query) ||
+      quote.contactName?.toLowerCase().includes(query) ||
+      quote.quoteNumber?.toLowerCase().includes(query)
+    );
+  }, [quotes, searchQuery]);
 
   // Navigate to create quote for project
   const handleCreateQuote = (project: Project) => {
@@ -120,6 +161,18 @@ export default function QuoteBuilderScreen({ navigation }: QuoteBuilderScreenPro
     }
   };
 
+  // Get project status color
+  const getProjectStatusColor = (status: string) => {
+    switch (status) {
+      case 'Open': return '#3498db';
+      case 'Quoted': return '#f1c40f';
+      case 'Scheduled': return '#9b59b6';
+      case 'In Progress': return '#e67e22';
+      case 'Job Complete': return '#27ae60';
+      default: return COLORS.textGray;
+    }
+  };
+
   // Render project item
   const renderProjectItem = ({ item }: { item: Project }) => (
     <TouchableOpacity 
@@ -134,7 +187,7 @@ export default function QuoteBuilderScreen({ navigation }: QuoteBuilderScreenPro
         <View style={styles.projectStatus}>
           <Text style={[
             styles.statusBadge, 
-            { backgroundColor: getProjectStatusColor(item.status) }
+            { backgroundColor: getProjectStatusColor(item.status) + '20', color: getProjectStatusColor(item.status) }
           ]}>
             {item.status}
           </Text>
@@ -142,13 +195,13 @@ export default function QuoteBuilderScreen({ navigation }: QuoteBuilderScreenPro
       </View>
       
       <View style={styles.projectFooter}>
-        <Text style={styles.projectDate}>
-          Created: {new Date(item.createdAt).toLocaleDateString()}
-        </Text>
-        <View style={styles.projectActions}>
-          <Text style={styles.createQuoteText}>Tap to Create Quote</Text>
-          <Ionicons name="chevron-forward" size={16} color={COLORS.accent} />
-        </View>
+        <TouchableOpacity 
+          style={styles.actionButton}
+          onPress={() => handleCreateQuote(item)}
+        >
+          <Ionicons name="add-circle" size={16} color={COLORS.accent} />
+          <Text style={styles.actionText}>Create Quote</Text>
+        </TouchableOpacity>
       </View>
     </TouchableOpacity>
   );
@@ -166,62 +219,47 @@ export default function QuoteBuilderScreen({ navigation }: QuoteBuilderScreenPro
           <Text style={styles.quoteContact}>{item.contactName}</Text>
         </View>
         <View style={styles.quoteAmount}>
-          <Text style={styles.totalAmount}>${item.total.toLocaleString()}</Text>
-          <Text style={[
-            styles.statusBadge,
-            { backgroundColor: getStatusColor(item.status) }
-          ]}>
-            {item.status.toUpperCase()}
-          </Text>
+          <Text style={styles.amountLabel}>Total</Text>
+          <Text style={styles.amountValue}>${item.total?.toFixed(2) || '0.00'}</Text>
         </View>
       </View>
       
-      <View style={styles.quoteFooter}>
-        <Text style={styles.quoteDate}>
-          Created: {new Date(item.createdAt).toLocaleDateString()}
+      <View style={styles.quoteStatus}>
+        <View style={[styles.statusDot, { backgroundColor: getStatusColor(item.status) }]} />
+        <Text style={[styles.statusText, { color: getStatusColor(item.status) }]}>
+          {item.status}
         </Text>
-        <View style={styles.quoteActions}>
-          {item.status === 'draft' && (
-            <TouchableOpacity 
-              style={styles.actionButton}
-              onPress={(e) => {
-                e.stopPropagation();
-                handleEditQuote(item);
-              }}
-            >
-              <Ionicons name="pencil" size={16} color={COLORS.accent} />
-              <Text style={styles.actionText}>Edit</Text>
-            </TouchableOpacity>
-          )}
-          
-          {(item.status === 'sent' || item.status === 'accepted') && (
-            <TouchableOpacity 
-              style={styles.actionButton}
-              onPress={(e) => {
-                e.stopPropagation();
-                handlePresentQuote(item);
-              }}
-            >
-              <Ionicons name="eye" size={16} color={COLORS.accent} />
-              <Text style={styles.actionText}>Present</Text>
-            </TouchableOpacity>
-          )}
-        </View>
+        {item.viewedAt && (
+          <Text style={styles.viewedText}>
+            Viewed {new Date(item.viewedAt).toLocaleDateString()}
+          </Text>
+        )}
+      </View>
+      
+      <View style={styles.quoteFooter}>
+        <TouchableOpacity 
+          style={styles.actionButton}
+          onPress={() => handleEditQuote(item)}
+        >
+          <Ionicons name="pencil" size={16} color={COLORS.textGray} />
+          <Text style={styles.actionText}>Edit</Text>
+        </TouchableOpacity>
+        
+        {(item.status !== 'declined' && item.status !== 'accepted') && (
+          <TouchableOpacity 
+            style={styles.actionButton}
+            onPress={(e) => {
+              e.stopPropagation();
+              handlePresentQuote(item);
+            }}
+          >
+            <Ionicons name="eye" size={16} color={COLORS.accent} />
+            <Text style={styles.actionText}>Present</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </TouchableOpacity>
   );
-
-  // Get project status color
-  const getProjectStatusColor = (status: string) => {
-    switch (status) {
-      case 'Open': return '#3498db';
-      case 'Quoted': return '#f1c40f';
-      case 'Scheduled': return '#9b59b6';
-      case 'In Progress': return '#e67e22';
-      case 'Job Complete': return '#27ae60';
-      default: return COLORS.textGray;
-    }
-  };
 
   if (loading) {
     return (
@@ -416,12 +454,13 @@ const styles = StyleSheet.create({
   tabContainer: {
     flexDirection: 'row',
     backgroundColor: COLORS.card,
+    paddingHorizontal: 20,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
   },
   tab: {
     flex: 1,
-    paddingVertical: 16,
+    paddingVertical: 12,
     alignItems: 'center',
     borderBottomWidth: 2,
     borderBottomColor: 'transparent',
@@ -430,8 +469,7 @@ const styles = StyleSheet.create({
     borderBottomColor: COLORS.accent,
   },
   tabText: {
-    fontSize: FONT.input,
-    fontWeight: '500',
+    fontSize: FONT.body,
     color: COLORS.textGray,
   },
   activeTabText: {
@@ -442,16 +480,44 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   listContainer: {
-    padding: 16,
+    padding: 20,
   },
-  
-  // Project Card Styles
+  emptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+  },
+  emptyTitle: {
+    fontSize: FONT.sectionTitle,
+    fontWeight: '600',
+    color: COLORS.textDark,
+    marginTop: 24,
+    marginBottom: 8,
+  },
+  emptySubtitle: {
+    fontSize: FONT.body,
+    color: COLORS.textGray,
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  createButton: {
+    backgroundColor: COLORS.accent,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: RADIUS.button,
+  },
+  createButtonText: {
+    color: '#FFFFFF',
+    fontSize: FONT.body,
+    fontWeight: '600',
+  },
   projectCard: {
     backgroundColor: COLORS.card,
     borderRadius: RADIUS.card,
     padding: 16,
     marginBottom: 12,
-    ...SHADOW.card,
+    ...SHADOW.small,
   },
   projectHeader: {
     flexDirection: 'row',
@@ -463,142 +529,105 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   projectTitle: {
-    fontSize: FONT.input,
+    fontSize: FONT.body,
     fontWeight: '600',
     color: COLORS.textDark,
     marginBottom: 4,
   },
   projectContact: {
-    fontSize: FONT.meta,
+    fontSize: FONT.small,
     color: COLORS.textGray,
   },
   projectStatus: {
     marginLeft: 12,
   },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: RADIUS.button,
+    fontSize: FONT.small,
+    fontWeight: '500',
+  },
   projectFooter: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    justifyContent: 'flex-end',
   },
-  projectDate: {
-    fontSize: FONT.meta,
-    color: COLORS.textGray,
-  },
-  projectActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  createQuoteText: {
-    fontSize: FONT.meta,
-    color: COLORS.accent,
-    fontWeight: '500',
-    marginRight: 4,
-  },
-  
-  // Quote Card Styles
   quoteCard: {
     backgroundColor: COLORS.card,
     borderRadius: RADIUS.card,
     padding: 16,
     marginBottom: 12,
-    ...SHADOW.card,
+    ...SHADOW.small,
   },
   quoteHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
     marginBottom: 12,
   },
   quoteInfo: {
     flex: 1,
   },
   quoteNumber: {
-    fontSize: FONT.meta,
-    color: COLORS.accent,
-    fontWeight: '600',
+    fontSize: FONT.small,
+    color: COLORS.textGray,
     marginBottom: 2,
   },
   quoteTitle: {
-    fontSize: FONT.input,
+    fontSize: FONT.body,
     fontWeight: '600',
     color: COLORS.textDark,
-    marginBottom: 4,
+    marginBottom: 2,
   },
   quoteContact: {
-    fontSize: FONT.meta,
+    fontSize: FONT.small,
     color: COLORS.textGray,
   },
   quoteAmount: {
     alignItems: 'flex-end',
   },
-  totalAmount: {
-    fontSize: FONT.input,
+  amountLabel: {
+    fontSize: FONT.small,
+    color: COLORS.textGray,
+  },
+  amountValue: {
+    fontSize: FONT.sectionTitle,
     fontWeight: '700',
     color: COLORS.textDark,
-    marginBottom: 4,
+  },
+  quoteStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  statusText: {
+    fontSize: FONT.small,
+    fontWeight: '500',
+    marginRight: 12,
+  },
+  viewedText: {
+    fontSize: FONT.small,
+    color: COLORS.textGray,
   },
   quoteFooter: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  quoteDate: {
-    fontSize: FONT.meta,
-    color: COLORS.textGray,
-  },
-  quoteActions: {
-    flexDirection: 'row',
+    justifyContent: 'flex-end',
   },
   actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginLeft: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginLeft: 8,
   },
   actionText: {
-    fontSize: FONT.meta,
-    color: COLORS.accent,
-    fontWeight: '500',
+    fontSize: FONT.small,
     marginLeft: 4,
-  },
-  
-  // Status Badge
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: RADIUS.pill,
-    alignSelf: 'flex-start',
-  },
-  
-  // Empty State
-  emptyState: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 40,
-  },
-  emptyTitle: {
-    fontSize: FONT.sectionTitle,
-    fontWeight: '600',
     color: COLORS.textGray,
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  emptySubtitle: {
-    fontSize: FONT.input,
-    color: COLORS.textLight,
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 24,
-  },
-  createButton: {
-    backgroundColor: COLORS.accent,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: RADIUS.button,
-  },
-  createButtonText: {
-    color: '#fff',
-    fontSize: FONT.input,
-    fontWeight: '600',
   },
 });

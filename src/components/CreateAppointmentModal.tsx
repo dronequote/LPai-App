@@ -1,3 +1,4 @@
+// Updated: 2025-06-16
 import React, { useState, useEffect } from 'react';
 import {
   Modal,
@@ -155,11 +156,13 @@ export default function CreateAppointmentModal({
     });
   };
 
-  const filteredContacts = contacts?.filter(c =>
-    (c.firstName + ' ' + c.lastName + ' ' + c.email + ' ' + (c.phone || ''))
-      .toLowerCase()
-      .includes(search.toLowerCase())
-  );
+const filteredContacts = Array.isArray(contacts) 
+  ? contacts.filter(c =>
+      (c.firstName + ' ' + c.lastName + ' ' + c.email + ' ' + (c.phone || ''))
+        .toLowerCase()
+        .includes(search.toLowerCase())
+    )
+  : [];
 
   const handleContactSelect = (contact: Contact) => {
     setSelectedContact(contact);
