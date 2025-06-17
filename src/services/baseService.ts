@@ -1,4 +1,5 @@
 // services/baseService.ts
+// Updated: 2025-06-16
 import { AxiosError, AxiosRequestConfig, AxiosResponse } from 'axios';
 import api from '../lib/api';
 import { cacheService, CacheConfig } from './cacheService';
@@ -129,21 +130,29 @@ export class BaseService {
   /**
    * GET request with caching
    */
-  protected async get<T>(
-    endpoint: string,
-    options: ServiceOptions = {},
-    offlineConfig?: OfflineConfig
-  ): Promise<T> {
-    return this.request<T>(
-      {
-        method: 'GET',
-        url: endpoint,
-        params: options.locationId ? { locationId: options.locationId } : undefined,
-      },
-      options,
-      offlineConfig
-    );
+protected async get<T>(
+  endpoint: string,
+  config?: any,
+  offlineConfig?: any
+): Promise<T> {
+  try {
+    // Ensure params are passed to axios correctly
+    const requestConfig = {
+      ...config,
+      params: config?.params || {},
+    };
+    
+    if (__DEV__) {
+      console.log(`[${this.constructor.name}] GET ${endpoint}`, requestConfig.params);
+    }
+    
+    const response = await api.get(endpoint, requestConfig);
+    return response.data;
+  } catch (error) {
+    console.error(`[${this.constructor.name}] GET ${endpoint} failed:`, error);
+    throw error;
   }
+}
 
   /**
    * POST request

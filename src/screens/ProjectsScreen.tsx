@@ -1,4 +1,7 @@
-import React, { useEffect, useState, useCallback } from 'react';
+// src/screens/ProjectsScreen.tsx
+// Updated: 2025-06-16
+
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View,
   ScrollView,
@@ -10,7 +13,9 @@ import {
   SafeAreaView,
   TouchableOpacity,
   Alert,
+  FlatList,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -18,348 +23,642 @@ import { RootStackParamList } from '../navigation/StackNavigator';
 import ProjectCard from '../components/ProjectCard';
 import FilterModal from '../components/FilterModal';
 import AddProjectForm from '../components/AddProjectForm';
-import api from '../lib/api';
+import { projectService } from '../services/projectService';
+import { Project, Pipeline } from '../../packages/types';
+import { COLORS, FONT, RADIUS, SHADOW } from '../styles/theme';
 
 type ProjectsScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Projects'>;
 
-interface Project {
-  _id: string;
-  title: string;
-  contactName?: string;
-  status: string;
-  phone?: string;
-  locationId: string;
-  createdAt: string;
-}
+// Status filter options
+const STATUS_FILTERS = ['All', 'open', 'won', 'lost', 'abandoned'];
 
-const topFilters = ['All', 'Scheduled', 'In Progress', 'Job Complete'];
+// Sort options
+const SORT_OPTIONS = [
+  { label: 'Newest First', value: 'createdAt', order: 'desc' },
+  { label: 'Oldest First', value: 'createdAt', order: 'asc' },
+  { label: 'Name (A-Z)', value: 'title', order: 'asc' },
+  { label: 'Name (Z-A)', value: 'title', order: 'desc' },
+  { label: 'Status', value: 'status', order: 'asc' },
+];
 
 export default function ProjectsScreen() {
   const { user } = useAuth();
   const navigation = useNavigation<ProjectsScreenNavigationProp>();
   
+  // Data states - Initialize as empty arrays
   const [projects, setProjects] = useState<Project[]>([]);
-  const [filtered, setFiltered] = useState<Project[]>([]);
+  const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  
+  // Filter states
   const [search, setSearch] = useState('');
-  const [topFilter, setTopFilter] = useState('All');
-
+  const [statusFilter, setStatusFilter] = useState('All');
+  const [pipelineFilter, setPipelineFilter] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState(SORT_OPTIONS[0]);
+  
+  // UI states
   const [isFilterVisible, setIsFilterVisible] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<string | null>(null);
-  const [projectFilter, setProjectFilter] = useState('');
-  const [phoneFilter, setPhoneFilter] = useState('');
-
   const [isAddModalVisible, setIsAddModalVisible] = useState(false);
   const [isSyncingPipelines, setIsSyncingPipelines] = useState(false);
+  
+  // Pagination
+  const [pagination, setPagination] = useState({
+    offset: 0,
+    limit: 20,
+    hasMore: true,
+    total: 0,
+  });
 
-  const fetchProjects = async () => {
+  // Fetch projects with filters
+  const fetchProjects = useCallback(async (isRefresh = false) => {
+    if (!user?.locationId) return;
+
     try {
-      console.log('Fetching projects for location:', user?.locationId);
-      const res = await api.get('/api/projects', {
-        params: { locationId: user?.locationId },
-      });
-      console.log('Projects API response:', res.data);
-      // Ensure we always have an array
-      const projectsData = Array.isArray(res.data) ? res.data : [];
-      console.log('Setting projects:', projectsData.length, 'items');
-      setProjects(projectsData);
-      setFiltered(projectsData);
-    } catch (err) {
-      console.error('Failed to fetch projects:', err);
-      Alert.alert('Error', 'Failed to load projects');
-      setProjects([]);
-      setFiltered([]);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+      const offset = isRefresh ? 0 : pagination.offset;
+      
+      const options: any = {
+        limit: pagination.limit,
+        offset: offset,
+        sortBy: sortBy.value,
+        sortOrder: sortBy.order,
+      };
+      
+      // Add filters
+      if (statusFilter !== 'All') {
+        options.status = statusFilter;
+      }
+      if (pipelineFilter) {
+        options.pipelineId = pipelineFilter;
+      }
+      if (search) {
+        options.search = search;
+      }
+
+      if (__DEV__) {
+        console.log('[ProjectsScreen] Fetching projects with options:', options);
+      }
+
+      const result = await projectService.list(user.locationId, options);
+      
+      // Ensure result is an array
+      const projectsArray = Array.isArray(result) ? result : [];
+      
+      if (__DEV__) {
+        console.log('[ProjectsScreen] Fetched projects:', projectsArray.length);
+      }
+      
+      if (isRefresh) {
+        setProjects(projectsArray);
+      } else {
+        setProjects(prev => [...prev, ...projectsArray]);
+      }
+      
+      // Update pagination
+      setPagination(prev => ({
+        ...prev,
+        offset: offset + projectsArray.length,
+        hasMore: projectsArray.length === pagination.limit,
+      }));
+      
+    } catch (error) {
+      if (__DEV__) {
+        console.error('[ProjectsScreen] Error fetching projects:', error);
+      }
+      Alert.alert('Error', 'Failed to load projects. Please try again.');
+      // Ensure projects is always an array even on error
+      if (isRefresh) {
+        setProjects([]);
+      }
     }
-  };
+  }, [user?.locationId, statusFilter, pipelineFilter, search, sortBy, pagination.limit, pagination.offset]);
 
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    fetchProjects();
-  }, []);
-
+  // Initial load
   useEffect(() => {
-    if (user?.locationId) fetchProjects();
+    if (user?.locationId) {
+      loadInitialData();
+    }
   }, [user?.locationId]);
 
-  const applyFilters = () => {
-    // Ensure projects is an array before spreading
-    if (!Array.isArray(projects)) {
-      setFiltered([]);
-      return;
-    }
-    
-    let result = [...projects];
-
-    if (topFilter !== 'All') {
-      result = result.filter((p) => p.status === topFilter);
-    }
-
-    if (statusFilter) {
-      result = result.filter((p) => p.status === statusFilter);
-    }
-
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      result = result.filter(
-        (p) =>
-          p.title?.toLowerCase().includes(q) ||
-          p.contactName?.toLowerCase().includes(q) ||
-          p.phone?.toLowerCase().includes(q)
-      );
-    }
-
-    if (projectFilter.trim()) {
-      result = result.filter((p) =>
-        p.title?.toLowerCase().includes(projectFilter.toLowerCase())
-      );
-    }
-
-    if (phoneFilter.trim()) {
-      result = result.filter((p) =>
-        p.phone?.toLowerCase().includes(phoneFilter.toLowerCase())
-      );
-    }
-
-    setFiltered(result);
-  };
-
+  // Reload when filters change
   useEffect(() => {
-    applyFilters();
-  }, [search, topFilter, statusFilter, projectFilter, phoneFilter, projects]);
+    if (user?.locationId && !loading) {
+      handleRefresh();
+    }
+  }, [statusFilter, pipelineFilter, sortBy]);
 
-  const handleAddProject = async () => {
-    if (!user?.locationId) {
-      Alert.alert('Error', 'Missing location ID');
-      return;
-    }
-    setIsSyncingPipelines(true);
+  // Debounced search
+  useEffect(() => {
+    const delaySearch = setTimeout(() => {
+      if (user?.locationId && !loading) {
+        handleRefresh();
+      }
+    }, 300);
+    
+    return () => clearTimeout(delaySearch);
+  }, [search]);
+
+  const loadInitialData = async () => {
+    setLoading(true);
     try {
-      await api.get(`/api/ghl/pipelines/${user.locationId}`);
-    } catch (e) {
-      console.error('[ProjectsScreen] Failed to sync pipelines:', e);
+      // Load pipelines from location settings if service is available
+      if (projectService.locationService) {
+        try {
+          const locationData = await projectService.locationService.getDetails(user!.locationId);
+          if (locationData?.pipelines && Array.isArray(locationData.pipelines)) {
+            setPipelines(locationData.pipelines);
+          }
+        } catch (error) {
+          console.error('[ProjectsScreen] Error loading pipelines:', error);
+          // Continue without pipelines
+        }
+      }
+      
+      // Load projects
+      await fetchProjects(true);
+    } finally {
+      setLoading(false);
     }
-    setIsSyncingPipelines(false);
-    setIsAddModalVisible(true);
   };
 
-  const handleProjectSubmit = async (projectData: any) => {
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    setPagination(prev => ({ ...prev, offset: 0, hasMore: true }));
+    await fetchProjects(true);
+    setRefreshing(false);
+  };
+
+  const handleLoadMore = async () => {
+    if (!pagination.hasMore || loadingMore) return;
+    
+    setLoadingMore(true);
+    await fetchProjects(false);
+    setLoadingMore(false);
+  };
+
+  const handleProjectPress = (project: Project) => {
+    navigation.navigate('ProjectDetailScreen', { 
+      projectId: project._id,
+      project,
+    });
+  };
+
+  const handleAddProject = async (projectData: any) => {
     try {
-      const response = await api.post('/api/projects', {
+      await projectService.create({
         ...projectData,
-        locationId: user?.locationId,
+        locationId: user!.locationId,
+        userId: user!._id || user!.userId,
       });
       
       setIsAddModalVisible(false);
-      await fetchProjects();
-      
-      // Navigate to the new project detail screen
-      const newProject = { 
-        _id: response.data.projectId, 
-        ...projectData 
-      };
-      navigation.navigate('ProjectDetailScreen', { project: newProject });
+      handleRefresh();
+      Alert.alert('Success', 'Project created successfully!');
     } catch (error) {
-      console.error('Failed to create project:', error);
+      if (__DEV__) {
+        console.error('[ProjectsScreen] Error creating project:', error);
+      }
       Alert.alert('Error', 'Failed to create project. Please try again.');
     }
   };
 
-  if (loading) return <ActivityIndicator size="large" style={{ marginTop: 32 }} />;
+  const syncPipelines = async () => {
+    if (!user?.locationId) return;
+    
+    setIsSyncingPipelines(true);
+    try {
+      if (projectService.locationService?.syncPipelines) {
+        const result = await projectService.locationService.syncPipelines(user.locationId, true);
+        if (result?.success) {
+          Alert.alert('Success', 'Pipelines synced successfully!');
+          loadInitialData();
+        }
+      } else {
+        Alert.alert('Info', 'Pipeline sync not available');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to sync pipelines');
+    } finally {
+      setIsSyncingPipelines(false);
+    }
+  };
+
+  // Filter projects based on search - with proper array checks
+  const filteredProjects = useMemo(() => {
+    // Ensure projects is always an array
+    const projectsArray = Array.isArray(projects) ? projects : [];
+    
+    if (!search || !search.trim()) {
+      return projectsArray;
+    }
+    
+    const searchLower = search.toLowerCase();
+    return projectsArray.filter(project => {
+      if (!project) return false;
+      
+      return (
+        (project.title && project.title.toLowerCase().includes(searchLower)) ||
+        (project.contactName && project.contactName.toLowerCase().includes(searchLower)) ||
+        (project.notes && project.notes.toLowerCase().includes(searchLower))
+      );
+    });
+  }, [projects, search]);
+
+  // Get project stats - with proper array checks
+  const projectStats = useMemo(() => {
+    // Ensure filteredProjects is always an array
+    const projectsArray = Array.isArray(filteredProjects) ? filteredProjects : [];
+    
+    return {
+      total: projectsArray.length,
+      open: projectsArray.filter(p => p && p.status === 'open').length,
+      won: projectsArray.filter(p => p && p.status === 'won').length,
+      lost: projectsArray.filter(p => p && p.status === 'lost').length,
+      abandoned: projectsArray.filter(p => p && p.status === 'abandoned').length,
+    };
+  }, [filteredProjects]);
+
+  const renderHeader = () => (
+    <>
+      {/* Search Bar */}
+      <View style={styles.searchContainer}>
+        <Ionicons name="search" size={20} color={COLORS.textGray} style={styles.searchIcon} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search projects..."
+          value={search}
+          onChangeText={setSearch}
+          placeholderTextColor={COLORS.textGray}
+          returnKeyType="search"
+        />
+        {search ? (
+          <TouchableOpacity onPress={() => setSearch('')}>
+            <Ionicons name="close-circle" size={20} color={COLORS.textGray} />
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
+      {/* Stats Bar */}
+      <View style={styles.statsContainer}>
+        <View style={styles.statItem}>
+          <Text style={styles.statValue}>{projectStats.total}</Text>
+          <Text style={styles.statLabel}>Total</Text>
+        </View>
+        <View style={styles.statItem}>
+          <Text style={[styles.statValue, { color: COLORS.primary || COLORS.accent }]}>{projectStats.open}</Text>
+          <Text style={styles.statLabel}>Active</Text>
+        </View>
+        <View style={styles.statItem}>
+          <Text style={[styles.statValue, { color: '#27AE60' }]}>{projectStats.won}</Text>
+          <Text style={styles.statLabel}>Won</Text>
+        </View>
+        <View style={styles.statItem}>
+          <Text style={[styles.statValue, { color: '#E74C3C' }]}>{projectStats.lost}</Text>
+          <Text style={styles.statLabel}>Lost</Text>
+        </View>
+      </View>
+
+      {/* Filter Chips */}
+      <ScrollView 
+        horizontal 
+        showsHorizontalScrollIndicator={false}
+        style={styles.filterChips}
+        contentContainerStyle={styles.filterChipsContent}
+      >
+        {/* Status Filters */}
+        {STATUS_FILTERS.map(status => (
+          <TouchableOpacity
+            key={status}
+            style={[
+              styles.filterChip,
+              statusFilter === status && styles.filterChipActive
+            ]}
+            onPress={() => setStatusFilter(status)}
+          >
+            <Text style={[
+              styles.filterChipText,
+              statusFilter === status && styles.filterChipTextActive
+            ]}>
+              {status === 'All' ? 'All Status' : status.charAt(0).toUpperCase() + status.slice(1)}
+            </Text>
+          </TouchableOpacity>
+        ))}
+        
+        {/* Pipeline Filter */}
+        {pipelines.length > 0 && (
+          <TouchableOpacity
+            style={[
+              styles.filterChip,
+              pipelineFilter && styles.filterChipActive
+            ]}
+            onPress={() => setIsFilterVisible(true)}
+          >
+            <Ionicons 
+              name="funnel-outline" 
+              size={14} 
+              color={pipelineFilter ? '#fff' : COLORS.textGray} 
+            />
+            <Text style={[
+              styles.filterChipText,
+              pipelineFilter && styles.filterChipTextActive
+            ]}>
+              {pipelineFilter ? 
+                pipelines.find(p => p._id === pipelineFilter)?.name || 'Pipeline' 
+                : 'Pipeline'}
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Sort */}
+        <TouchableOpacity
+          style={styles.filterChip}
+          onPress={() => {
+            const currentIndex = SORT_OPTIONS.findIndex(s => s.value === sortBy.value);
+            const nextIndex = (currentIndex + 1) % SORT_OPTIONS.length;
+            setSortBy(SORT_OPTIONS[nextIndex]);
+          }}
+        >
+          <Ionicons name="swap-vertical-outline" size={14} color={COLORS.textGray} />
+          <Text style={styles.filterChipText}>{sortBy.label}</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </>
+  );
+
+  const renderProject = ({ item }: { item: Project }) => (
+    <ProjectCard
+      project={item}
+      onPress={() => handleProjectPress(item)}
+      onStatusChange={async (newStatus) => {
+        try {
+          await projectService.update(item._id, user!.locationId, { status: newStatus });
+          handleRefresh();
+        } catch (error) {
+          Alert.alert('Error', 'Failed to update project status');
+        }
+      }}
+    />
+  );
+
+  const renderEmpty = () => (
+    <View style={styles.emptyContainer}>
+      <Ionicons name="briefcase-outline" size={64} color={COLORS.textGray} />
+      <Text style={styles.emptyText}>No projects found</Text>
+      <Text style={styles.emptySubtext}>
+        {search ? 'Try adjusting your search' : 'Create your first project to get started'}
+      </Text>
+      {!search && (
+        <TouchableOpacity 
+          style={styles.emptyButton}
+          onPress={() => setIsAddModalVisible(true)}
+        >
+          <Text style={styles.emptyButtonText}>Create Project</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+
+  const renderFooter = () => {
+    if (!loadingMore) return null;
+    
+    return (
+      <View style={styles.footerLoader}>
+        <ActivityIndicator size="small" color={COLORS.accent} />
+      </View>
+    );
+  };
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={COLORS.accent} />
+          <Text style={styles.loadingText}>Loading projects...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
-    <SafeAreaView style={{ flex: 1 }}>
-      <View style={{ flex: 1 }}>
-        <ScrollView
-          contentContainerStyle={styles.container}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        >
-          <Text style={styles.header}>My Projects</Text>
-
-          <View style={styles.topBar}>
-            <TextInput
-              placeholder="Search title, contact, or phone..."
-              value={search}
-              onChangeText={setSearch}
-              style={styles.search}
-              placeholderTextColor="#AAB2BD"
-            />
-            <TouchableOpacity
-              style={styles.filterButton}
-              onPress={() => setIsFilterVisible(true)}
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.title}>Projects</Text>
+        <View style={styles.headerActions}>
+          {projectService.locationService && (
+            <TouchableOpacity 
+              onPress={syncPipelines}
+              style={styles.headerButton}
+              disabled={isSyncingPipelines}
             >
-              <Text style={styles.filterButtonText}>Filter</Text>
+              {isSyncingPipelines ? (
+                <ActivityIndicator size="small" color={COLORS.accent} />
+              ) : (
+                <Ionicons name="sync-outline" size={24} color={COLORS.accent} />
+              )}
             </TouchableOpacity>
-          </View>
-
-          <View style={styles.filterRow}>
-            {topFilters.map((item) => (
-              <TouchableOpacity
-                key={item}
-                onPress={() => setTopFilter(item)}
-                style={[styles.pill, topFilter === item && styles.pillActive]}
-              >
-                <Text style={[styles.pillText, topFilter === item && styles.pillTextActive]}>
-                  {item}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          <Text style={styles.countText}>Total Projects: {filtered?.length || 0}</Text>
-
-          {(statusFilter || projectFilter || phoneFilter) && (
-            <View style={styles.activeFilters}>
-              <Text style={styles.filterText}>Filters applied</Text>
-              <TouchableOpacity
-                onPress={() => {
-                  setStatusFilter(null);
-                  setProjectFilter('');
-                  setPhoneFilter('');
-                }}
-              >
-                <Text style={styles.clearText}>Clear</Text>
-              </TouchableOpacity>
-            </View>
           )}
-
-          {filtered && filtered.length > 0 ? (
-            filtered.map((project) => (
-              <ProjectCard
-                key={project._id}
-                title={project.title}
-                name={project.contactName}
-                phone={project.phone}
-                status={project.status}
-                onPress={() => {
-                  navigation.navigate('ProjectDetailScreen', { project });
-                }}
-              />
-            ))
-          ) : (
-            !loading && (
-              <Text style={styles.empty}>No projects match your filters.</Text>
-            )
-          )}
-        </ScrollView>
-
-        <TouchableOpacity
-          style={styles.addButton}
-          onPress={handleAddProject}
-          disabled={isSyncingPipelines}
-        >
-          <Text style={styles.addIcon}>{isSyncingPipelines ? '⏳' : '＋'}</Text>
-        </TouchableOpacity>
-
-        <FilterModal
-          isVisible={isFilterVisible}
-          onClose={() => setIsFilterVisible(false)}
-          statusFilter={statusFilter}
-          setStatusFilter={setStatusFilter}
-          projectFilter={projectFilter}
-          setProjectFilter={setProjectFilter}
-          phoneFilter={phoneFilter}
-          setPhoneFilter={setPhoneFilter}
-          onClear={() => {
-            setStatusFilter(null);
-            setProjectFilter('');
-            setPhoneFilter('');
-          }}
-        />
-
-        {/* Updated AddProjectForm Modal */}
-        <AddProjectForm
-          visible={isAddModalVisible}
-          onClose={() => setIsAddModalVisible(false)}
-          onSubmit={handleProjectSubmit}
-          onAddContactPress={() => {
-            setIsAddModalVisible(false);
-            setTimeout(() => navigation.navigate('AddContactScreen'), 300);
-          }}
-          isModal={true} // Use as standalone modal
-        />
+          <TouchableOpacity 
+            onPress={() => setIsAddModalVisible(true)}
+            style={styles.headerButton}
+          >
+            <Ionicons name="add-circle" size={28} color={COLORS.accent} />
+          </TouchableOpacity>
+        </View>
       </View>
+
+      <FlatList
+        data={filteredProjects}
+        renderItem={renderProject}
+        keyExtractor={(item) => item._id}
+        ListHeaderComponent={renderHeader}
+        ListEmptyComponent={renderEmpty}
+        ListFooterComponent={renderFooter}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            colors={[COLORS.accent]}
+            tintColor={COLORS.accent}
+          />
+        }
+        onEndReached={handleLoadMore}
+        onEndReachedThreshold={0.5}
+        contentContainerStyle={styles.listContent}
+        showsVerticalScrollIndicator={false}
+      />
+
+      {/* Filter Modal */}
+      <FilterModal
+        visible={isFilterVisible}
+        onClose={() => setIsFilterVisible(false)}
+        onApply={(filters) => {
+          setPipelineFilter(filters.pipelineId || null);
+          setIsFilterVisible(false);
+        }}
+        pipelines={pipelines}
+        currentFilters={{
+          pipelineId: pipelineFilter,
+        }}
+      />
+
+      {/* Add Project Modal */}
+      <AddProjectForm
+        visible={isAddModalVisible}
+        onClose={() => setIsAddModalVisible(false)}
+        onSubmit={handleAddProject}
+        pipelines={pipelines}
+      />
     </SafeAreaView>
   );
 }
 
-// Styles remain the same
 const styles = StyleSheet.create({
-  container: { paddingHorizontal: 16, paddingBottom: 32 },
-  header: { fontSize: 26, fontWeight: '700', marginTop: 16, marginBottom: 12, color: '#1A1F36' },
-  topBar: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-  search: {
+  container: {
     flex: 1,
-    backgroundColor: '#F1F2F6',
-    padding: 12,
-    borderRadius: 10,
-    fontSize: 16,
-    marginRight: 8,
-    color: '#1A1F36',
+    backgroundColor: COLORS.background,
   },
-  filterButton: {
-    backgroundColor: '#00B3E6',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
-  },
-  filterButtonText: { color: '#fff', fontWeight: '600' },
-  filterRow: { flexDirection: 'row', marginBottom: 12 },
-  pill: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: '#F1F2F6',
-    marginRight: 8,
-  },
-  pillText: { color: '#1A1F36', fontSize: 14 },
-  pillActive: { backgroundColor: '#00B3E6' },
-  pillTextActive: { color: '#fff', fontWeight: '600' },
-  countText: { fontSize: 14, color: '#AAB2BD', marginBottom: 8 },
-  empty: { textAlign: 'center', color: '#AAB2BD', marginTop: 32 },
-  addButton: {
-    position: 'absolute',
-    bottom: 24,
-    right: 24,
-    backgroundColor: '#00B3E6',
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    justifyContent: 'center',
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowOffset: { width: 0, height: 3 },
-    shadowRadius: 5,
-    elevation: 6,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    backgroundColor: COLORS.background,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
   },
-  addIcon: {
-    color: '#fff',
+  title: {
     fontSize: 28,
-    fontWeight: 'bold',
-    lineHeight: 30,
+    fontWeight: '700',
+    color: COLORS.textDark,
   },
-  activeFilters: {
+  headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F1F2F6',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    marginBottom: 10,
-    alignSelf: 'flex-start',
   },
-  filterText: {
-    color: '#1A1F36',
-    fontSize: 13,
-    marginRight: 12,
+  headerButton: {
+    marginLeft: 16,
   },
-  clearText: {
-    color: '#00B3E6',
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.card,
+    borderRadius: RADIUS.input,
+    paddingHorizontal: 16,
+    marginHorizontal: 20,
+    marginTop: 16,
+    marginBottom: 12,
+    height: 44,
+    ...SHADOW.small,
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: FONT.input,
+    color: COLORS.textDark,
+  },
+  statsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    backgroundColor: COLORS.card,
+    marginHorizontal: 20,
+    marginBottom: 12,
+    borderRadius: RADIUS.card,
+    ...SHADOW.small,
+  },
+  statItem: {
+    alignItems: 'center',
+  },
+  statValue: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: COLORS.textDark,
+  },
+  statLabel: {
+    fontSize: FONT.meta,
+    color: COLORS.textGray,
+    marginTop: 2,
+  },
+  filterChips: {
+    marginBottom: 12,
+  },
+  filterChipsContent: {
+    paddingHorizontal: 20,
+    gap: 8,
+  },
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: COLORS.card,
+    borderRadius: 20,
+    marginRight: 8,
+    gap: 4,
+    ...SHADOW.small,
+  },
+  filterChipActive: {
+    backgroundColor: COLORS.accent,
+  },
+  filterChipText: {
+    fontSize: FONT.meta,
+    color: COLORS.textGray,
+    fontWeight: '500',
+  },
+  filterChipTextActive: {
+    color: '#fff',
+  },
+  listContent: {
+    paddingBottom: 20,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: FONT.input,
+    color: COLORS.textGray,
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 60,
+    paddingHorizontal: 40,
+  },
+  emptyText: {
+    fontSize: 18,
     fontWeight: '600',
-    fontSize: 13,
+    color: COLORS.textDark,
+    marginTop: 16,
+  },
+  emptySubtext: {
+    fontSize: FONT.input,
+    color: COLORS.textGray,
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  emptyButton: {
+    backgroundColor: COLORS.accent,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: RADIUS.button,
+    marginTop: 20,
+  },
+  emptyButtonText: {
+    color: '#fff',
+    fontSize: FONT.input,
+    fontWeight: '600',
+  },
+  footerLoader: {
+    paddingVertical: 20,
+    alignItems: 'center',
   },
 });

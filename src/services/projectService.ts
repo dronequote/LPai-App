@@ -1,4 +1,6 @@
 // services/projectService.ts
+// Updated: 2025-06-16
+
 import { BaseService, ServiceOptions } from './baseService';
 import { 
   Project, 
@@ -16,6 +18,15 @@ interface ProjectListOptions {
   status?: string;
   limit?: number;
   offset?: number;
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
+  search?: string;
+  pipelineId?: string;
+  pipelineStageId?: string;
+  contactId?: string;
+  hasQuote?: boolean;
+  startDate?: string;
+  endDate?: string;
 }
 
 interface ProjectDetailsOptions {
@@ -37,6 +48,9 @@ interface CreateProjectInput {
   scopeOfWork?: string;
   products?: string;
   pipelineId?: string;
+  pipelineStageId?: string;
+  monetaryValue?: number;
+  customFields?: Record<string, any>;
 }
 
 interface UpdateProjectInput {
@@ -49,6 +63,8 @@ interface UpdateProjectInput {
   customFields?: Record<string, any>;
   signedDate?: string;
   monetaryValue?: number;
+  pipelineId?: string;
+  pipelineStageId?: string;
 }
 
 interface PhotoUploadInput {
@@ -70,6 +86,20 @@ interface TimelineEventInput {
   metadata?: Record<string, any>;
 }
 
+interface BatchOperationInput {
+  action: 'update' | 'delete' | 'tag';
+  projectIds: string[];
+  data?: any;
+}
+
+interface ProjectStats {
+  total: number;
+  byStatus: Record<string, number>;
+  byPipeline: Record<string, number>;
+  totalValue: number;
+  averageValue: number;
+}
+
 class ProjectService extends BaseService {
   /**
    * List all projects with smart loading
@@ -79,11 +109,38 @@ class ProjectService extends BaseService {
     options: ProjectListOptions = {},
     serviceOptions?: ServiceOptions
   ): Promise<Project[]> {
-    const { includeRelated = false, status, limit = 50, offset = 0 } = options;
+    const { includeRelated = false, ...queryParams } = options;
 
-    const endpoint = '/api/projects';
-    const params: any = { locationId, limit, offset };
-    if (status) params.status = status;
+    // Build query string manually to ensure proper encoding
+    const params: Record<string, any> = {
+      locationId,
+      limit: queryParams.limit || 50,
+      offset: queryParams.offset || 0,
+    };
+    
+    // Add optional parameters
+    if (queryParams.status) params.status = queryParams.status;
+    if (queryParams.sortBy) params.sortBy = queryParams.sortBy;
+    if (queryParams.sortOrder) params.sortOrder = queryParams.sortOrder;
+    if (queryParams.search) params.search = queryParams.search;
+    if (queryParams.pipelineId) params.pipelineId = queryParams.pipelineId;
+    if (queryParams.pipelineStageId) params.pipelineStageId = queryParams.pipelineStageId;
+    if (queryParams.contactId) params.contactId = queryParams.contactId;
+    if (queryParams.hasQuote !== undefined) params.hasQuote = queryParams.hasQuote;
+    if (queryParams.startDate) params.startDate = queryParams.startDate;
+    if (queryParams.endDate) params.endDate = queryParams.endDate;
+
+    // Build query string manually
+    const queryString = Object.entries(params)
+      .filter(([_, value]) => value !== undefined && value !== null && value !== '')
+      .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+      .join('&');
+      
+    const endpoint = `/api/projects?${queryString}`;
+
+    if (__DEV__) {
+      console.log('[ProjectService] Fetching projects with URL:', endpoint);
+    }
 
     const projects = await this.get<Project[]>(
       endpoint,
@@ -188,7 +245,7 @@ class ProjectService extends BaseService {
     );
 
     // Invalidate project list cache
-    await this.clearCache(`@lpai_cache_GET_/api/projects_`);
+    await this.clearCache(`@lpai_cache_GET_/api/projects`);
 
     return newProject;
   }
@@ -223,6 +280,9 @@ class ProjectService extends BaseService {
     const cacheKey = `@lpai_cache_GET_/api/projects/${projectId}`;
     await this.cacheService.set(cacheKey, updated, { priority: 'high' });
 
+    // Clear list cache to refresh
+    await this.clearCache(`@lpai_cache_GET_/api/projects`);
+
     return updated;
   }
 
@@ -252,7 +312,7 @@ class ProjectService extends BaseService {
 
     // Remove from cache
     await this.clearCache(`@lpai_cache_GET_/api/projects/${projectId}`);
-    await this.clearCache(`@lpai_cache_GET_/api/projects_`);
+    await this.clearCache(`@lpai_cache_GET_/api/projects`);
   }
 
   /**
@@ -398,15 +458,49 @@ class ProjectService extends BaseService {
     query: string,
     serviceOptions?: ServiceOptions
   ): Promise<Project[]> {
-    // For now, fetch all and filter client-side
-    // TODO: Add backend search endpoint
-    const allProjects = await this.list(locationId, { limit: 1000 }, serviceOptions);
+    const endpoint = '/api/search/projects';
     
-    const searchLower = query.toLowerCase();
-    return allProjects.filter(project => 
-      project.title.toLowerCase().includes(searchLower) ||
-      project.contactName?.toLowerCase().includes(searchLower) ||
-      project.notes?.toLowerCase().includes(searchLower)
+    return this.post<Project[]>(
+      endpoint,
+      { locationId, query },
+      {
+        ...serviceOptions,
+        cache: false, // Don't cache search results
+      },
+      {
+        endpoint,
+        method: 'POST',
+        entity: 'project',
+      }
+    );
+  }
+
+  /**
+   * Batch operations
+   */
+  async batch(
+    locationId: string,
+    operation: BatchOperationInput,
+    serviceOptions?: ServiceOptions
+  ): Promise<any> {
+    const endpoint = '/api/projects/batch';
+    
+    return this.post<any>(
+      endpoint,
+      {
+        locationId,
+        ...operation,
+      },
+      {
+        ...serviceOptions,
+        offline: true,
+      },
+      {
+        endpoint,
+        method: 'POST',
+        entity: 'project',
+        priority: 'high',
+      }
     );
   }
 
@@ -416,71 +510,75 @@ class ProjectService extends BaseService {
   async getStats(
     locationId: string,
     serviceOptions?: ServiceOptions
-  ): Promise<{
-    total: number;
-    byStatus: Record<string, number>;
-    thisMonth: number;
-    thisWeek: number;
-  }> {
-    const projects = await this.list(locationId, {}, serviceOptions);
-    
-    const now = new Date();
-    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  ): Promise<ProjectStats> {
+    const endpoint = `/api/stats/projects?locationId=${locationId}`;
 
-    const stats = {
-      total: projects.length,
-      byStatus: {} as Record<string, number>,
-      thisMonth: 0,
-      thisWeek: 0,
-    };
-
-    projects.forEach(project => {
-      // Count by status
-      stats.byStatus[project.status] = (stats.byStatus[project.status] || 0) + 1;
-      
-      // Count recent
-      const createdAt = new Date(project.createdAt);
-      if (createdAt > monthAgo) stats.thisMonth++;
-      if (createdAt > weekAgo) stats.thisWeek++;
-    });
-
-    return stats;
-  }
-
-  /**
-   * Sync projects from GHL
-   */
-  async syncFromGHL(
-    locationId: string,
-    serviceOptions?: ServiceOptions
-  ): Promise<{ synced: number; errors: number }> {
-    const endpoint = '/api/sync/opportunities';
-
-    const result = await this.post<any>(
+    return this.get<ProjectStats>(
       endpoint,
-      { locationId, fullSync: true },
       {
         ...serviceOptions,
-        showError: false,
+        cache: { priority: 'medium', ttl: 10 * 60 * 1000 }, // 10 min
       },
       {
         endpoint,
-        method: 'POST',
+        method: 'GET',
         entity: 'project',
-        priority: 'low',
       }
     );
+  }
 
-    // Clear cache after sync
-    await this.clearCache('@lpai_cache_GET_/api/projects');
+  /**
+   * Duplicate project
+   */
+  async duplicate(
+    projectId: string,
+    locationId: string,
+    serviceOptions?: ServiceOptions
+  ): Promise<Project> {
+    // Get original project
+    const original = await this.getDetails(projectId, locationId);
+    
+    // Create new project with same data
+    const newProject = await this.create({
+      ...original,
+      title: `${original.title} (Copy)`,
+      locationId,
+      userId: this.userId!,
+      contactId: original.contactId,
+      // Reset some fields
+      status: 'open',
+      signedDate: undefined,
+      // Keep custom fields and other data
+      customFields: original.customFields,
+    }, serviceOptions);
 
-    return {
-      synced: result.created + result.updated,
-      errors: result.errors || 0,
-    };
+    return newProject;
+  }
+
+  /**
+   * Get project templates
+   */
+  async getTemplates(
+    locationId: string,
+    serviceOptions?: ServiceOptions
+  ): Promise<any[]> {
+    // TODO: Implement when backend supports templates
+    return [];
+  }
+
+  /**
+   * Create project from template
+   */
+  async createFromTemplate(
+    templateId: string,
+    data: Partial<CreateProjectInput>,
+    serviceOptions?: ServiceOptions
+  ): Promise<Project> {
+    // TODO: Implement when backend supports templates
+    // For now, just create a regular project
+    return this.create(data as CreateProjectInput, serviceOptions);
   }
 }
 
-// Export singleton instance
+// Create singleton instance
 export const projectService = new ProjectService();

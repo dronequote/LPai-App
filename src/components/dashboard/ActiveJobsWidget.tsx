@@ -1,4 +1,6 @@
 // src/components/dashboard/ActiveJobsWidget.tsx
+// Updated: 2025-06-16
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
@@ -34,6 +36,9 @@ export default function ActiveJobsWidget() {
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    if (__DEV__) {
+      console.log('🔄 [Dashboard] Loading dashboard data...');
+    }
     fetchActiveJobs();
   }, []);
 
@@ -55,21 +60,20 @@ export default function ActiveJobsWidget() {
     try {
       setError(null);
       
-      // Use projectService instead of direct API call
+      // Fetch all open projects first (not using status filter that causes issues)
       const projects = await projectService.list(user.locationId, {
-        status: 'active', // This might need adjustment based on your backend
-        limit: 10
-      }, {
-        locationId: user.locationId // Pass locationId in service options
+        limit: 50,
+        offset: 0
       });
       
-      // Filter for active statuses and map to Job format
+      // Filter for active statuses on the client side
+      const activeStatuses = ['open', 'in progress', 'scheduled', 'quoted'];
       const activeJobs = projects
-        .filter((p: Project) => ['in_progress', 'scheduled'].includes(p.status))
+        .filter((p: Project) => activeStatuses.includes(p.status?.toLowerCase()))
         .slice(0, 4)
         .map((p: Project) => ({
           _id: p._id,
-          title: p.title,
+          title: p.title || 'Untitled Project',
           contactName: p.contactName || p.contact?.name || 'Unknown',
           status: p.status,
           progress: calculateProgress(p),
@@ -95,35 +99,38 @@ export default function ActiveJobsWidget() {
     }
     
     // Otherwise use status-based defaults
-    switch (project.status) {
+    switch (project.status?.toLowerCase()) {
       case 'open': return 10;
-      case 'scheduled': return 30;
-      case 'in_progress': return 60;
+      case 'quoted': return 25;
+      case 'scheduled': return 40;
+      case 'in progress': return 60;
+      case 'job complete': return 100;
       default: return 0;
     }
   };
 
   const getStatusColor = (status: string) => {
-    switch (status) {
+    switch (status?.toLowerCase()) {
       case 'open': return '#00B3E6';
-      case 'scheduled': return '#FFA500';
-      case 'in_progress': return '#27AE60';
+      case 'quoted': return '#3498DB';
+      case 'scheduled': return '#9B59B6';
+      case 'in progress': return '#27AE60';
+      case 'job complete': return '#2ECC71';
       default: return COLORS.textGray;
     }
   };
 
   const getStatusLabel = (status: string) => {
-    switch (status) {
-      case 'open': return 'Open';
-      case 'scheduled': return 'Scheduled';
-      case 'in_progress': return 'In Progress';
-      default: return status;
-    }
+    // Convert to proper case
+    return status
+      .split(/[\s_-]/)
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ');
   };
 
   const getPriorityIcon = (priority?: string) => {
     switch (priority) {
-      case 'high': return 'alert-circle';
+      case 'high': return 'arrow-up-circle';
       case 'low': return 'arrow-down-circle';
       default: return 'remove-circle';
     }
@@ -131,14 +138,14 @@ export default function ActiveJobsWidget() {
 
   const getPriorityColor = (priority?: string) => {
     switch (priority) {
-      case 'high': return '#FF4757';
-      case 'low': return '#5F9EA0';
-      default: return COLORS.textGray;
+      case 'high': return '#E74C3C';
+      case 'low': return '#3498DB';
+      default: return '#F39C12';
     }
   };
 
   const handleJobPress = (job: Job) => {
-    navigation.navigate('ProjectDetail', { projectId: job._id });
+    navigation.navigate('ProjectDetailScreen', { projectId: job._id });
   };
 
   const handleViewAll = () => {
@@ -148,7 +155,8 @@ export default function ActiveJobsWidget() {
   if (loading) {
     return (
       <View style={styles.container}>
-        <View style={styles.loadingState}>
+        <Text style={styles.title}>Active Jobs</Text>
+        <View style={styles.loadingContainer}>
           <Text style={styles.loadingText}>Loading jobs...</Text>
         </View>
       </View>
@@ -158,8 +166,9 @@ export default function ActiveJobsWidget() {
   if (error) {
     return (
       <View style={styles.container}>
-        <View style={styles.errorState}>
-          <Ionicons name="alert-circle" size={32} color={COLORS.error} />
+        <Text style={styles.title}>Active Jobs</Text>
+        <View style={styles.errorContainer}>
+          <Ionicons name="alert-circle" size={24} color={COLORS.textGray} />
           <Text style={styles.errorText}>{error}</Text>
           <TouchableOpacity onPress={fetchActiveJobs} style={styles.retryButton}>
             <Text style={styles.retryText}>Retry</Text>
@@ -172,33 +181,24 @@ export default function ActiveJobsWidget() {
   return (
     <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
       <View style={styles.header}>
-        <View style={styles.titleRow}>
-          <Ionicons name="briefcase" size={20} color={COLORS.primary} />
-          <Text style={styles.title}>Active Jobs</Text>
-        </View>
+        <Text style={styles.title}>Active Jobs</Text>
         <TouchableOpacity onPress={handleViewAll}>
           <Text style={styles.viewAllText}>View All</Text>
         </TouchableOpacity>
       </View>
 
       {jobs.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Ionicons name="checkmark-circle" size={48} color={COLORS.success} />
-          <Text style={styles.emptyTitle}>No active jobs</Text>
-          <Text style={styles.emptySubtitle}>All caught up! 🎉</Text>
+        <View style={styles.emptyContainer}>
+          <Ionicons name="briefcase-outline" size={48} color={COLORS.textGray} />
+          <Text style={styles.emptyText}>No active jobs</Text>
+          <Text style={styles.emptySubtext}>Projects will appear here when they're active</Text>
         </View>
       ) : (
-        <ScrollView 
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.jobsList}
-        >
-          {jobs.map((job, index) => (
+        <ScrollView showsVerticalScrollIndicator={false}>
+          {jobs.map((job) => (
             <TouchableOpacity
               key={job._id}
-              style={[
-                styles.jobCard,
-                index === jobs.length - 1 && styles.lastJobCard
-              ]}
+              style={styles.jobCard}
               onPress={() => handleJobPress(job)}
               activeOpacity={0.7}
             >
@@ -207,25 +207,34 @@ export default function ActiveJobsWidget() {
                   <Text style={styles.jobTitle} numberOfLines={1}>
                     {job.title}
                   </Text>
-                  <Text style={styles.customerName} numberOfLines={1}>
+                  <Text style={styles.jobContact} numberOfLines={1}>
                     {job.contactName}
                   </Text>
                 </View>
                 <View style={styles.jobMeta}>
-                  {job.priority && (
-                    <Ionicons 
-                      name={getPriorityIcon(job.priority)} 
-                      size={16} 
-                      color={getPriorityColor(job.priority)} 
-                    />
-                  )}
-                  <View style={[styles.statusBadge, { backgroundColor: getStatusColor(job.status) }]}>
-                    <Text style={styles.statusText}>{getStatusLabel(job.status)}</Text>
+                  <Ionicons 
+                    name={getPriorityIcon(job.priority)} 
+                    size={20} 
+                    color={getPriorityColor(job.priority)} 
+                  />
+                  <View 
+                    style={[
+                      styles.statusBadge, 
+                      { backgroundColor: getStatusColor(job.status) }
+                    ]}
+                  >
+                    <Text style={styles.statusText}>
+                      {getStatusLabel(job.status)}
+                    </Text>
                   </View>
                 </View>
               </View>
 
               <View style={styles.progressContainer}>
+                <View style={styles.progressHeader}>
+                  <Text style={styles.progressLabel}>Progress</Text>
+                  <Text style={styles.progressPercent}>{job.progress}%</Text>
+                </View>
                 <View style={styles.progressBar}>
                   <View 
                     style={[
@@ -237,14 +246,13 @@ export default function ActiveJobsWidget() {
                     ]} 
                   />
                 </View>
-                <Text style={styles.progressText}>{job.progress}%</Text>
               </View>
 
               {job.dueDate && (
-                <View style={styles.dueDateRow}>
-                  <Ionicons name="calendar-outline" size={12} color={COLORS.textGray} />
-                  <Text style={styles.dueDateText}>
-                    Due {new Date(job.dueDate).toLocaleDateString()}
+                <View style={styles.dueDateContainer}>
+                  <Ionicons name="calendar-outline" size={14} color={COLORS.textGray} />
+                  <Text style={styles.dueDate}>
+                    Due: {new Date(job.dueDate).toLocaleDateString()}
                   </Text>
                 </View>
               )}
@@ -258,7 +266,7 @@ export default function ActiveJobsWidget() {
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.card,
     borderRadius: RADIUS.card,
     padding: 16,
     marginBottom: 16,
@@ -268,97 +276,87 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    marginBottom: 12,
   },
   title: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: COLORS.textDark,
-  },
-  viewAllText: {
-    fontSize: 14,
-    color: COLORS.primary,
-    fontWeight: '500',
-  },
-  loadingState: {
-    paddingVertical: 40,
-    alignItems: 'center',
-  },
-  loadingText: {
-    fontSize: 14,
-    color: COLORS.textGray,
-  },
-  errorState: {
-    paddingVertical: 32,
-    alignItems: 'center',
-    gap: 12,
-  },
-  errorText: {
-    fontSize: 14,
-    color: COLORS.error,
-    textAlign: 'center',
-  },
-  retryButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    borderRadius: RADIUS.button,
-    backgroundColor: COLORS.primary,
-  },
-  retryText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  emptyState: {
-    paddingVertical: 32,
-    alignItems: 'center',
-    gap: 8,
-  },
-  emptyTitle: {
-    fontSize: 16,
+    fontSize: FONT.sectionTitle,
     fontWeight: '600',
     color: COLORS.textDark,
   },
-  emptySubtitle: {
-    fontSize: 14,
+  viewAllText: {
+    fontSize: FONT.meta,
+    color: COLORS.accent,
+    fontWeight: '500',
+  },
+  loadingContainer: {
+    padding: 40,
+    alignItems: 'center',
+  },
+  loadingText: {
+    fontSize: FONT.meta,
     color: COLORS.textGray,
   },
-  jobsList: {
-    gap: 12,
+  errorContainer: {
+    padding: 20,
+    alignItems: 'center',
+  },
+  errorText: {
+    fontSize: FONT.meta,
+    color: COLORS.textGray,
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  retryButton: {
+    marginTop: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: COLORS.accent,
+    borderRadius: RADIUS.button,
+  },
+  retryText: {
+    color: '#fff',
+    fontSize: FONT.meta,
+    fontWeight: '500',
+  },
+  emptyContainer: {
+    padding: 40,
+    alignItems: 'center',
+  },
+  emptyText: {
+    fontSize: FONT.input,
+    color: COLORS.textDark,
+    marginTop: 12,
+  },
+  emptySubtext: {
+    fontSize: FONT.meta,
+    color: COLORS.textGray,
+    marginTop: 4,
+    textAlign: 'center',
   },
   jobCard: {
-    padding: 12,
-    borderRadius: RADIUS.small,
     backgroundColor: COLORS.background,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  lastJobCard: {
-    marginBottom: 0,
+    borderRadius: RADIUS.input,
+    padding: 12,
+    marginBottom: 8,
   },
   jobHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 12,
+    marginBottom: 8,
   },
   jobInfo: {
     flex: 1,
     marginRight: 12,
   },
   jobTitle: {
-    fontSize: 15,
+    fontSize: FONT.input,
     fontWeight: '600',
     color: COLORS.textDark,
     marginBottom: 2,
   },
-  customerName: {
-    fontSize: 13,
+  jobContact: {
+    fontSize: FONT.meta,
     color: COLORS.textGray,
   },
   jobMeta: {
@@ -367,26 +365,36 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   statusBadge: {
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 12,
+    borderRadius: RADIUS.pill,
   },
   statusText: {
+    color: '#fff',
     fontSize: 11,
     fontWeight: '600',
-    color: '#fff',
-    textTransform: 'uppercase',
   },
   progressContainer: {
+    marginTop: 8,
+  },
+  progressHeader: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
+    marginBottom: 4,
+  },
+  progressLabel: {
+    fontSize: FONT.meta,
+    color: COLORS.textGray,
+  },
+  progressPercent: {
+    fontSize: FONT.meta,
+    fontWeight: '600',
+    color: COLORS.textDark,
   },
   progressBar: {
-    flex: 1,
     height: 6,
-    backgroundColor: COLORS.inputBorder,
+    backgroundColor: COLORS.border,
     borderRadius: 3,
     overflow: 'hidden',
   },
@@ -394,20 +402,14 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 3,
   },
-  progressText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: COLORS.textGray,
-    minWidth: 35,
-    textAlign: 'right',
-  },
-  dueDateRow: {
+  dueDateContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginTop: 8,
     gap: 4,
   },
-  dueDateText: {
-    fontSize: 12,
+  dueDate: {
+    fontSize: FONT.meta,
     color: COLORS.textGray,
   },
 });

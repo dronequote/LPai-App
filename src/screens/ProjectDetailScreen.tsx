@@ -1,3 +1,6 @@
+// src/screens/ProjectDetailScreen.tsx
+// Updated: 2025-06-16
+
 import React, { useEffect, useState } from 'react';
 import {
   View,
@@ -65,7 +68,27 @@ export default function ProjectDetailScreen() {
   const { user } = useAuth();
   const { calendarMap } = useCalendar();
   
-  const { project: initialProject } = route.params as ProjectDetailRouteParams;
+  // FIX: Add null check for route params
+  const params = route.params as ProjectDetailRouteParams;
+  const initialProject = params?.project;
+
+  // Add null check before rendering
+  if (!initialProject || !initialProject._id) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <Ionicons name="alert-circle" size={48} color={COLORS.textGray} />
+          <Text style={styles.loadingText}>No project data available</Text>
+          <TouchableOpacity 
+            onPress={() => navigation.goBack()} 
+            style={{ marginTop: 20 }}
+          >
+            <Text style={{ color: COLORS.accent, fontSize: FONT.input }}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   const [project, setProject] = useState<Project>(initialProject);
   const [contact, setContact] = useState<Contact | null>(null);
@@ -115,18 +138,50 @@ export default function ProjectDetailScreen() {
         setProducts(enhancedProject.products || '');
         
         // Set enhanced data from API response
-        setContact(enhancedProject.contact);
         setOtherProjects(enhancedProject.otherProjects || []);
         setAppointments(enhancedProject.upcomingAppointments || []);
         setMilestones(enhancedProject.milestones || []);
         setPhotos(enhancedProject.photos || []);
         setDocuments(enhancedProject.documents || []);
+        
+        // Handle contact - use full contact if available, otherwise create a minimal contact object
+        if (enhancedProject.contact) {
+          setContact(enhancedProject.contact);
+        } else if (enhancedProject.contactId) {
+          // Create a minimal contact object from project data
+          const minimalContact: Contact = {
+            _id: enhancedProject.contactId,
+            firstName: enhancedProject.contactName?.split(' ')[0] || '',
+            lastName: enhancedProject.contactName?.split(' ').slice(1).join(' ') || '',
+            email: enhancedProject.contactEmail || '',
+            phone: enhancedProject.contactPhone || '',
+            locationId: user?.locationId || '',
+          };
+          setContact(minimalContact);
+          
+          // Try to fetch the full contact details
+          try {
+            const contactRes = await api.get(`/api/contacts/${enhancedProject.contactId}`, {
+              params: { locationId: user?.locationId },
+            });
+            if (contactRes.data) {
+              setContact(contactRes.data);
+            }
+          } catch (contactError) {
+            console.log('Could not fetch full contact details, using project contact info');
+          }
+        }
 
         // Fetch all contacts for appointment modal
-        const contactsRes = await api.get('/api/contacts', {
-          params: { locationId: user?.locationId },
-        });
-        setAllContacts(contactsRes.data || []);
+        try {
+          const contactsRes = await api.get('/api/contacts', {
+            params: { locationId: user?.locationId },
+          });
+          setAllContacts(contactsRes.data || []);
+        } catch (contactError) {
+          console.error('Failed to fetch contacts:', contactError);
+          setAllContacts([]); // Set empty array on error
+        }
 
       } catch (err) {
         console.error('Failed to fetch project data:', err);
@@ -142,36 +197,32 @@ export default function ProjectDetailScreen() {
   }, [project._id, user?.locationId]);
 
   const handleSave = async () => {
+    if (!title) {
+      Alert.alert('Error', 'Project title is required');
+      return;
+    }
+
     try {
       setSaving(true);
-      const response = await api.patch(
-        `/api/projects/${project._id}?locationId=${user?.locationId}`,
-        {
-          title,
-          status,
-          notes,
-          scopeOfWork,
-          products,
-        }
-      );
-
-      // ✅ CHECK FOR SUCCESS FIELD
-      if (response.data.success) {
-        setProject({ ...response.data.project, title, status, notes, scopeOfWork, products });
-        setEditing(false);
-        Alert.alert('Success', 'Project updated successfully');
-      } else {
-        throw new Error(response.data.error || 'Update failed');
-      }
       
+      // Update project with all fields
+      const updatedProject = await api.patch(`/api/projects/${project._id}`, {
+        title,
+        status,
+        notes,
+        scopeOfWork,
+        products,
+        milestones,
+        locationId: user?.locationId,
+      });
+
+      setProject(updatedProject.data);
+      setEditing(false);
+      Alert.alert('Success', 'Project updated successfully');
     } catch (err) {
-  console.error('Full error object:', err);
-  console.error('Error response:', err.response);
-  console.error('Error status:', err.response?.status);
-  console.error('Error data:', err.response?.data);
-  console.error('Failed to update project:', err);
-  Alert.alert('Error', 'Failed to update project');
-} finally {
+      console.error('Failed to update project:', err);
+      Alert.alert('Error', 'Failed to update project');
+    } finally {
       setSaving(false);
     }
   };
@@ -182,33 +233,58 @@ export default function ProjectDetailScreen() {
     }
   };
 
-  // 📷 PHOTO CAPTURE FUNCTION - Uncomment when ready to use
-  const handleTakePhoto = async () => {
-    Alert.alert('Photo Feature', 'Photo capture will be available once expo-image-picker is set up!');
+  const handleCreateAppointment = async (appointmentData: any) => {
+    try {
+      await api.post('/api/appointments', {
+        ...appointmentData,
+        contactId: contact?._id || project.contactId, // Use contact._id or fallback to project.contactId
+        userId: user?._id,
+        locationId: user?.locationId,
+      });
+      
+      setShowCreateAppointment(false);
+      
+      // Refresh appointments
+      const appointmentsRes = await api.get('/api/appointments', {
+        params: { locationId: user?.locationId },
+      });
+      
+      const projectAppointments = appointmentsRes.data?.filter(
+        (apt: Appointment) => apt.contactId === contact?._id
+      ) || [];
+      
+      setAppointments(projectAppointments);
+    } catch (err) {
+      console.error('Failed to create appointment:', err);
+      Alert.alert('Error', 'Failed to create appointment');
+    }
+  };
+
+  // 📷 PHOTO PICKER FUNCTION - Uncomment when ready to use
+  const handlePickPhoto = () => {
+    Alert.alert('Photo Feature', 'Photo upload will be available once expo-image-picker is set up!');
     
     /*
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Camera permission is required to take photos');
-      return;
-    }
+    const options = {
+      title: 'Add Project Photo',
+      storageOptions: {
+        skipBackup: true,
+        path: 'images',
+      },
+    };
 
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 0.8,
-    });
+    ImagePicker.launchImageLibraryAsync(options, (response) => {
+      if (response.didCancel || response.error) {
+        return;
+      }
 
-    if (!result.canceled && result.assets[0]) {
       const newPhoto: ProjectPhoto = {
         id: Date.now().toString(),
-        uri: result.assets[0].uri,
+        uri: response.uri,
         timestamp: new Date().toISOString(),
       };
       setPhotos([...photos, newPhoto]);
-      Alert.alert('Success', 'Photo added to project!');
-    }
+    });
     */
   };
 
@@ -403,20 +479,17 @@ export default function ProjectDetailScreen() {
               <Text style={styles.label}>Status</Text>
               {editing ? (
                 <View style={styles.dropdownContainer}>
-                  <TouchableOpacity
+                  <TouchableOpacity 
                     style={styles.dropdown}
                     onPress={() => setShowStatusDropdown(!showStatusDropdown)}
                   >
                     <Text style={styles.dropdownText}>{status}</Text>
                     <Ionicons name="chevron-down" size={20} color={COLORS.textGray} />
                   </TouchableOpacity>
+                  
                   {showStatusDropdown && (
                     <View style={styles.dropdownOptions}>
-                      <ScrollView 
-                        style={styles.optionsScrollView}
-                        nestedScrollEnabled={true}
-                        showsVerticalScrollIndicator={true}
-                      >
+                      <ScrollView style={styles.optionsScrollView}>
                         {STATUS_OPTIONS.map((option) => (
                           <TouchableOpacity
                             key={option}
@@ -434,43 +507,14 @@ export default function ProjectDetailScreen() {
                   )}
                 </View>
               ) : (
-                <Text style={[styles.statusBadge, { backgroundColor: getStatusColor(project.status) }]}>
+                <Text 
+                  style={[
+                    styles.statusBadge,
+                    { backgroundColor: getStatusColor(project.status) }
+                  ]}
+                >
                   {project.status}
                 </Text>
-              )}
-            </View>
-
-            {/* Scope of Work */}
-            <View style={styles.fieldContainer}>
-              <Text style={styles.label}>Scope of Work</Text>
-              {editing ? (
-                <TextInput
-                  style={[styles.input, styles.textArea]}
-                  value={scopeOfWork}
-                  onChangeText={setScopeOfWork}
-                  placeholder="Describe the scope of work"
-                  multiline
-                  numberOfLines={3}
-                />
-              ) : (
-                <Text style={styles.value}>{project.scopeOfWork || 'No scope defined'}</Text>
-              )}
-            </View>
-
-            {/* Products */}
-            <View style={styles.fieldContainer}>
-              <Text style={styles.label}>Products/Materials</Text>
-              {editing ? (
-                <TextInput
-                  style={[styles.input, styles.textArea]}
-                  value={products}
-                  onChangeText={setProducts}
-                  placeholder="List products and materials"
-                  multiline
-                  numberOfLines={3}
-                />
-              ) : (
-                <Text style={styles.value}>{project.products || 'No products listed'}</Text>
               )}
             </View>
 
@@ -482,19 +526,50 @@ export default function ProjectDetailScreen() {
                   style={[styles.input, styles.textArea]}
                   value={notes}
                   onChangeText={setNotes}
-                  placeholder="Project notes"
+                  placeholder="Project notes..."
                   multiline
-                  numberOfLines={3}
                 />
               ) : (
                 <Text style={styles.value}>{project.notes || 'No notes'}</Text>
               )}
             </View>
 
-            {/* Save button when editing */}
+            {/* Scope of Work */}
+            <View style={styles.fieldContainer}>
+              <Text style={styles.label}>Scope of Work</Text>
+              {editing ? (
+                <TextInput
+                  style={[styles.input, styles.textArea]}
+                  value={scopeOfWork}
+                  onChangeText={setScopeOfWork}
+                  placeholder="Describe the work to be done..."
+                  multiline
+                />
+              ) : (
+                <Text style={styles.value}>{project.scopeOfWork || 'Not specified'}</Text>
+              )}
+            </View>
+
+            {/* Products */}
+            <View style={styles.fieldContainer}>
+              <Text style={styles.label}>Products</Text>
+              {editing ? (
+                <TextInput
+                  style={[styles.input, styles.textArea]}
+                  value={products}
+                  onChangeText={setProducts}
+                  placeholder="List products/materials..."
+                  multiline
+                />
+              ) : (
+                <Text style={styles.value}>{project.products || 'Not specified'}</Text>
+              )}
+            </View>
+
+            {/* Save Button */}
             {editing && (
-              <TouchableOpacity
-                style={styles.saveButton}
+              <TouchableOpacity 
+                style={[styles.saveButton, saving && { opacity: 0.7 }]}
                 onPress={handleSave}
                 disabled={saving}
               >
@@ -506,21 +581,21 @@ export default function ProjectDetailScreen() {
               </TouchableOpacity>
             )}
 
-            {/* Project dates */}
+            {/* Dates */}
             <View style={styles.dateContainer}>
               <Text style={styles.dateText}>
                 Created: {new Date(project.createdAt).toLocaleDateString()}
               </Text>
-              {project.updatedAt && (
+              {project.signedDate && (
                 <Text style={styles.dateText}>
-                  Updated: {new Date(project.updatedAt).toLocaleDateString()}
+                  Signed: {new Date(project.signedDate).toLocaleDateString()}
                 </Text>
               )}
             </View>
           </View>
 
           {/* Quick Actions */}
-          {!editing && contact && (
+          {!editing && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Quick Actions</Text>
               <View style={styles.actionGrid}>
@@ -528,23 +603,28 @@ export default function ProjectDetailScreen() {
                   <Ionicons name="call" size={24} color={COLORS.accent} />
                   <Text style={styles.actionText}>Call</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.actionButton} onPress={handleTextContact}>
-                  <Ionicons name="chatbubble" size={24} color={COLORS.accent} />
-                  <Text style={styles.actionText}>Text</Text>
-                </TouchableOpacity>
+                
                 <TouchableOpacity style={styles.actionButton} onPress={handleEmailContact}>
                   <Ionicons name="mail" size={24} color={COLORS.accent} />
                   <Text style={styles.actionText}>Email</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.actionButton} onPress={handleTakePhoto}>
-                  <Ionicons name="camera" size={24} color={COLORS.accent} />
-                  <Text style={styles.actionText}>Photo</Text>
+                
+                <TouchableOpacity style={styles.actionButton} onPress={handleTextContact}>
+                  <Ionicons name="chatbox" size={24} color={COLORS.accent} />
+                  <Text style={styles.actionText}>Text</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.actionButton} onPress={handleMarkComplete}>
-                  <Ionicons name="checkmark-circle" size={24} color="#27AE60" />
-                  <Text style={[styles.actionText, { color: '#27AE60' }]}>Complete</Text>
+                
+                <TouchableOpacity style={styles.actionButton} onPress={() => setShowCreateAppointment(true)}>
+                  <Ionicons name="calendar" size={24} color="#3498DB" />
+                  <Text style={[styles.actionText, { color: '#3498DB' }]}>Schedule</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.actionButton} onPress={() => Alert.alert('Coming Soon', 'Invoice generation feature coming soon!')}>
+                
+                <TouchableOpacity style={styles.actionButton} onPress={() => navigation.navigate('QuoteBuilder', { project })}>
+                  <Ionicons name="document-text" size={24} color="#9B59B6" />
+                  <Text style={[styles.actionText, { color: '#9B59B6' }]}>Quote</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity style={styles.actionButton} onPress={() => Alert.alert('Invoice', 'Invoice generation coming soon!')}>
                   <Ionicons name="receipt" size={24} color="#F39C12" />
                   <Text style={[styles.actionText, { color: '#F39C12' }]}>Invoice</Text>
                 </TouchableOpacity>
@@ -591,35 +671,45 @@ export default function ProjectDetailScreen() {
                 ]}>
                   {milestone.title}
                 </Text>
-                <TouchableOpacity
-                  style={styles.deleteButton}
-                  onPress={() => deleteMilestone(milestone.id)}
-                >
-                  <Ionicons name="trash-outline" size={16} color={COLORS.textRed} />
-                </TouchableOpacity>
+                {editing && (
+                  <TouchableOpacity
+                    onPress={() => deleteMilestone(milestone.id)}
+                    style={styles.deleteButton}
+                  >
+                    <Ionicons name="trash-outline" size={20} color="#E74C3C" />
+                  </TouchableOpacity>
+                )}
               </View>
             ))}
             
-            {/* Add new milestone */}
-            <View style={styles.addMilestoneRow}>
-              <TextInput
-                style={styles.milestoneInput}
-                value={newMilestone}
-                onChangeText={setNewMilestone}
-                placeholder="Add new milestone..."
-                onSubmitEditing={addMilestone}
-              />
-              <TouchableOpacity onPress={addMilestone} style={styles.addMilestoneButton}>
-                <Ionicons name="add" size={20} color={COLORS.accent} />
-              </TouchableOpacity>
-            </View>
+            {editing && (
+              <View style={styles.addMilestoneRow}>
+                <TextInput
+                  style={styles.milestoneInput}
+                  value={newMilestone}
+                  onChangeText={setNewMilestone}
+                  placeholder="Add a milestone..."
+                  onSubmitEditing={addMilestone}
+                />
+                <TouchableOpacity
+                  style={styles.addMilestoneButton}
+                  onPress={addMilestone}
+                >
+                  <Ionicons name="add" size={24} color="#fff" />
+                </TouchableOpacity>
+              </View>
+            )}
+            
+            {milestones.length === 0 && !editing && (
+              <Text style={styles.emptyText}>No milestones added yet</Text>
+            )}
           </View>
 
           {/* Photos */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Project Photos</Text>
-              <TouchableOpacity style={styles.addButton} onPress={handleTakePhoto}>
+              <Text style={styles.sectionTitle}>Photos</Text>
+              <TouchableOpacity style={styles.addButton} onPress={handlePickPhoto}>
                 <Ionicons name="camera" size={16} color="#fff" />
                 <Text style={styles.addButtonText}>Add Photo</Text>
               </TouchableOpacity>
@@ -660,29 +750,29 @@ export default function ProjectDetailScreen() {
             ) : (
               documents.map((doc) => (
                 <View key={doc.id} style={styles.documentItem}>
-                  <Ionicons name="document-text" size={24} color={COLORS.accent} />
+                  <Ionicons name="document-text" size={32} color={COLORS.accent} />
                   <View style={styles.documentInfo}>
                     <Text style={styles.documentName}>{doc.name}</Text>
                     <Text style={styles.documentMeta}>
-                      {new Date(doc.uploadDate).toLocaleDateString()} • {Math.round(doc.size / 1024)}KB
+                      {(doc.size / 1024).toFixed(1)} KB • {new Date(doc.uploadDate).toLocaleDateString()}
                     </Text>
                   </View>
                   <TouchableOpacity
-                    style={styles.documentDeleteButton}
                     onPress={() => deleteDocument(doc.id)}
+                    style={styles.documentDeleteButton}
                   >
-                    <Ionicons name="trash-outline" size={20} color={COLORS.textRed} />
+                    <Ionicons name="trash-outline" size={20} color="#E74C3C" />
                   </TouchableOpacity>
                 </View>
               ))
             )}
           </View>
 
-          {/* Customer Appointments */}
-          {contact && (
+          {/* Appointments */}
+          {appointments.length > 0 && (
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Upcoming Appointments</Text>
+                <Text style={styles.sectionTitle}>Appointments</Text>
                 <TouchableOpacity 
                   style={styles.addButton} 
                   onPress={() => setShowCreateAppointment(true)}
@@ -709,21 +799,32 @@ export default function ProjectDetailScreen() {
             </View>
           )}
 
-          {/* Other Projects */}
+          {/* Other Projects - FIX: Update ProjectCard usage */}
           {contact && otherProjects.length > 0 && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Other Projects for {contact.firstName}</Text>
               {otherProjects.map((proj) => (
                 <ProjectCard
                   key={proj._id}
-                  title={proj.title}
-                  name={`${contact.firstName} ${contact.lastName}`}
-                  email={contact.email}
-                  phone={contact.phone}
-                  status={proj.status}
+                  project={proj}
                   onPress={() => navigation.navigate('ProjectDetailScreen', { project: proj })}
                 />
               ))}
+            </View>
+          )}
+
+          {/* Complete Project Button */}
+          {project.status !== 'Job Complete' && project.status !== 'Cancelled' && !editing && (
+            <View style={styles.section}>
+              <TouchableOpacity 
+                style={[styles.saveButton, { backgroundColor: '#27AE60' }]}
+                onPress={handleMarkComplete}
+              >
+                <Ionicons name="checkmark-circle" size={20} color="#fff" />
+                <Text style={[styles.saveButtonText, { marginLeft: 8 }]}>
+                  Mark Project Complete
+                </Text>
+              </TouchableOpacity>
             </View>
           )}
 
@@ -735,53 +836,23 @@ export default function ProjectDetailScreen() {
         <CreateAppointmentModal
           visible={showCreateAppointment}
           onClose={() => setShowCreateAppointment(false)}
-          onSubmit={async (appointmentData: any) => {
-            try {
-              await api.post('/api/appointments', {
-                ...appointmentData,
-                contactId: contact?._id,
-                userId: user?._id,
-                locationId: user?.locationId,
-              });
-              setShowCreateAppointment(false);
-              
-              // Refresh appointments
-              const appointmentsRes = await api.get('/api/appointments', {
-                params: { locationId: user?.locationId },
-              });
-              const now = new Date();
-              const contactAppointments = (appointmentsRes.data || [])
-                .filter((apt: Appointment) => apt.contactId === contact?._id)
-                .filter((apt: Appointment) => new Date(apt.start || apt.time) > now)
-                .sort((a: Appointment, b: Appointment) => 
-                  new Date(a.start || a.time).getTime() - new Date(b.start || b.time).getTime()
-                )
-                .slice(0, 3);
-              setAppointments(contactAppointments);
-              
-              Alert.alert('Success', 'Appointment created successfully');
-            } catch (err) {
-              console.error('Failed to create appointment:', err);
-              Alert.alert('Error', 'Failed to create appointment');
-            }
-          }}
-          contacts={allContacts}
-          calendars={[]} // Will be loaded by the modal via context
-          selectedDate={new Date()}
+          onSubmit={handleCreateAppointment}
+          contacts={allContacts || []} // Add fallback empty array
+          preSelectedContact={contact}
         />
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
-const getStatusColor = (status: string) => {
+const getStatusColor = (status: string): string => {
   switch (status) {
-    case 'Open': return '#3498db';
-    case 'Quoted': return '#f1c40f';
-    case 'Scheduled': return '#9b59b6';
-    case 'In Progress': return '#e67e22';
-    case 'Job Complete': return '#27ae60';
-    case 'Cancelled': return '#e74c3c';
+    case 'Open': return COLORS.primary;
+    case 'Quoted': return '#3498DB';
+    case 'Scheduled': return '#9B59B6';
+    case 'In Progress': return '#27AE60';
+    case 'Job Complete': return '#2ECC71';
+    case 'Cancelled': return '#E74C3C';
     default: return COLORS.textGray;
   }
 };
@@ -795,12 +866,11 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 20,
   },
   loadingText: {
+    marginTop: 12,
     fontSize: FONT.input,
     color: COLORS.textGray,
-    marginTop: 16,
   },
   header: {
     flexDirection: 'row',
@@ -809,21 +879,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 16,
     backgroundColor: COLORS.card,
-    ...SHADOW.card,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
   },
   backButton: {
-    padding: 8,
+    padding: 4,
   },
   headerTitle: {
-    fontSize: FONT.sectionTitle,
+    fontSize: 18,
     fontWeight: '600',
     color: COLORS.textDark,
-    flex: 1,
-    textAlign: 'center',
-    marginHorizontal: 16,
   },
   editButton: {
-    padding: 8,
+    padding: 4,
   },
   content: {
     flex: 1,
