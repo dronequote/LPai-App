@@ -1,4 +1,7 @@
 // src/screens/QuotePresentationScreen.tsx
+// Updated: 2025-06-17
+// Using quoteService and locationService instead of direct API calls
+
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
@@ -17,7 +20,8 @@ import {
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
-import api from '../lib/api';
+import { quoteService } from '../services/quoteService';
+import { locationService } from '../services/locationService';
 import BlockRenderer from '../components/BlockRenderer';
 import PublishModal from '../components/PublishModal'; // NEW IMPORT
 
@@ -143,9 +147,8 @@ const QuotePresentationScreen = () => {
       if (quoteId) {
         console.log('[QuotePresentation] Fetching fresh quote data for ID:', quoteId);
         dataPromises.push(
-          api.get(`/api/quotes/${quoteId}`, {
-            params: { locationId: user.locationId }
-          }).then(response => ({ type: 'quote', data: response.data }))
+          quoteService.getDetails(quoteId, user.locationId)
+            .then(data => ({ type: 'quote', data }))
         );
       } else if (fallbackQuote) {
         console.log('[QuotePresentation] Using fallback quote data');
@@ -157,13 +160,12 @@ const QuotePresentationScreen = () => {
       }
 
       dataPromises.push(
-        api.get(`/api/locations/byLocation`, {
-          params: { locationId: user.locationId }
-        }).then(response => ({ type: 'company', data: response.data }))
-        .catch(error => {
-          console.warn('[QuotePresentation] Company data fetch failed, using defaults:', error);
-          return { type: 'company', data: {} };
-        })
+        locationService.getDetails(user.locationId)
+          .then(data => ({ type: 'company', data }))
+          .catch(error => {
+            console.warn('[QuotePresentation] Company data fetch failed, using defaults:', error);
+            return { type: 'company', data: {} };
+          })
       );
 
       const results = await Promise.allSettled(dataPromises);
@@ -306,14 +308,15 @@ const QuotePresentationScreen = () => {
       // Publish first
       try {
         setPublishing(true);
-        const response = await api.patch(`/api/quotes/${quote._id}/publish`, {
-          locationId: user.locationId,
-          userId: user._id
-        });
+        const response = await quoteService.publish(
+          quote._id,
+          user.locationId,
+          user._id
+        );
 
-        if (response.data.success) {
+        if (response.success) {
           // Copy web link to clipboard
-          const webLink = response.data.webLink.url;
+          const webLink = response.webLink.url;
           // TODO: Copy to clipboard functionality
           Alert.alert(
             'Quote Published & Link Copied!', 
@@ -379,12 +382,13 @@ const QuotePresentationScreen = () => {
       
       // Step 1: Publish the quote if it's still draft
       if (quote.status === 'draft') {
-        const publishResponse = await api.patch(`/api/quotes/${quote._id}/publish`, {
-          locationId: user.locationId,
-          userId: user._id
-        });
+        const publishResponse = await quoteService.publish(
+          quote._id,
+          user.locationId,
+          user._id
+        );
 
-        if (!publishResponse.data.success) {
+        if (!publishResponse.success) {
           throw new Error('Failed to publish quote');
         }
 

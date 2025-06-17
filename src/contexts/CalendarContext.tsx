@@ -1,5 +1,6 @@
+// Updated: 2025-06-17
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
-import api from '../lib/api';
+import { locationService } from '../services/locationService';
 import { useAuth } from './AuthContext';
 import type { Calendar } from '../../packages/types/dist';
 
@@ -22,11 +23,9 @@ export function CalendarProvider({ children }: { children: React.ReactNode }) {
   const refetchCalendars = async () => {
     if (!user?.locationId) return;
     try {
-      const res = await api.get('/api/locations/byLocation', {
-        params: { locationId: user.locationId },
-      });
-      if (res.data && Array.isArray(res.data.calendars)) {
-        setCalendars(res.data.calendars);
+      const locationData = await locationService.getDetails(user.locationId);
+      if (locationData && Array.isArray(locationData.calendars)) {
+        setCalendars(locationData.calendars);
       } else {
         setCalendars([]);
       }

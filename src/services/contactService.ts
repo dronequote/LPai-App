@@ -29,6 +29,7 @@ interface UpdateContactInput {
 }
 
 class ContactService extends BaseService {
+  protected serviceName = 'contacts';
   /**
    * Get contacts from MongoDB (already synced from GHL)
    */

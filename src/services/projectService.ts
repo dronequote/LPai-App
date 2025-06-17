@@ -1,7 +1,9 @@
 // services/projectService.ts
-// Updated: 2025-06-16
+// Updated: 2025-06-17
 
 import { BaseService, ServiceOptions } from './baseService';
+import { cacheService } from './cacheService';
+import api from '../lib/api';
 import { 
   Project, 
   Contact, 
@@ -42,7 +44,6 @@ interface CreateProjectInput {
   title: string;
   contactId: string;
   userId: string;
-  locationId: string;
   status?: string;
   notes?: string;
   scopeOfWork?: string;
@@ -65,6 +66,9 @@ interface UpdateProjectInput {
   monetaryValue?: number;
   pipelineId?: string;
   pipelineStageId?: string;
+  photos?: ProjectPhoto[];
+  documents?: ProjectDocument[];
+  timeline?: ProjectTimelineEntry[];
 }
 
 interface PhotoUploadInput {
@@ -101,19 +105,20 @@ interface ProjectStats {
 }
 
 class ProjectService extends BaseService {
+  protected serviceName = 'projects';
+  
   /**
    * List all projects with smart loading
+   * BaseService automatically includes locationId from auth context
    */
   async list(
-    locationId: string,
     options: ProjectListOptions = {},
-    serviceOptions?: ServiceOptions
+    serviceOptions: ServiceOptions = {}
   ): Promise<Project[]> {
     const { includeRelated = false, ...queryParams } = options;
 
-    // Build query string manually to ensure proper encoding
+    // Build params - BaseService adds locationId automatically
     const params: Record<string, any> = {
-      locationId,
       limit: queryParams.limit || 50,
       offset: queryParams.offset || 0,
     };
@@ -130,28 +135,16 @@ class ProjectService extends BaseService {
     if (queryParams.startDate) params.startDate = queryParams.startDate;
     if (queryParams.endDate) params.endDate = queryParams.endDate;
 
-    // Build query string manually
-    const queryString = Object.entries(params)
-      .filter(([_, value]) => value !== undefined && value !== null && value !== '')
-      .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
-      .join('&');
-      
-    const endpoint = `/api/projects?${queryString}`;
-
     if (__DEV__) {
-      console.log('[ProjectService] Fetching projects with URL:', endpoint);
+      console.log('[ProjectService] Fetching projects with params:', params);
     }
 
     const projects = await this.get<Project[]>(
-      endpoint,
+      '/api/projects',
       {
-        ...serviceOptions,
+        params,
         cache: { priority: 'high', ttl: 5 * 60 * 1000 }, // 5 min cache
-      },
-      {
-        endpoint,
-        method: 'GET',
-        entity: 'project',
+        ...serviceOptions,
       }
     );
 
@@ -161,7 +154,7 @@ class ProjectService extends BaseService {
       const enrichedProjects = await Promise.all(
         projects.map(async (project) => {
           try {
-            const details = await this.getDetails(project._id, locationId, {
+            const details = await this.getDetails(project._id, {
               includeContact: true,
               includeQuotes: false, // Don't fetch heavy data in list
             });
@@ -179,12 +172,12 @@ class ProjectService extends BaseService {
 
   /**
    * Get project with all details
+   * BaseService automatically includes locationId
    */
   async getDetails(
     projectId: string,
-    locationId: string,
     options: ProjectDetailsOptions = {},
-    serviceOptions?: ServiceOptions
+    serviceOptions: ServiceOptions = {}
   ): Promise<Project> {
     const {
       includeContact = true,
@@ -196,123 +189,101 @@ class ProjectService extends BaseService {
     } = options;
 
     // Build query params based on options
-    const params = new URLSearchParams({ locationId });
-    if (includeContact) params.append('includeContact', 'true');
-    if (includeQuotes) params.append('includeQuotes', 'true');
-    if (includeAppointments) params.append('includeAppointments', 'true');
-
-    const endpoint = `/api/projects/${projectId}?${params.toString()}`;
+    const params: Record<string, any> = {};
+    if (includeContact) params.includeContact = true;
+    if (includeQuotes) params.includeQuotes = true;
+    if (includeAppointments) params.includeAppointments = true;
 
     const project = await this.get<Project>(
-      endpoint,
+      `/api/projects/${projectId}`,
       {
-        ...serviceOptions,
+        params,
         cache: { priority: 'high' },
-      },
-      {
-        endpoint,
-        method: 'GET',
-        entity: 'project',
+        ...serviceOptions,
       }
     );
 
-    // The backend already returns enhanced data, but we can add more if needed
+    // The backend already returns enhanced data
     return project;
   }
 
   /**
    * Create new project
+   * BaseService automatically includes locationId in the body
    */
   async create(
     data: CreateProjectInput,
-    serviceOptions?: ServiceOptions
+    serviceOptions: ServiceOptions = {}
   ): Promise<Project> {
-    const endpoint = '/api/projects';
+    // Get userId from auth context if not provided
+    const authContext = this.getAuthContext();
+    const createData = {
+      ...data,
+      userId: data.userId || authContext.userId,
+    };
 
     const newProject = await this.post<Project>(
-      endpoint,
-      data,
+      '/api/projects',
+      createData,
       {
-        ...serviceOptions,
         offline: true,
-      },
-      {
-        endpoint,
-        method: 'POST',
-        entity: 'project',
-        priority: 'high',
+        ...serviceOptions,
       }
     );
 
     // Invalidate project list cache
-    await this.clearCache(`@lpai_cache_GET_/api/projects`);
+    await this.clearCache('@lpai_cache_GET_/api/projects');
 
     return newProject;
   }
 
   /**
    * Update project
+   * BaseService automatically includes locationId
    */
   async update(
     projectId: string,
-    locationId: string,
     data: UpdateProjectInput,
-    serviceOptions?: ServiceOptions
+    serviceOptions: ServiceOptions = {}
   ): Promise<Project> {
-    const endpoint = `/api/projects/${projectId}?locationId=${locationId}`;
-
     const updated = await this.patch<Project>(
-      endpoint,
+      `/api/projects/${projectId}`,
       data,
       {
-        ...serviceOptions,
         offline: true,
-      },
-      {
-        endpoint,
-        method: 'PATCH',
-        entity: 'project',
-        priority: 'high',
+        ...serviceOptions,
       }
     );
 
     // Update cache with new data
     const cacheKey = `@lpai_cache_GET_/api/projects/${projectId}`;
-    await this.cacheService.set(cacheKey, updated, { priority: 'high' });
+    await cacheService.set(cacheKey, updated, { priority: 'high' });
 
     // Clear list cache to refresh
-    await this.clearCache(`@lpai_cache_GET_/api/projects`);
+    await this.clearCache('@lpai_cache_GET_/api/projects');
 
     return updated;
   }
 
   /**
    * Delete project (soft delete)
+   * BaseService automatically includes locationId
    */
   async delete(
     projectId: string,
-    locationId: string,
-    serviceOptions?: ServiceOptions
+    serviceOptions: ServiceOptions = {}
   ): Promise<void> {
-    const endpoint = `/api/projects/${projectId}?locationId=${locationId}`;
-
-    await this.delete<void>(
-      endpoint,
+    await super.delete<void>(
+      `/api/projects/${projectId}`,
       {
-        ...serviceOptions,
         offline: true,
-      },
-      {
-        endpoint,
-        method: 'DELETE',
-        entity: 'project',
-        priority: 'medium',
+        ...serviceOptions,
       }
     );
 
     // Remove from cache
     await this.clearCache(`@lpai_cache_GET_/api/projects/${projectId}`);
-    await this.clearCache(`@lpai_cache_GET_/api/projects`);
+    await this.clearCache('@lpai_cache_GET_/api/projects');
   }
 
   /**
@@ -320,10 +291,12 @@ class ProjectService extends BaseService {
    */
   async uploadPhoto(
     projectId: string,
-    locationId: string,
     photo: PhotoUploadInput,
-    serviceOptions?: ServiceOptions
+    serviceOptions: ServiceOptions = {}
   ): Promise<ProjectPhoto> {
+    // Get userId from auth context
+    const authContext = this.getAuthContext();
+    
     // First, upload to file service (implement later)
     // For now, simulate the upload
     const photoData: ProjectPhoto = {
@@ -332,13 +305,12 @@ class ProjectService extends BaseService {
       caption: photo.caption,
       timestamp: new Date().toISOString(),
       location: photo.location,
-      uploadedBy: this.userId,
+      uploadedBy: authContext.userId,
     };
 
     // Add to project
     await this.update(
       projectId,
-      locationId,
       {
         photos: [photoData], // Backend should append, not replace
       },
@@ -353,10 +325,11 @@ class ProjectService extends BaseService {
    */
   async uploadDocument(
     projectId: string,
-    locationId: string,
     document: DocumentUploadInput,
-    serviceOptions?: ServiceOptions
+    serviceOptions: ServiceOptions = {}
   ): Promise<ProjectDocument> {
+    const authContext = this.getAuthContext();
+    
     const docData: ProjectDocument = {
       id: `doc_${Date.now()}`,
       name: document.name,
@@ -365,12 +338,11 @@ class ProjectService extends BaseService {
       type: document.type,
       size: document.size,
       uploadDate: new Date().toISOString(),
-      uploadedBy: this.userId,
+      uploadedBy: authContext.userId,
     };
 
     await this.update(
       projectId,
-      locationId,
       {
         documents: [docData], // Backend should append
       },
@@ -385,13 +357,11 @@ class ProjectService extends BaseService {
    */
   async updateMilestones(
     projectId: string,
-    locationId: string,
     milestones: Milestone[],
-    serviceOptions?: ServiceOptions
+    serviceOptions: ServiceOptions = {}
   ): Promise<void> {
     await this.update(
       projectId,
-      locationId,
       { milestones },
       serviceOptions
     );
@@ -402,23 +372,23 @@ class ProjectService extends BaseService {
    */
   async addTimelineEvent(
     projectId: string,
-    locationId: string,
     event: TimelineEventInput,
-    serviceOptions?: ServiceOptions
+    serviceOptions: ServiceOptions = {}
   ): Promise<void> {
+    const authContext = this.getAuthContext();
+    
     const timelineEntry: ProjectTimelineEntry = {
       id: `timeline_${Date.now()}`,
       event: event.event,
       description: event.description,
       timestamp: new Date().toISOString(),
-      userId: this.userId || 'system',
+      userId: authContext.userId || 'system',
       metadata: event.metadata,
     };
 
     // The backend should append this to timeline array
     await this.update(
       projectId,
-      locationId,
       {
         timeline: [timelineEntry], // Backend appends
       },
@@ -431,21 +401,14 @@ class ProjectService extends BaseService {
    */
   async getByContact(
     contactId: string,
-    locationId: string,
-    serviceOptions?: ServiceOptions
+    serviceOptions: ServiceOptions = {}
   ): Promise<Project[]> {
-    const endpoint = `/api/projects/byContact?contactId=${contactId}&locationId=${locationId}`;
-
     return this.get<Project[]>(
-      endpoint,
+      '/api/projects/byContact',
       {
-        ...serviceOptions,
+        params: { contactId },
         cache: { priority: 'medium' },
-      },
-      {
-        endpoint,
-        method: 'GET',
-        entity: 'project',
+        ...serviceOptions,
       }
     );
   }
@@ -454,23 +417,15 @@ class ProjectService extends BaseService {
    * Search projects
    */
   async search(
-    locationId: string,
     query: string,
-    serviceOptions?: ServiceOptions
+    serviceOptions: ServiceOptions = {}
   ): Promise<Project[]> {
-    const endpoint = '/api/search/projects';
-    
     return this.post<Project[]>(
-      endpoint,
-      { locationId, query },
+      '/api/search/projects',
+      { query },
       {
-        ...serviceOptions,
         cache: false, // Don't cache search results
-      },
-      {
-        endpoint,
-        method: 'POST',
-        entity: 'project',
+        ...serviceOptions,
       }
     );
   }
@@ -479,27 +434,15 @@ class ProjectService extends BaseService {
    * Batch operations
    */
   async batch(
-    locationId: string,
     operation: BatchOperationInput,
-    serviceOptions?: ServiceOptions
+    serviceOptions: ServiceOptions = {}
   ): Promise<any> {
-    const endpoint = '/api/projects/batch';
-    
     return this.post<any>(
-      endpoint,
+      '/api/projects/batch',
+      operation,
       {
-        locationId,
-        ...operation,
-      },
-      {
-        ...serviceOptions,
         offline: true,
-      },
-      {
-        endpoint,
-        method: 'POST',
-        entity: 'project',
-        priority: 'high',
+        ...serviceOptions,
       }
     );
   }
@@ -508,21 +451,13 @@ class ProjectService extends BaseService {
    * Get project statistics
    */
   async getStats(
-    locationId: string,
-    serviceOptions?: ServiceOptions
+    serviceOptions: ServiceOptions = {}
   ): Promise<ProjectStats> {
-    const endpoint = `/api/stats/projects?locationId=${locationId}`;
-
     return this.get<ProjectStats>(
-      endpoint,
+      '/api/stats/projects',
       {
-        ...serviceOptions,
         cache: { priority: 'medium', ttl: 10 * 60 * 1000 }, // 10 min
-      },
-      {
-        endpoint,
-        method: 'GET',
-        entity: 'project',
+        ...serviceOptions,
       }
     );
   }
@@ -532,18 +467,18 @@ class ProjectService extends BaseService {
    */
   async duplicate(
     projectId: string,
-    locationId: string,
-    serviceOptions?: ServiceOptions
+    serviceOptions: ServiceOptions = {}
   ): Promise<Project> {
+    const authContext = this.getAuthContext();
+    
     // Get original project
-    const original = await this.getDetails(projectId, locationId);
+    const original = await this.getDetails(projectId);
     
     // Create new project with same data
     const newProject = await this.create({
       ...original,
       title: `${original.title} (Copy)`,
-      locationId,
-      userId: this.userId!,
+      userId: authContext.userId,
       contactId: original.contactId,
       // Reset some fields
       status: 'open',
@@ -559,8 +494,7 @@ class ProjectService extends BaseService {
    * Get project templates
    */
   async getTemplates(
-    locationId: string,
-    serviceOptions?: ServiceOptions
+    serviceOptions: ServiceOptions = {}
   ): Promise<any[]> {
     // TODO: Implement when backend supports templates
     return [];
@@ -572,7 +506,7 @@ class ProjectService extends BaseService {
   async createFromTemplate(
     templateId: string,
     data: Partial<CreateProjectInput>,
-    serviceOptions?: ServiceOptions
+    serviceOptions: ServiceOptions = {}
   ): Promise<Project> {
     // TODO: Implement when backend supports templates
     // For now, just create a regular project

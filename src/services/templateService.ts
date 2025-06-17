@@ -1,4 +1,5 @@
 // services/templateService.ts
+// Created: 2025-06-17
 import { BaseService } from './baseService';
 import { Template } from '../../packages/types';
 
@@ -59,6 +60,37 @@ interface UpdateEmailTemplateInput {
 }
 
 class TemplateService extends BaseService {
+/**
+   * Save user preferences (like showGlobalTemplates)
+   */
+  async saveUserPreferences(
+    userId: string,
+    preferences: {
+      showGlobalTemplates?: boolean;
+      defaultTemplateId?: string;
+      [key: string]: any;
+    }
+  ): Promise<{ success: boolean; user: any }> {
+    const endpoint = `/api/users/${userId}`;
+    
+    const result = await this.patch<any>(
+      endpoint,
+      { preferences },
+      {
+        offline: true,
+        showError: false, // Don't show errors for preference saves
+      },
+      {
+        endpoint,
+        method: 'PATCH',
+        entity: 'quote',
+        priority: 'low',
+      }
+    );
+    
+    return result;
+  }
+
   /**
    * Get quote templates for location
    */

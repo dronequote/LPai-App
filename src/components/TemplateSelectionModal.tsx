@@ -1,3 +1,7 @@
+// src/components/TemplateSelectionModal.tsx
+// Updated: 2025-06-17
+// Using templateService instead of direct API calls
+
 import React, { useState, useEffect } from 'react';
 import {
   Modal,
@@ -15,7 +19,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
-import api from '../lib/api';
+import { templateService } from '../services/templateService';
 import { COLORS, FONT, RADIUS, SHADOW } from '../styles/theme';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -119,11 +123,11 @@ export default function TemplateSelectionModal({
     
     setLoading(true);
     try {
-      const response = await api.get(`/api/templates/${user.locationId}`);
+      const response = await templateService.getTemplates(user.locationId);
       
-      if (response.data) {
-        setLocationTemplates(response.data.locationTemplates || []);
-        setGlobalTemplates(response.data.globalTemplates || []);
+      if (response) {
+        setLocationTemplates(response.locationTemplates || []);
+        setGlobalTemplates(response.globalTemplates || []);
       }
     } catch (error) {
       console.error('Failed to load templates:', error);
@@ -140,12 +144,9 @@ export default function TemplateSelectionModal({
     if (!user?._id) return;
     
     try {
-      // TODO: Create this API endpoint
-      await api.patch(`/api/users/${user._id}`, {
-        preferences: {
-          ...user.preferences,
-          showGlobalTemplates: value,
-        },
+      await templateService.saveUserPreferences(user._id, {
+        ...user.preferences,
+        showGlobalTemplates: value,
       });
     } catch (error) {
       console.error('Failed to save preference:', error);

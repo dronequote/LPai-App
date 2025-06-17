@@ -1,4 +1,5 @@
 // src/components/dashboard/DepartureWidget.tsx
+// Updated: 2025-06-17
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -144,10 +145,18 @@ export default function DepartureWidget({ onNavigate, onRunningLate }: Departure
   }, [isLate]);
 
   const fetchNextAppointment = async () => {
+    if (!user?.locationId) {
+      if (__DEV__) {
+        console.log('[DepartureWidget] No locationId available, skipping appointment fetch');
+      }
+      setLoading(false);
+      return;
+    }
+
     try {
       // Use appointmentService instead of api.get
       const appointments = await appointmentService.getTodaysAppointments(
-        user?.locationId,
+        user.locationId,
         user?.id
       );
       

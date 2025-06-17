@@ -1,4 +1,5 @@
 // src/screens/QuoteEditorScreen.tsx
+// Updated: 2025-06-17
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
@@ -16,7 +17,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
-import api from '../lib/api';
+import { quoteService } from '../services/quoteService';
+import { libraryService } from '../services/libraryService';
 import { COLORS, FONT, RADIUS, SHADOW } from '../styles/theme';
 import type { Project, Quote, QuoteSection, QuoteLineItem, ProductLibrary, LibraryItem } from '../../packages/types/dist';
 import TemplateSelectionModal from '../components/TemplateSelectionModal';
@@ -76,14 +78,11 @@ export default function QuoteEditorScreen() {
     try {
       setLoading(true);
       
-      // Load libraries - TODO: Create /api/libraries endpoint
-      // if (user?.locationId) {
-      //   const librariesRes = await api.get('/api/libraries', {
-      //     params: { locationId: user.locationId },
-      //   });
-      //   setLibraries(librariesRes.data || []);
-      // }
-      setLibraries([]); // Set empty array for now
+      // Load libraries
+      if (user?.locationId) {
+        const librariesData = await libraryService.list(user.locationId);
+        setLibraries(librariesData || []);
+      }
       
       // Set initial data based on mode
       if (mode === 'create' && project) {
@@ -349,12 +348,12 @@ export default function QuoteEditorScreen() {
       const quoteData = buildQuoteData();
       
       if (mode === 'create') {
-        const response = await api.post('/api/quotes', quoteData);
-        console.log('[QuoteEditor] Created quote:', response.data.quoteNumber);
+        const response = await quoteService.create(quoteData);
+        console.log('[QuoteEditor] Created quote:', response.quoteNumber);
         
         Alert.alert(
           'Success',
-          `Quote ${response.data.quoteNumber} created successfully!`,
+          `Quote ${response.quoteNumber} created successfully!`,
           [
             {
               text: 'OK',
@@ -363,10 +362,9 @@ export default function QuoteEditorScreen() {
           ]
         );
       } else if (existingQuote) {
-        await api.patch(`/api/quotes/${existingQuote._id}`, {
+        await quoteService.update(existingQuote._id, user.locationId, {
           ...quoteData,
           action: 'update_content',
-          locationId: user.locationId,
         });
         
         console.log('[QuoteEditor] Updated quote:', existingQuote.quoteNumber);
@@ -428,14 +426,13 @@ export default function QuoteEditorScreen() {
 
       let quoteId;
       if (mode === 'create') {
-        const response = await api.post('/api/quotes', quoteData);
-        quoteId = response.data._id;
-        console.log('[QuoteEditor] Created quote for presentation:', response.data.quoteNumber);
+        const response = await quoteService.create(quoteData);
+        quoteId = response._id;
+        console.log('[QuoteEditor] Created quote for presentation:', response.quoteNumber);
       } else if (existingQuote) {
-        await api.patch(`/api/quotes/${existingQuote._id}`, {
+        await quoteService.update(existingQuote._id, user.locationId, {
           ...quoteData,
           action: 'update_content',
-          locationId: user.locationId,
         });
         quoteId = existingQuote._id;
         console.log('[QuoteEditor] Updated quote for presentation:', existingQuote.quoteNumber);
@@ -468,11 +465,7 @@ export default function QuoteEditorScreen() {
       console.log('[QuoteEditor] Fetching fresh quote data from DB, quoteId:', savedQuoteId);
       
       // Fetch the complete, fresh quote from database
-      const response = await api.get(`/api/quotes/${savedQuoteId}`, {
-        params: { locationId: user.locationId }
-      });
-      
-      const freshQuoteData = response.data;
+      const freshQuoteData = await quoteService.getById(savedQuoteId, user.locationId);
       
       console.log('[QuoteEditor] Fresh quote data structure:', {
         id: freshQuoteData._id,

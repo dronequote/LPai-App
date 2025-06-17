@@ -93,12 +93,12 @@ export default function LoginScreen({ navigation }: Props) {
       await login({ email: email.trim().toLowerCase(), password });
       
       if (__DEV__) {
-        console.log('✅ [LoginScreen] Login successful, navigating to Main');
+        console.log('✅ [LoginScreen] Login successful, navigating to Dashboard');
       }
       
       // Navigation will be handled by the navigation container
       // based on auth state change
-      navigation.replace('Main');
+      navigation.replace('Dashboard');
       
     } catch (err: any) {
       if (__DEV__) {

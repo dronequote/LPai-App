@@ -63,6 +63,7 @@ interface RevisionInput {
 }
 
 class QuoteService extends BaseService {
+  protected serviceName = 'quotes';
   /**
    * List quotes with filters
    */

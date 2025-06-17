@@ -47,7 +47,8 @@ export default function TodayScheduleWidget() {
 
   const fetchTodaySchedule = async () => {
     try {
-      // Use appointmentService instead of api.get
+      // Use appointmentService 
+      
       const todayAppointments = await appointmentService.getTodaysAppointments(
         user?.locationId,
         user?.id

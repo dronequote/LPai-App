@@ -1,4 +1,5 @@
 // src/components/ProjectSelectorModal.tsx
+// Updated: 2025-06-17
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -14,7 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, FONT, RADIUS, SHADOW } from '../styles/theme';
 import { useAuth } from '../contexts/AuthContext';
-import api from '../lib/api';
+import { projectService } from '../services/projectService';
 
 interface Project {
   _id: string;
@@ -57,12 +58,10 @@ export default function ProjectSelectorModal({
   const loadProjects = async () => {
     try {
       setLoading(true);
-      const res = await api.get('/api/projects', {
-        params: { locationId: user?.locationId }
-      });
+      const data = await projectService.list(user?.locationId || '');
       
       // Filter out completed projects
-      const activeProjects = res.data.filter(
+      const activeProjects = data.filter(
         (p: any) => !['Completed', 'Cancelled'].includes(p.status)
       );
       

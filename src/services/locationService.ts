@@ -39,6 +39,7 @@ interface SyncResult {
 }
 
 class LocationService extends BaseService {
+  protected serviceName = 'locations';
   /**
    * Get location details with all settings
    */

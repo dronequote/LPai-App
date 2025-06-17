@@ -1,5 +1,5 @@
 // src/components/dashboard/ActiveJobsWidget.tsx
-// Updated: 2025-06-16
+// Updated: 2025-06-17
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
@@ -37,7 +37,7 @@ export default function ActiveJobsWidget() {
 
   useEffect(() => {
     if (__DEV__) {
-      console.log('🔄 [Dashboard] Loading dashboard data...');
+      console.log('🔄 [ActiveJobsWidget] Loading active jobs...');
     }
     fetchActiveJobs();
   }, []);
@@ -60,31 +60,73 @@ export default function ActiveJobsWidget() {
     try {
       setError(null);
       
-      // Fetch all open projects first (not using status filter that causes issues)
-      const projects = await projectService.list(user.locationId, {
-        limit: 50,
-        offset: 0
-      });
+      if (__DEV__) {
+        console.log('🔧 [ActiveJobsWidget] Fetching projects...');
+      }
+      
+      // Use the new API - BaseService handles locationId automatically
+      let projects: Project[] = [];
+      
+      try {
+        projects = await projectService.list({
+          limit: 50,
+          offset: 0
+        });
+      } catch (projectError) {
+        console.error('❌ [ActiveJobsWidget] Error calling projectService.list:', projectError);
+        throw projectError;
+      }
+      
+      if (__DEV__) {
+        console.log('📊 [ActiveJobsWidget] Projects fetched:', projects.length);
+        console.log('📊 [ActiveJobsWidget] First project:', projects[0]);
+      }
       
       // Filter for active statuses on the client side
       const activeStatuses = ['open', 'in progress', 'scheduled', 'quoted'];
       const activeJobs = projects
-        .filter((p: Project) => activeStatuses.includes(p.status?.toLowerCase()))
+        .filter((p: Project) => {
+          const status = p.status?.toLowerCase() || '';
+          return activeStatuses.includes(status);
+        })
         .slice(0, 4)
-        .map((p: Project) => ({
-          _id: p._id,
-          title: p.title || 'Untitled Project',
-          contactName: p.contactName || p.contact?.name || 'Unknown',
-          status: p.status,
-          progress: calculateProgress(p),
-          priority: p.customFields?.priority || 'medium',
-          dueDate: p.customFields?.dueDate
-        }));
+        .map((p: Project) => {
+          try {
+            const progress = calculateProgress(p);
+            return {
+              _id: p._id,
+              title: p.title || 'Untitled Project',
+              contactName: p.contactName || p.contact?.name || 'Unknown',
+              status: p.status || 'open',
+              progress: progress,
+              priority: p.customFields?.priority || 'medium',
+              dueDate: p.customFields?.dueDate
+            };
+          } catch (mapError) {
+            console.error('❌ [ActiveJobsWidget] Error mapping project:', p._id, mapError);
+            throw mapError;
+          }
+        });
+      
+      if (__DEV__) {
+        console.log('✅ [ActiveJobsWidget] Active jobs:', activeJobs.length);
+      }
       
       setJobs(activeJobs);
-    } catch (error) {
-      console.error('Failed to fetch active jobs:', error);
-      setError('Failed to load active jobs');
+    } catch (error: any) {
+      console.error('❌ [ActiveJobsWidget] Failed to fetch active jobs:', error);
+      
+      // Better error handling based on error type
+      if (error.response?.status === 422) {
+        setError('Invalid request parameters');
+      } else if (error.response?.status === 401) {
+        setError('Please login again');
+      } else if (error.message?.includes('Network')) {
+        setError('Network error. Check your connection');
+      } else {
+        setError('Failed to load active jobs');
+      }
+      
       setJobs([]); // Set empty array on error
     } finally {
       setLoading(false);
@@ -99,7 +141,8 @@ export default function ActiveJobsWidget() {
     }
     
     // Otherwise use status-based defaults
-    switch (project.status?.toLowerCase()) {
+    const status = project.status?.toLowerCase() || '';
+    switch (status) {
       case 'open': return 10;
       case 'quoted': return 25;
       case 'scheduled': return 40;
@@ -110,7 +153,8 @@ export default function ActiveJobsWidget() {
   };
 
   const getStatusColor = (status: string) => {
-    switch (status?.toLowerCase()) {
+    const statusLower = status?.toLowerCase() || '';
+    switch (statusLower) {
       case 'open': return '#00B3E6';
       case 'quoted': return '#3498DB';
       case 'scheduled': return '#9B59B6';
@@ -145,11 +189,11 @@ export default function ActiveJobsWidget() {
   };
 
   const handleJobPress = (job: Job) => {
-    navigation.navigate('ProjectDetailScreen', { projectId: job._id });
+    navigation.navigate('ProjectDetailScreen' as never, { projectId: job._id } as never);
   };
 
   const handleViewAll = () => {
-    navigation.navigate('Projects');
+    navigation.navigate('Projects' as never);
   };
 
   if (loading) {
