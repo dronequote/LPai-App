@@ -36,7 +36,7 @@ export function tokenNeedsRefresh(location: any): boolean {
   
   const expiresAt = new Date(location.ghlOAuth.expiresAt);
   const now = new Date();
-  const bufferTime = 60 * 60 * 1000; // 1 hour buffer - matches refresh-tokens.ts
+  const bufferTime = 8 * 60 * 60 * 1000; // 8 hour buffer  
   
   return (expiresAt.getTime() - now.getTime()) < bufferTime;
 }
