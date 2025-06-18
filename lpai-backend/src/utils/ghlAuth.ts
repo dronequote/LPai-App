@@ -1,4 +1,5 @@
 // /src/utils/ghlAuth.ts
+// Updated: 2025-01-17 - Changed token refresh buffer from 8 hours to 4 hours
 import axios from 'axios';
 import clientPromise from '../lib/mongodb';
 
@@ -36,7 +37,7 @@ export function tokenNeedsRefresh(location: any): boolean {
   
   const expiresAt = new Date(location.ghlOAuth.expiresAt);
   const now = new Date();
-  const bufferTime = 8 * 60 * 60 * 1000; // 8 hour buffer  
+  const bufferTime = 4 * 60 * 60 * 1000; // 4 hour buffer (changed from 8)
   
   return (expiresAt.getTime() - now.getTime()) < bufferTime;
 }
