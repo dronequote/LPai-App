@@ -44,15 +44,15 @@ export default async function handler(
     const db = client.db('lpai');
     
     // Get the location's GHL access token
-    const location = await db.collection('locations').findOne({
-      _id: locationId
+      const location = await db.collection('locations').findOne({
+      locationId: locationId  // Use locationId field instead of _id
     });
 
     if (!location) {
       return res.status(404).json({ error: 'Location not found' });
     }
 
-    if (!location.ghlAccessToken) {
+    if (!location?.ghlOAuth?.accessToken) {
       return res.status(401).json({ error: 'Location not connected to GoHighLevel' });
     }
 
@@ -78,7 +78,7 @@ export default async function handler(
     const response = await axios.get(ghlApiUrl, {
       params,
       headers: {
-        'Authorization': `Bearer ${location.ghlAccessToken}`,
+        'Authorization': `Bearer ${location.ghlOAuth.accessToken}`,
         'Version': '2021-04-15',
         'Accept': 'application/json'
       }
