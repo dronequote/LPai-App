@@ -433,35 +433,50 @@ export default function CalendarScreen({ navigation }: CalendarScreenProps) {
       </TouchableOpacity>
 
       {/* Create Modal - Pass contacts array */}
-      <CreateAppointmentModal
-        visible={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        onSubmit={async (data) => {
-          if (!user?._id || !user?.locationId || !userGhlId) {
-            Alert.alert('Error', 'Session expired. Please log in again.');
-            return;
-          }
-          
-          try {
-            await appointmentService.create({
-              ...data,
-              userId: user._id,
-              assignedUserId: userGhlId,
-              locationId: user.locationId,
-            });
-            setShowCreateModal(false);
-            await fetchAppointments(); // Refresh appointments
-          } catch (err: any) {
-            let errorMessage = 'Failed to create appointment';
-            if (err.response?.data?.error) {
-              errorMessage = err.response.data.error;
-            }
-            Alert.alert('Error', errorMessage);
-          }
-        }}
-        contacts={contacts} // Pass the contacts array
-        selectedDate={selectedDate}
-      />
+<CreateAppointmentModal
+  visible={showCreateModal}
+  onClose={() => setShowCreateModal(false)}
+  onSubmit={async (data) => {
+    if (!user?._id || !user?.locationId || !userGhlId) {
+      Alert.alert('Error', 'Session expired. Please log in again.');
+      return;
+    }
+    
+    try {
+      // ADD THE CONSOLE LOGS HERE
+      console.log('Creating appointment with data:', {
+        ...data,
+        userId: user._id,
+        assignedUserId: userGhlId,
+        locationId: user.locationId,
+      });
+      
+      const result = await appointmentService.create({
+        ...data,
+        userId: user._id,
+        assignedUserId: userGhlId,
+        locationId: user.locationId,
+      });
+      
+      console.log('Appointment created successfully:', result);
+      setShowCreateModal(false);
+      await fetchAppointments(); // Refresh appointments
+    } catch (err: any) {
+      // ADD THESE ERROR LOGS
+      console.error('Error creating appointment:', err);
+      console.error('Error response:', err.response);
+      console.error('Error data:', err.response?.data);
+      
+      let errorMessage = 'Failed to create appointment';
+      if (err.response?.data?.error) {
+        errorMessage = err.response.data.error;
+      }
+      Alert.alert('Error', errorMessage);
+    }
+  }}
+  contacts={contacts}
+  selectedDate={selectedDate}
+/>
     </SafeAreaView>
   );
 }

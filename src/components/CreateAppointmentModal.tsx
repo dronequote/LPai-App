@@ -1,4 +1,4 @@
-// Updated: 2025-06-16
+// Updated: 2025-06-17
 import React, { useState, useEffect } from 'react';
 import {
   Modal,
@@ -7,7 +7,6 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  FlatList,
   Alert,
   ScrollView,
   KeyboardAvoidingView,
@@ -88,7 +87,7 @@ export default function CreateAppointmentModal({
   const [notes, setNotes] = useState('');
   const [date, setDate] = useState<Date>(selectedDate ? new Date(selectedDate) : new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
-  const [duration, setDuration] = useState<number>(60);
+  const [duration, setDuration] = useState<number | 'Custom'>(60);
   const [customDuration, setCustomDuration] = useState('');
 
   // Dropdown states
@@ -156,13 +155,13 @@ export default function CreateAppointmentModal({
     });
   };
 
-const filteredContacts = Array.isArray(contacts) 
-  ? contacts.filter(c =>
-      (c.firstName + ' ' + c.lastName + ' ' + c.email + ' ' + (c.phone || ''))
-        .toLowerCase()
-        .includes(search.toLowerCase())
-    )
-  : [];
+  const filteredContacts = Array.isArray(contacts) 
+    ? contacts.filter(c =>
+        (c.firstName + ' ' + c.lastName + ' ' + c.email + ' ' + (c.phone || ''))
+          .toLowerCase()
+          .includes(search.toLowerCase())
+      )
+    : [];
 
   const handleContactSelect = (contact: Contact) => {
     setSelectedContact(contact);
@@ -276,11 +275,10 @@ const filteredContacts = Array.isArray(contacts)
                       />
                       {showContactSearch && search.length > 1 && (
                         <View style={styles.contactList}>
-                          <FlatList
-                            data={filteredContacts}
-                            keyExtractor={item => item._id}
-                            renderItem={({ item }) => (
+                          <ScrollView nestedScrollEnabled={true} keyboardShouldPersistTaps="handled">
+                            {filteredContacts.slice(0, 5).map((item) => (
                               <TouchableOpacity
+                                key={item._id}
                                 style={styles.contactOption}
                                 onPress={() => handleContactSelect(item)}
                               >
@@ -294,10 +292,8 @@ const filteredContacts = Array.isArray(contacts)
                                 </View>
                                 <Ionicons name="checkmark-circle" size={20} color={COLORS.accent} />
                               </TouchableOpacity>
-                            )}
-                            keyboardShouldPersistTaps="handled"
-                            nestedScrollEnabled
-                          />
+                            ))}
+                          </ScrollView>
                         </View>
                       )}
                     </View>
@@ -447,7 +443,7 @@ const filteredContacts = Array.isArray(contacts)
                       <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false}>
                         {DURATION_OPTIONS.map((item) => (
                           <TouchableOpacity
-                            key={item}
+                            key={item.toString()}
                             style={styles.dropdownItem}
                             onPress={() => {
                               setDuration(item);
@@ -729,6 +725,9 @@ const styles = StyleSheet.create({
     padding: 12,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   contactOptionContent: {
     flex: 1,

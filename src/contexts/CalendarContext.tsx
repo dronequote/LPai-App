@@ -22,6 +22,9 @@ export function CalendarProvider({ children }: { children: React.ReactNode }) {
 
   const refetchCalendars = async () => {
     if (!user?.locationId) return;
+    
+    console.log('Fetching calendars for locationId:', user.locationId);
+    
     try {
       const locationData = await locationService.getDetails(user.locationId);
       if (locationData && Array.isArray(locationData.calendars)) {
@@ -32,6 +35,12 @@ export function CalendarProvider({ children }: { children: React.ReactNode }) {
     } catch (e) {
       setCalendars([]);
       console.error('Failed to fetch calendars:', e);
+      
+      // Add detailed error logging
+      if (e.response) {
+        console.error('Error status:', e.response.status);
+        console.error('Error data:', e.response.data);
+      }
     }
   };
 

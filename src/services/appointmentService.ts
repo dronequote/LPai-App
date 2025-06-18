@@ -3,6 +3,8 @@
 
 import { BaseService } from './baseService';
 import { Appointment, Contact, Project, Calendar } from '../../packages/types';
+import { cacheService } from '../services/cacheService';
+
 
 interface AppointmentListOptions {
   start?: Date | string;
@@ -386,13 +388,13 @@ class AppointmentService extends BaseService {
       }
     );
   }
-
+  
   /**
    * Clear list cache
    */
   private async clearListCache(locationId: string): Promise<void> {
     const prefix = `@lpai_cache_GET_/api/appointments_`;
-    await this.cacheService.clear(prefix);
+    await cacheService.clear(prefix);
   }
 
   /**
@@ -400,22 +402,22 @@ class AppointmentService extends BaseService {
    */
   private async clearDetailsCache(appointmentId: string): Promise<void> {
     const prefix = `@lpai_cache_GET_/api/appointments/${appointmentId}`;
-    await this.cacheService.clear(prefix);
+    await cacheService.clear(prefix);
   }
 
   /**
    * Get calendars for location
    */
-  async getCalendars(locationId: string): Promise<Calendar[]> {
-    const endpoint = `/api/locations/${locationId}/calendars`;
+  //async getCalendars(locationId: string): Promise<Calendar[]> {
+  //  const endpoint = `/api/locations/${locationId}/calendars`;
     
-    return this.get<Calendar[]>(
-      endpoint,
-      {
-        cache: { priority: 'high', ttl: 60 * 60 * 1000 }, // 1 hour
-      }
-    );
-  }
+   // return this.get<Calendar[]>(
+  //    endpoint,
+  //    {
+        //cache: { priority: 'high', ttl: 60 * 60 * 1000 }, // 1 hour
+      //}
+    //);
+  //}
 }
 
 // Export singleton instance
