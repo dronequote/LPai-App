@@ -1,4 +1,4 @@
-// pages/api/ghl/calendars/[calendarId]/free-slots.ts
+// pages/api/appointments/calendars/[calendarId]/free-slots.ts
 // Created: 2025-01-19
 // Gets available time slots for a specific calendar from GoHighLevel
 

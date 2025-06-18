@@ -428,7 +428,7 @@ class AppointmentService extends BaseService {
      return cached.data;
    }
    
-   const endpoint = `/api/calendars/${calendarId}/free-slots`;
+    const endpoint = `/api/appointments/calendars/${calendarId}/free-slots`;
    
    if (__DEV__) {
      console.log('[AppointmentService] Fetching free slots:', {
