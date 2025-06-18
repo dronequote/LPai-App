@@ -43,33 +43,40 @@ class LocationService extends BaseService {
   /**
    * Get location details with all settings
    */
-  async getDetails(
-    locationId: string
-  ): Promise<{
-    _id: string;
-    locationId: string;
-    name: string;
-    branding?: any;
-    pipelines: Pipeline[];
-    calendars: Calendar[];
-    termsAndConditions: string;
-    emailTemplates: Record<string, string | null>;
-    companyInfo?: any;
-  }> {
-    const endpoint = `/api/locations/byLocation?locationId=${locationId}`;
-    
-    return this.get(
+async getDetails(
+  locationId: string
+): Promise<{
+  _id: string;
+  locationId: string;
+  name: string;
+  branding?: any;
+  pipelines: Pipeline[];
+  calendars: Calendar[];
+  termsAndConditions: string;
+  emailTemplates: Record<string, string | null>;
+  companyInfo?: any;
+}> {
+  const endpoint = `/api/locations/byLocation`; // Remove ?locationId from here
+  
+  console.log('🔍 [LocationService] Getting details for:', {
+    locationId,
+    endpoint,
+    typeofLocationId: typeof locationId
+  });
+  
+  return this.get(
+    endpoint,
+    {
+      cache: { priority: 'high', ttl: 60 * 60 * 1000 },
+      params: { locationId } // Add it here instead
+    },
+    {
       endpoint,
-      {
-        cache: { priority: 'high', ttl: 60 * 60 * 1000 }, // 1 hour cache
-      },
-      {
-        endpoint,
-        method: 'GET',
-        entity: 'project', // Using project as generic entity
-      }
-    );
-  }
+      method: 'GET',
+      entity: 'project',
+    }
+  );
+}
 
   /**
    * Update location settings
