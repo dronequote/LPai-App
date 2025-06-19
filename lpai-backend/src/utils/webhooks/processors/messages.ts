@@ -1,7 +1,12 @@
 // src/utils/webhooks/processors/messages.ts
+//Date 2025/06/19
+
 import { BaseProcessor } from './base';
 import { QueueItem } from '../queueManager';
 import { ObjectId, Db } from 'mongodb';
+// NEW: Add axios and getAuthHeader imports for email fetching
+import axios from 'axios';
+import { getAuthHeader } from '../../ghlAuth';
 
 export class MessagesProcessor extends BaseProcessor {
   constructor(db?: Db) {
@@ -78,10 +83,10 @@ export class MessagesProcessor extends BaseProcessor {
         message: !!message,
         webhookId
       });
-      throw new Error('Missing required fields for inbound message');
+      return;
     }
 
-    // Find or create contact (optimized query)
+    // Find or create contact
     let contact = await this.db.collection('contacts').findOne(
       { ghlContactId: contactId, locationId },
       { 
@@ -91,39 +96,40 @@ export class MessagesProcessor extends BaseProcessor {
           lastName: 1, 
           email: 1, 
           phone: 1,
-          fullName: 1
+          fullName: 1,
+          dateAdded: 1
         } 
       }
     );
     
     if (!contact) {
-      // Create basic contact from webhook data
-      console.log(`[MessagesProcessor] Creating contact ${contactId} from message webhook`);
+      // Create new contact record
+      const fullName = `${message.contactFirstName || ''} ${message.contactLastName || ''}`.trim() || 'Unknown';
       
-      const newContact = {
+      contact = {
         _id: new ObjectId(),
         ghlContactId: contactId,
         locationId,
-        firstName: payload.firstName || '',
-        lastName: payload.lastName || '',
-        fullName: `${payload.firstName || ''} ${payload.lastName || ''}`.trim() || 'Unknown',
-        email: payload.email || '',
-        phone: payload.phone || '',
-        source: 'message_webhook',
+        firstName: message.contactFirstName || '',
+        lastName: message.contactLastName || '',
+        fullName,
+        email: message.contactEmail || '',
+        phone: message.contactPhone || '',
         createdAt: new Date(),
         updatedAt: new Date(),
-        createdByWebhook: webhookId
+        createdByWebhook: webhookId,
+        lastActivity: new Date()
       };
       
-      await this.db.collection('contacts').insertOne(newContact);
-      contact = newContact;
+      await this.db.collection('contacts').insertOne(contact);
+      console.log(`[MessagesProcessor] Created new contact: ${contact._id} (${fullName})`);
     }
 
-    // Determine conversation type
+    // Get conversation type from message
     const conversationType = this.getConversationType(message.type);
     
-    // Start session for atomic operations
-    const session = this.client.startSession();
+    // Start a session for atomic operations
+    const session = this.db.client.startSession();
     
     try {
       await session.withTransaction(async () => {
@@ -139,11 +145,11 @@ export class MessagesProcessor extends BaseProcessor {
               locationId,
               contactId: contact._id.toString(),
               type: conversationType,
-              lastMessageDate: new Date(timestamp || Date.now()),
+              lastMessageDate: new Date(),
               lastMessageBody: message.body?.substring(0, 200) || '',
-              lastMessageType: message.messageType || payload.type,
+              lastMessageType: this.getMessageTypeName(message.type),
               lastMessageDirection: 'inbound',
-              contactName: contact.fullName || `${contact.firstName} ${contact.lastName}`.trim(),
+              contactName: contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
               contactEmail: contact.email,
               contactPhone: contact.phone,
               updatedAt: new Date()
@@ -152,6 +158,16 @@ export class MessagesProcessor extends BaseProcessor {
             $setOnInsert: {
               _id: new ObjectId(),
               createdAt: new Date(),
+              inbox: true,
+              starred: false,
+              scoring: [],
+              followers: [],
+              tags: [],
+              dateAdded: new Date(message.dateAdded || timestamp || Date.now()),
+              attributed: false,
+              dateUpdated: new Date(),
+              lastSyncedAt: new Date(),
+              createdBySync: false,
               createdByWebhook: webhookId
             }
           },
@@ -194,6 +210,26 @@ export class MessagesProcessor extends BaseProcessor {
               messageDoc.emailMessageId = message.meta.email.messageIds[0];
               messageDoc.needsContentFetch = true;
               messageDoc.subject = message.subject || 'No subject';
+              
+              // NEW: AUTO-FETCH EMAIL CONTENT
+              try {
+                const emailContent = await this.fetchEmailContent(
+                  message.meta.email.messageIds[0], 
+                  locationId
+                );
+                
+                if (emailContent) {
+                  messageDoc.body = emailContent.body;
+                  messageDoc.htmlBody = emailContent.htmlBody;
+                  messageDoc.subject = emailContent.subject;
+                  messageDoc.needsContentFetch = false;
+                  messageDoc.emailFetchedAt = new Date();
+                  console.log(`[MessagesProcessor] Email content auto-fetched for ${message.meta.email.messageIds[0]}`);
+                }
+              } catch (fetchError) {
+                console.error(`[MessagesProcessor] Failed to auto-fetch email content:`, fetchError);
+                // Continue processing - email can be fetched later
+              }
             } else {
               messageDoc.subject = message.subject || 'No subject';
               messageDoc.body = message.body || '';
@@ -321,8 +357,8 @@ export class MessagesProcessor extends BaseProcessor {
 
     const conversationType = message?.type ? this.getConversationType(message.type) : 'TYPE_PHONE';
 
-    // Update conversation
-    await this.db.collection('conversations').updateOne(
+    // Update or create conversation
+    const conversation = await this.db.collection('conversations').findOneAndUpdate(
       { 
         ghlConversationId: conversationId,
         locationId 
@@ -333,12 +369,11 @@ export class MessagesProcessor extends BaseProcessor {
           locationId,
           contactId: contact._id.toString(),
           type: conversationType,
-          lastMessageDate: new Date(timestamp || Date.now()),
+          lastMessageDate: new Date(),
           lastMessageBody: message?.body?.substring(0, 200) || '',
-          lastMessageType: message?.messageType || payload.type,
+          lastMessageType: message?.messageType || 'TYPE_PHONE',
           lastMessageDirection: 'outbound',
-          lastOutboundMessageDate: new Date(),
-          contactName: contact.fullName || `${contact.firstName} ${contact.lastName}`.trim(),
+          contactName: contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
           contactEmail: contact.email,
           contactPhone: contact.phone,
           updatedAt: new Date()
@@ -346,47 +381,97 @@ export class MessagesProcessor extends BaseProcessor {
         $setOnInsert: {
           _id: new ObjectId(),
           createdAt: new Date(),
-          unreadCount: 0
+          inbox: true,
+          starred: false,
+          scoring: [],
+          followers: [],
+          tags: [],
+          unreadCount: 0,
+          dateAdded: new Date(),
+          attributed: false,
+          dateUpdated: new Date(),
+          lastSyncedAt: new Date(),
+          createdBySync: false,
+          createdByWebhook: webhookId
         }
       },
-      { upsert: true }
+      { 
+        upsert: true,
+        returnDocument: 'after'
+      }
     );
 
-    // Insert message
+    // Build message document
     const messageDoc: any = {
       _id: new ObjectId(),
       ghlMessageId: message?.id || new ObjectId().toString(),
-      conversationId: conversationId,
+      conversationId: conversation.value._id.toString(),
       ghlConversationId: conversationId,
       locationId,
       contactId: contact._id.toString(),
-      userId: senderId,
+      senderId,
       type: message?.type || 1,
-      messageType: message?.messageType || this.getMessageTypeName(message?.type || 1),
+      messageType: message?.messageType || 'TYPE_PHONE',
       direction: 'outbound',
       dateAdded: new Date(message?.dateAdded || timestamp || Date.now()),
-      read: true, // Outbound messages are always "read"
+      read: true,
       createdAt: new Date(),
       processedBy: 'queue',
       webhookId
     };
 
-    // Handle message content based on type
+    // Handle different message types
     if (message) {
       switch (message.type) {
         case 1: // SMS
           messageDoc.body = message.body || '';
           messageDoc.status = message.status || 'sent';
+          messageDoc.segments = message.segments || 1;
           break;
+          
         case 3: // Email
+          messageDoc.subject = message.subject || 'No subject';
+          
+          // Check if we have email message ID for content fetch
           if (message.meta?.email?.messageIds?.[0]) {
             messageDoc.emailMessageId = message.meta.email.messageIds[0];
             messageDoc.needsContentFetch = true;
+            
+            // NEW: AUTO-FETCH EMAIL CONTENT FOR OUTBOUND
+            try {
+              const emailContent = await this.fetchEmailContent(
+                message.meta.email.messageIds[0], 
+                locationId
+              );
+              
+              if (emailContent) {
+                messageDoc.body = emailContent.body;
+                messageDoc.htmlBody = emailContent.htmlBody;
+                messageDoc.subject = emailContent.subject;
+                messageDoc.needsContentFetch = false;
+                messageDoc.emailFetchedAt = new Date();
+                console.log(`[MessagesProcessor] Outbound email content auto-fetched for ${message.meta.email.messageIds[0]}`);
+              }
+            } catch (fetchError) {
+              console.error(`[MessagesProcessor] Failed to auto-fetch outbound email content:`, fetchError);
+              // Continue processing - email can be fetched later
+              messageDoc.body = message.body || '';
+            }
+          } else {
+            messageDoc.body = message.body || '';
+            messageDoc.htmlBody = message.htmlBody;
           }
-          messageDoc.subject = message.subject || '';
           break;
+          
+        case 4: // WhatsApp
+          messageDoc.body = message.body || '';
+          messageDoc.mediaUrl = message.mediaUrl;
+          messageDoc.mediaType = message.mediaType;
+          break;
+          
         default:
           messageDoc.body = message.body || '';
+          messageDoc.meta = message.meta || {};
       }
     } else {
       // Fallback for messages without proper structure
@@ -502,6 +587,60 @@ export class MessagesProcessor extends BaseProcessor {
     }
 
     console.log(`[MessagesProcessor] LCEmailStats processed: ${event} for ${id}`);
+  }
+
+  /**
+   * NEW: Fetch email content from GHL
+   */
+  private async fetchEmailContent(emailMessageId: string, locationId: string): Promise<{ body: string; htmlBody: string; subject: string } | null> {
+    try {
+      // Get location for auth
+      const location = await this.db.collection('locations').findOne({ locationId });
+      
+      if (!location) {
+        console.error(`[MessagesProcessor] Location not found for email fetch: ${locationId}`);
+        return null;
+      }
+
+      // Get auth header
+      const auth = await getAuthHeader(location);
+
+      // Fetch email content from GHL
+      console.log(`[MessagesProcessor] Fetching email content for ${emailMessageId}`);
+      
+      const response = await axios.get(
+        `https://services.leadconnectorhq.com/conversations/messages/email/${emailMessageId}`,
+        {
+          headers: {
+            'Authorization': auth.header,
+            'Version': '2021-04-15',
+            'Accept': 'application/json'
+          },
+          timeout: 10000 // 10 second timeout
+        }
+      );
+
+      const emailData = response.data.emailMessage;
+      
+      if (!emailData) {
+        console.warn(`[MessagesProcessor] No email data returned for ${emailMessageId}`);
+        return null;
+      }
+
+      return {
+        subject: emailData.subject || 'No subject',
+        body: emailData.body || '',
+        htmlBody: emailData.htmlBody || emailData.body || ''
+      };
+    } catch (error: any) {
+      // Don't log full error to avoid exposing tokens
+      console.error(`[MessagesProcessor] Failed to fetch email content for ${emailMessageId}:`, {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        message: error.message
+      });
+      return null;
+    }
   }
 
   /**

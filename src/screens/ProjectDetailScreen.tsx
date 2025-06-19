@@ -35,8 +35,10 @@ import ProjectCard from '../components/ProjectCard';
 import CreateAppointmentModal from '../components/CreateAppointmentModal';
 import type { Project, Contact, Appointment } from '../../packages/types/dist';
 
+// Updated route params to accept either project object or projectId
 type ProjectDetailRouteParams = {
-  project: Project;
+  project?: Project;
+  projectId?: string;
 };
 
 interface Milestone {
@@ -70,29 +72,19 @@ export default function ProjectDetailScreen() {
   const { user } = useAuth();
   const { calendarMap } = useCalendar();
   
-  // FIX: Add null check for route params
+  // Get params with updated type
   const params = route.params as ProjectDetailRouteParams;
-  const initialProject = params?.project;
+  
+  // State for project data - initially null if only ID provided
+  const [project, setProject] = useState<Project | null>(params?.project || null);
+  const [initialLoading, setInitialLoading] = useState(!params?.project); // Loading state for initial project fetch
+  
+  // Extract projectId from either params.project or params.projectId
+  const projectId = params?.project?._id || params?.projectId;
 
-  // Add null check before rendering
-  if (!initialProject || !initialProject._id) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.loadingContainer}>
-          <Ionicons name="alert-circle" size={48} color={COLORS.textGray} />
-          <Text style={styles.loadingText}>No project data available</Text>
-          <TouchableOpacity 
-            onPress={() => navigation.goBack()} 
-            style={{ marginTop: 20 }}
-          >
-            <Text style={{ color: COLORS.accent, fontSize: FONT.input }}>Go Back</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
-  }
+  // Validate that we have either a project or projectId
+  const hasValidParams = !!(params?.project || params?.projectId);
 
-  const [project, setProject] = useState<Project>(initialProject);
   const [contact, setContact] = useState<Contact | null>(null);
   const [otherProjects, setOtherProjects] = useState<Project[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -106,7 +98,7 @@ export default function ProjectDetailScreen() {
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [showCompletionModal, setShowCompletionModal] = useState(false);
 
-  // Form fields
+  // Form fields - initialize empty until project loads
   const [title, setTitle] = useState('');
   const [status, setStatus] = useState('');
   const [notes, setNotes] = useState('');
@@ -125,8 +117,34 @@ export default function ProjectDetailScreen() {
       try {
         setLoading(true);
         
-        // 🔥 NEW: Fetch enhanced project data from API
-        const enhancedProject = await projectService.getById(project._id, user?.locationId || '');
+        let enhancedProject: Project;
+        
+        // If we only have projectId, fetch the project first
+        if (!project && projectId) {
+          if (__DEV__) {
+            console.log('[ProjectDetailScreen] Fetching project by ID:', projectId);
+          }
+          
+          try {
+            enhancedProject = await projectService.getDetails(projectId);
+            setProject(enhancedProject); // Set the project state
+          } catch (err) {
+            console.error('Failed to fetch project by ID:', err);
+            Alert.alert('Error', 'Failed to load project');
+            setInitialLoading(false);
+            setLoading(false);
+            return;
+          }
+        } else if (project) {
+          // If we already have a project, fetch enhanced details
+          enhancedProject = await projectService.getDetails(project._id);
+          setProject(enhancedProject); // Update with enhanced data
+        } else {
+          // No project data available
+          setInitialLoading(false);
+          setLoading(false);
+          return;
+        }
         
         // Set form fields from enhanced project
         setTitle(enhancedProject.title || '');
@@ -177,22 +195,32 @@ export default function ProjectDetailScreen() {
           setAllContacts([]); // Set empty array on error
         }
 
+        setInitialLoading(false);
       } catch (err) {
         console.error('Failed to fetch project data:', err);
         Alert.alert('Error', 'Failed to load project details');
+        setInitialLoading(false);
       } finally {
         setLoading(false);
       }
     };
 
-    if (project._id && user?.locationId) {
+    if (projectId && user?.locationId) {
       fetchProjectData();
+    } else if (!hasValidParams) {
+      setInitialLoading(false);
+      setLoading(false);
     }
-  }, [project._id, user?.locationId]);
+  }, [projectId, user?.locationId]);
 
   const handleSave = async () => {
     if (!title) {
       Alert.alert('Error', 'Project title is required');
+      return;
+    }
+
+    if (!project?._id) {
+      Alert.alert('Error', 'No project loaded');
       return;
     }
 
@@ -230,7 +258,7 @@ export default function ProjectDetailScreen() {
     try {
       await appointmentService.create({
         ...appointmentData,
-        contactId: contact?._id || project.contactId, // Use contact._id or fallback to project.contactId
+        contactId: contact?._id || project?.contactId, // Use contact._id or fallback to project.contactId
         userId: user?._id,
         locationId: user?.locationId,
       });
@@ -343,13 +371,13 @@ export default function ProjectDetailScreen() {
 
   const handleEmailContact = () => {
     if (contact?.email) {
-      Linking.openURL(`mailto:${contact.email}?subject=Project Update: ${project.title}`);
+      Linking.openURL(`mailto:${contact.email}?subject=Project Update: ${project?.title || 'Project'}`);
     }
   };
 
   const handleTextContact = () => {
     if (contact?.phone) {
-      Linking.openURL(`sms:${contact.phone}&body=Hi ${contact.firstName}, regarding your project: ${project.title}`);
+      Linking.openURL(`sms:${contact.phone}&body=Hi ${contact.firstName}, regarding your project: ${project?.title || 'your project'}`);
     }
   };
 
@@ -386,12 +414,49 @@ export default function ProjectDetailScreen() {
   const completedMilestones = milestones.filter(m => m.completed).length;
   const progressPercentage = milestones.length > 0 ? (completedMilestones / milestones.length) * 100 : 0;
 
-  if (loading) {
+  // Show error state if no valid params provided
+  if (!hasValidParams) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <Ionicons name="alert-circle" size={48} color={COLORS.textGray} />
+          <Text style={styles.loadingText}>No project data available</Text>
+          <TouchableOpacity 
+            onPress={() => navigation.goBack()} 
+            style={{ marginTop: 20 }}
+          >
+            <Text style={{ color: COLORS.accent, fontSize: FONT.input }}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Show loading state while fetching initial project data
+  if (initialLoading || loading) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={COLORS.accent} />
           <Text style={styles.loadingText}>Loading project details...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Show error if project couldn't be loaded
+  if (!project) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <Ionicons name="alert-circle" size={48} color={COLORS.textGray} />
+          <Text style={styles.loadingText}>Failed to load project</Text>
+          <TouchableOpacity 
+            onPress={() => navigation.goBack()} 
+            style={{ marginTop: 20 }}
+          >
+            <Text style={{ color: COLORS.accent, fontSize: FONT.input }}>Go Back</Text>
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
