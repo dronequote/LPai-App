@@ -22,6 +22,9 @@ import { useAuth } from '../contexts/AuthContext';
 import { useCalendar } from '../contexts/CalendarContext';
 import { COLORS, INPUT, RADIUS, FONT, SHADOW } from '../styles/theme';
 import type { Contact } from '../../packages/types/dist';
+import { appointmentService } from '../services/appointmentService';
+import CalendarPicker from './CalendarPicker';
+
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const MODAL_HEIGHT = SCREEN_HEIGHT * 0.85;
@@ -95,6 +98,57 @@ export default function CreateAppointmentModal({
   const [showDurationDropdown, setShowDurationDropdown] = useState(false);
   const [showLocationDropdown, setShowLocationDropdown] = useState(false);
   const [showContactSearch, setShowContactSearch] = useState(false);
+  
+  // Available Dates
+  const [isLoadingSlots, setIsLoadingSlots] = useState(false);
+  const [freeSlots, setFreeSlots] = useState<Record<string, { slots: string[] }>>({});
+  const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
+  const [timeSelectionMode, setTimeSelectionMode] = useState<'default' | 'custom'>('default');
+  const [showTimeSlots, setShowTimeSlots] = useState(false);
+  const [showCalendarPicker, setShowCalendarPicker] = useState(false);
+
+  const fetchFreeSlots = async (calendarId: string, selectedDate: Date) => {
+  if (!calendarId || !user?.locationId) return;
+  
+  setIsLoadingSlots(true);
+  try {
+    // Get start and end of the selected day
+    const startOfDay = new Date(selectedDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    
+    const endOfDay = new Date(selectedDate);
+    endOfDay.setHours(23, 59, 59, 999);
+    
+    const response = await appointmentService.getFreeSlots(calendarId, {
+      startDate: startOfDay.getTime().toString(),
+      endDate: endOfDay.getTime().toString(),
+      timezone: user.preferences?.timezone || 'America/Denver',
+      locationId: user.locationId,
+    });
+    
+    setFreeSlots(response);
+    
+    // Get slots for selected date
+    const dateKey = selectedDate.toISOString().split('T')[0];
+    const daySlots = response[dateKey]?.slots || [];
+    
+    if (daySlots.length > 0) {
+      setSelectedSlot(daySlots[0]); // Auto-select first available slot
+    }
+  } catch (error) {
+    console.error('Error fetching free slots:', error);
+    Alert.alert('Error', 'Failed to load available time slots');
+  } finally {
+    setIsLoadingSlots(false);
+  }
+};
+
+// Add useEffect to fetch slots when calendar or date changes
+useEffect(() => {
+  if (selectedCalendarId && date && visible) {
+    fetchFreeSlots(selectedCalendarId, date);
+  }
+}, [selectedCalendarId, date, visible]);
 
   // Setup when modal opens/closes
   useEffect(() => {
@@ -180,12 +234,21 @@ export default function CreateAppointmentModal({
       return;
     }
     
+    if (timeSelectionMode === 'default' && !selectedSlot) {
+      Alert.alert('Error', 'Please select a time slot');
+      return;
+    }
+    
     if (!user || !user._id || !user.locationId) {
       Alert.alert('Auth Error', 'Missing user information. Please try again.');
       return;
     }
 
-    const start = date;
+    // Use selected slot time if in default mode
+    const start = timeSelectionMode === 'default' && selectedSlot 
+      ? new Date(selectedSlot) 
+      : date;
+      
     const finalDuration = duration === 'Custom' ? parseInt(customDuration) || 60 : duration;
     const end = new Date(start.getTime() + finalDuration * 60000);
     
@@ -413,18 +476,164 @@ export default function CreateAppointmentModal({
                   )}
                 </View>
 
-                {/* Date & Time */}
-                <View style={styles.section}>
-                  <Text style={styles.label}>Date & Time *</Text>
-                  <TouchableOpacity
-                    style={styles.input}
-                    onPress={() => setShowDatePicker(true)}
-                  >
-                    <Text style={styles.dateTimeText}>
-                      {date.toDateString()} at {date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </Text>
-                  </TouchableOpacity>
+                  {/* Date & Time */}
+<View style={styles.section}>
+  <Text style={styles.label}>Date & Time *</Text>
+  
+  {/* Date Navigation Bar */}
+  <View style={styles.dateNavigationBar}>
+    <TouchableOpacity 
+      style={styles.dateArrow}
+      onPress={() => {
+        const prevDay = new Date(date);
+        prevDay.setDate(prevDay.getDate() - 1);
+        setDate(prevDay);
+        if (selectedCalendarId) {
+          fetchFreeSlots(selectedCalendarId, prevDay);
+        }
+      }}
+    >
+      <Ionicons name="chevron-back" size={24} color={COLORS.textDark} />
+    </TouchableOpacity>
+    
+    <TouchableOpacity 
+      style={styles.dateDisplay}
+      onPress={() => setShowCalendarPicker(true)}
+    >
+      <Ionicons name="calendar-outline" size={18} color={COLORS.textGray} style={{ marginRight: 8 }} />
+      <Text style={styles.dateDisplayText}>
+        {date.toLocaleDateString('en-US', { 
+          weekday: 'short', 
+          month: 'short', 
+          day: 'numeric',
+          year: 'numeric'
+        })}
+      </Text>
+    </TouchableOpacity>
+    
+    <TouchableOpacity 
+      style={styles.dateArrow}
+      onPress={() => {
+        const nextDay = new Date(date);
+        nextDay.setDate(nextDay.getDate() + 1);
+        setDate(nextDay);
+        if (selectedCalendarId) {
+          fetchFreeSlots(selectedCalendarId, nextDay);
+        }
+      }}
+    >
+      <Ionicons name="chevron-forward" size={24} color={COLORS.textDark} />
+    </TouchableOpacity>
+  </View>
+
+  {/* Time Selection Mode Toggle */}
+  <View style={styles.toggleContainer}>
+    <TouchableOpacity
+      style={[
+        styles.toggleButton,
+        timeSelectionMode === 'default' && styles.toggleButtonActive
+      ]}
+      onPress={() => setTimeSelectionMode('default')}
+    >
+      <Text style={[
+        styles.toggleText,
+        timeSelectionMode === 'default' && styles.toggleTextActive
+      ]}>
+        Available
+      </Text>
+    </TouchableOpacity>
+    <TouchableOpacity
+      style={[
+        styles.toggleButton,
+        timeSelectionMode === 'custom' && styles.toggleButtonActive
+      ]}
+      onPress={() => setTimeSelectionMode('custom')}
+    >
+      <Text style={[
+        styles.toggleText,
+        timeSelectionMode === 'custom' && styles.toggleTextActive
+      ]}>
+        Override
+      </Text>
+    </TouchableOpacity>
+  </View>
+
+  {/* Time Slots (Available Mode) */}
+  {timeSelectionMode === 'default' && (
+    <View style={styles.timeSlotsContainer}>
+      {isLoadingSlots ? (
+        <View style={styles.loadingContainer}>
+          <Text style={styles.loadingText}>Loading available times...</Text>
+        </View>
+      ) : (
+        <>
+          {(() => {
+            const dateKey = date.toISOString().split('T')[0];
+            const slots = freeSlots[dateKey]?.slots || [];
+            
+            if (slots.length === 0) {
+              return (
+                <View style={styles.noSlotsContainer}>
+                  <Text style={styles.noSlotsText}>No available time slots for this date</Text>
                 </View>
+              );
+            }
+            
+            return (
+              <ScrollView 
+                horizontal 
+                showsHorizontalScrollIndicator={false}
+                style={styles.slotsScrollView}
+              >
+                {slots.map((slot) => {
+                  const slotTime = new Date(slot);
+                  const timeString = slotTime.toLocaleTimeString([], { 
+                    hour: 'numeric', 
+                    minute: '2-digit',
+                    hour12: true 
+                  });
+                  
+                  return (
+                    <TouchableOpacity
+                      key={slot}
+                      style={[
+                        styles.timeSlot,
+                        selectedSlot === slot && styles.timeSlotSelected
+                      ]}
+                      onPress={() => setSelectedSlot(slot)}
+                    >
+                      <Text style={[
+                        styles.timeSlotText,
+                        selectedSlot === slot && styles.timeSlotTextSelected
+                      ]}>
+                        {timeString}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            );
+          })()}
+        </>
+      )}
+    </View>
+  )}
+
+  {/* Custom Time Selection (Override Mode) */}
+  {timeSelectionMode === 'custom' && (
+    <TouchableOpacity
+      style={[styles.input, { marginTop: 12 }]}
+      onPress={() => setShowDatePicker(true)}
+    >
+      <View style={styles.dateRow}>
+        <Ionicons name="time-outline" size={20} color={COLORS.textGray} />
+        <Text style={styles.dateTimeText}>
+          {date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        </Text>
+      </View>
+    </TouchableOpacity>
+  )}
+</View>
 
                 {/* Duration */}
                 <View style={styles.section}>
@@ -559,16 +768,18 @@ export default function CreateAppointmentModal({
             </View>
           </SafeAreaView>
 
-          {/* Date Time Picker Modal */}
-          <DateTimePickerModal
-            isVisible={showDatePicker}
-            mode="datetime"
-            date={date}
-            onConfirm={(selectedDate) => {
-              setShowDatePicker(false);
-              if (selectedDate) setDate(selectedDate);
+          {/* Calendar Picker */}
+          <CalendarPicker
+            visible={showCalendarPicker}
+            onClose={() => setShowCalendarPicker(false)}
+            onSelectDate={(selectedDate) => {
+              setDate(selectedDate);
+              if (selectedCalendarId) {
+                fetchFreeSlots(selectedCalendarId, selectedDate);
+              }
             }}
-            onCancel={() => setShowDatePicker(false)}
+            selectedDate={date}
+            availableDates={Object.keys(freeSlots)}
           />
         </Animated.View>
       </PanGestureHandler>
@@ -832,4 +1043,114 @@ const styles = StyleSheet.create({
   saveButtonTextDisabled: {
     color: COLORS.textLight,
   },
+  dateRow: {
+  flexDirection: 'row',
+  alignItems: 'center',
+},
+toggleContainer: {
+  flexDirection: 'row',
+  marginTop: 12,
+  backgroundColor: COLORS.background,
+  borderRadius: RADIUS.input,
+  padding: 4,
+},
+toggleButton: {
+  flex: 1,
+  paddingVertical: 8,
+  alignItems: 'center',
+  borderRadius: RADIUS.input - 4,
+},
+toggleButtonActive: {
+  backgroundColor: COLORS.card,
+},
+toggleText: {
+  fontSize: FONT.meta,
+  color: COLORS.textGray,
+  fontWeight: '500',
+},
+toggleTextActive: {
+  color: COLORS.textDark,
+},
+timeSlotsContainer: {
+  marginTop: 12,
+},
+loadingContainer: {
+  padding: 20,
+  alignItems: 'center',
+},
+loadingText: {
+  color: COLORS.textGray,
+  fontSize: FONT.meta,
+},
+noSlotsContainer: {
+  padding: 20,
+  alignItems: 'center',
+  backgroundColor: COLORS.background,
+  borderRadius: RADIUS.input,
+},
+noSlotsText: {
+  color: COLORS.textGray,
+  fontSize: FONT.meta,
+},
+slotsScrollView: {
+  marginTop: 8,
+},
+timeSlot: {
+  paddingHorizontal: 16,
+  paddingVertical: 10,
+  marginRight: 8,
+  borderRadius: RADIUS.input,
+  borderWidth: 1,
+  borderColor: COLORS.border,
+  backgroundColor: COLORS.card,
+},
+timeSlotSelected: {
+  borderColor: COLORS.accent,
+  backgroundColor: COLORS.accent,
+},
+timeSlotText: {
+  fontSize: FONT.meta,
+  color: COLORS.textDark,
+  fontWeight: '500',
+},
+timeSlotTextSelected: {
+  color: '#fff',
+},
+// Add these to your styles object:
+dateNavigationBar: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  backgroundColor: COLORS.card,
+  borderRadius: RADIUS.input,
+  borderWidth: 1,
+  borderColor: COLORS.border,
+  paddingVertical: 4,
+  paddingHorizontal: 4,
+},
+dateArrow: {
+  padding: 10,
+  justifyContent: 'center',
+  alignItems: 'center',
+},
+dateDisplay: {
+  flex: 1,
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  paddingVertical: 8,
+},
+dateDisplayText: {
+  fontSize: FONT.input,
+  color: COLORS.textDark,
+  fontWeight: '500',
+},
+// Update the existing toggleContainer style to add marginTop
+toggleContainer: {
+  flexDirection: 'row',
+  marginTop: 16, // Added spacing
+  backgroundColor: COLORS.background,
+  borderRadius: RADIUS.input,
+  padding: 4,
+},
 });

@@ -189,33 +189,33 @@ class AppointmentService extends BaseService {
    return newAppointment;
  }
 
- /**
-  * Update appointment
-  */
- async update(
-   appointmentId: string,
-   data: UpdateAppointmentInput,
-   locationId: string
- ): Promise<Appointment> {
-   const endpoint = `/api/appointments/${appointmentId}`;
-   
-   const updated = await this.patch<Appointment>(
-     endpoint,
-     { ...data, locationId },
-     {},
-     {
-       endpoint,
-       method: 'PATCH',
-       entity: 'appointment',
-     }
-   );
+    /**
+     * Update appointment
+     */
+    async update(
+      appointmentId: string,
+      data: UpdateAppointmentInput,
+      locationId: string
+    ): Promise<Appointment> {
+      const endpoint = `/api/appointments/${appointmentId}`;
+      
+      const updated = await this.patch<Appointment>(
+        endpoint,
+        data, // Just send the data as-is, no locationId
+        {},  // No extra params needed
+        {
+          endpoint,
+          method: 'PATCH',
+          entity: 'appointment',
+        }
+      );
 
-   // Clear caches
-   await this.clearListCache(locationId);
-   await this.clearDetailsCache(appointmentId);
-   
-   return updated;
- }
+      // Clear caches
+      await this.clearListCache(locationId);
+      await this.clearDetailsCache(appointmentId);
+      
+      return updated;
+    }
 
  /**
   * Reschedule appointment
