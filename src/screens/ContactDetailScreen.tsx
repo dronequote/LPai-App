@@ -1,5 +1,5 @@
 // src/screens/ContactDetailScreen.tsx
-// Complete version with all render functions
+// Updated to use ConversationsList component
 
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
@@ -27,14 +27,12 @@ import { useProjects } from '../hooks/useProjects';
 import { useAppointments } from '../hooks/useAppointments';
 import { projectService } from '../services/projectService';
 import { appointmentService } from '../services/appointmentService';
-import { conversationService } from '../services/conversationService';
-import { smsService } from '../services/smsService';
-import { emailService } from '../services/emailService';
-import { contactService } from '../services/contactService'; // ADD THIS LINE
+import { contactService } from '../services/contactService';
 import CreateAppointmentModal from '../components/CreateAppointmentModal';
 import AddProjectForm from '../components/AddProjectForm';
 import CompactAppointmentCard from '../components/CompactAppointmentCard';
 import ProjectCard from '../components/ProjectCard';
+import ConversationsList from '../components/ConversationsList';
 import { COLORS, FONT, SHADOW } from '../styles/theme';
 import type { Contact, Project, Appointment } from '../../packages/types/dist';
 
@@ -44,7 +42,6 @@ type ContactDetailRouteParams = {
 };
 
 type TabType = 'overview' | 'details' | 'conversations' | 'notes';
-type MessageFilter = 'all' | 'sms' | 'email' | 'call';
 
 const tabs: { id: TabType; label: string; icon: string }[] = [
   { id: 'overview', label: 'Overview', icon: 'person' },
@@ -52,14 +49,6 @@ const tabs: { id: TabType; label: string; icon: string }[] = [
   { id: 'conversations', label: 'Conversations', icon: 'chatbubbles' },
   { id: 'notes', label: 'Notes', icon: 'document-text' },
 ];
-
-const messageFilters: { id: MessageFilter; label: string; icon: string }[] = [
-  { id: 'all', label: 'All', icon: 'apps' },
-  { id: 'sms', label: 'SMS', icon: 'chatbubble' },
-  { id: 'email', label: 'Email', icon: 'mail' },
-  { id: 'call', label: 'Calls', icon: 'call' },
-];
-
 
 export default function ContactDetailScreen() {
   const route = useRoute();
@@ -81,17 +70,6 @@ export default function ContactDetailScreen() {
   const [editing, setEditing] = useState(false);
   const [showCreateAppointment, setShowCreateAppointment] = useState(false);
   const [showAddProject, setShowAddProject] = useState(false);
-  
-  // Conversations state
-  const [messageFilter, setMessageFilter] = useState<MessageFilter>('all');
-  const [conversations, setConversations] = useState<any[]>([]);
-  const [messages, setMessages] = useState<any[]>([]);
-  const [loadingMessages, setLoadingMessages] = useState(false);
-  const [composeText, setComposeText] = useState('');
-  const [composeMode, setComposeMode] = useState<'sms' | 'email'>('sms');
-  const [emailSubject, setEmailSubject] = useState('');
-  const [sendingMessage, setSendingMessage] = useState(false);
-  const [refreshingConversations, setRefreshingConversations] = useState(false);
   
   // Notes state
   const [notes, setNotes] = useState<any[]>([]);
@@ -146,56 +124,6 @@ export default function ContactDetailScreen() {
       .slice(0, 5);
   }, [appointments]);
   
- // Update the loadConversations function
-const loadConversations = async () => {
-  if (!user?.locationId || !contact._id) return;
-  
-  setLoadingMessages(true);
-  try {
-    // This should work - passing contactId in the params object
-    const convs = await conversationService.list(user.locationId, {
-      contactId: contact._id
-    });
-    
-    if (__DEV__) {
-      console.log('Loading conversations for contact:', contact._id);
-      console.log('Conversations response:', convs);
-    }
-    
-    if (convs && convs.length > 0) {
-      setConversations(convs);
-      
-      // Load messages from first conversation
-      try {
-        const messages = await conversationService.getMessages(
-          convs[0]._id,
-          user.locationId
-        );
-        setMessages(messages.messages || []);
-      } catch (msgError) {
-        console.error('Failed to load messages:', msgError);
-        setMessages([]);
-      }
-    } else {
-      // No conversations yet
-      setConversations([]);
-      setMessages([]);
-      
-      if (__DEV__) {
-        console.log('No conversations found for contact:', contact._id);
-      }
-    }
-  } catch (error: any) {
-    console.error('Failed to load conversations:', error);
-    
-    // Set empty state to allow viewing the tab
-    setConversations([]);
-    setMessages([]);
-  } finally {
-    setLoadingMessages(false);
-  }
-};
-  
   // Load notes
   const loadNotes = async () => {
     // For now, just parse notes from contact.notes
@@ -209,57 +137,9 @@ const loadConversations = async () => {
     setNotes(existingNotes);
   };
   
-  // Add refresh handler for conversations
-  const onRefreshConversations = useCallback(async () => {
-    if (!user?.locationId || !contact._id) return;
-    
-    setRefreshingConversations(true);
-    try {
-      // Clear cache first to force fresh data
-      await conversationService.clearConversationCache(user.locationId);
-      
-      // Now load fresh conversations
-      const convs = await conversationService.list(user.locationId, {
-        contactId: contact._id
-      });
-      
-      if (__DEV__) {
-        console.log('Refreshing conversations for contact:', contact._id);
-        console.log('Fresh conversations response:', convs);
-      }
-      
-      if (convs && convs.length > 0) {
-        setConversations(convs);
-        
-        // Load messages from first conversation
-        try {
-          const messages = await conversationService.getMessages(
-            convs[0]._id,
-            user.locationId
-          );
-          setMessages(messages.messages || []);
-        } catch (msgError) {
-          console.error('Failed to load messages:', msgError);
-          setMessages([]);
-        }
-      } else {
-        // No conversations yet
-        setConversations([]);
-        setMessages([]);
-      }
-    } catch (error: any) {
-      console.error('Failed to refresh conversations:', error);
-      // Keep existing data on error
-    } finally {
-      setRefreshingConversations(false);
-    }
-  }, [user?.locationId, contact._id]);
-  
   // Load data when tab changes
   useEffect(() => {
-    if (activeTab === 'conversations') {
-      loadConversations();
-    } else if (activeTab === 'notes') {
+    if (activeTab === 'notes') {
       loadNotes();
     }
   }, [activeTab, contact._id]);
@@ -300,70 +180,6 @@ const loadConversations = async () => {
       ]
     );
   };
-  
-  // Send message
-const handleSendMessage = async () => {
-  if (!composeText.trim() || !user?._id || !user?.locationId) return;
-  
-  setSendingMessage(true);
-  try {
-    if (composeMode === 'sms') {
-      await smsService.send({
-        contactId: contact._id,
-        locationId: user.locationId,
-        customMessage: composeText,
-        toNumber: contact.phone,
-        userId: user._id,
-      });
-      
-      // Add the message to local state immediately
-      const newMessage = {
-        id: Date.now().toString(),
-        type: 1, // SMS type
-        direction: 'outbound',
-        dateAdded: new Date().toISOString(),
-        body: composeText,
-        read: true,
-      };
-      setMessages([newMessage, ...messages]);
-    } else {
-      await emailService.send({
-        contactId: contact._id,
-        locationId: user.locationId,
-        subject: emailSubject || 'Message from ' + (user.name || 'Team'),
-        plainTextContent: composeText,
-        userId: user._id,
-      });
-      
-      // Add the email to local state immediately
-      const newMessage = {
-        id: Date.now().toString(),
-        type: 3, // Email type
-        direction: 'outbound',
-        dateAdded: new Date().toISOString(),
-        subject: emailSubject || 'Message from ' + (user.name || 'Team'),
-        body: composeText,
-        read: true,
-      };
-      setMessages([newMessage, ...messages]);
-    }
-    
-    setComposeText('');
-    setEmailSubject('');
-    Alert.alert('Success', `${composeMode.toUpperCase()} sent successfully`);
-    
-    // Try to reload conversations, but don't fail if it doesn't work
-    try {
-      await loadConversations();
-    } catch (e) {
-      // Ignore errors when reloading
-    }
-  } catch (error) {
-    Alert.alert('Error', `Failed to send ${composeMode}`);
-  } finally {
-    setSendingMessage(false);
-  }
-};
   
   // Add note
   const handleAddNote = async () => {
@@ -418,17 +234,14 @@ const handleSendMessage = async () => {
     await refetchContact();
   }, [refetchContact]);
   
-  // Filter messages
-  const filteredMessages = useMemo(() => {
-    if (messageFilter === 'all') return messages;
-    
-    return messages.filter(msg => {
-      if (messageFilter === 'sms' && msg.type === 1) return true;
-      if (messageFilter === 'email' && msg.type === 3) return true;
-      if (messageFilter === 'call' && msg.type === 2) return true;
-      return false;
-    });
-  }, [messages, messageFilter]);
+  // Navigation handlers for conversations
+  const handleNavigateToProject = (projectId: string) => {
+    navigation.navigate('ProjectDetailScreen', { projectId });
+  };
+  
+  const handleNavigateToAppointment = (appointmentId: string) => {
+    navigation.navigate('AppointmentDetail', { appointmentId });
+  };
   
   // Render header
   const renderHeader = () => (
@@ -871,141 +684,19 @@ const handleSendMessage = async () => {
     </ScrollView>
   );
   
-  // Render message bubble
-  const renderMessage = ({ item }: { item: any }) => {
-    const isInbound = item.direction === 'inbound';
-    const messageTime = new Date(item.dateAdded).toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-    });
-    
-    return (
-      <View style={[styles.messageBubbleContainer, isInbound ? styles.inboundContainer : styles.outboundContainer]}>
-        <View style={[styles.messageBubble, isInbound ? styles.inboundBubble : styles.outboundBubble]}>
-          {item.subject && (
-            <Text style={[styles.messageSubject, !isInbound && styles.outboundText]}>
-              {item.subject}
-            </Text>
-          )}
-          <Text style={[styles.messageText, !isInbound && styles.outboundText]}>
-            {item.body || item.preview || 'No content'}
-          </Text>
-          <Text style={[styles.messageTime, !isInbound && styles.outboundText]}>
-            {messageTime}
-          </Text>
-        </View>
-      </View>
-    );
-  };
-  
   // Render conversations tab
   const renderConversationsTab = () => (
-    <KeyboardAvoidingView 
+    <ConversationsList
+      contactId={contact._id}
+      contactPhone={contact.phone}
+      contactEmail={contact.email}
+      locationId={user?.locationId || ''}
+      userId={user?._id || ''}
+      userName={user?.name}
+      onNavigateToProject={handleNavigateToProject}
+      onNavigateToAppointment={handleNavigateToAppointment}
       style={styles.conversationsContainer}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={100}
-    >
-      {/* Message filters */}
-      <View style={styles.messageFilters}>
-        {messageFilters.map((filter) => (
-          <TouchableOpacity
-            key={filter.id}
-            style={[styles.filterButton, messageFilter === filter.id && styles.filterButtonActive]}
-            onPress={() => setMessageFilter(filter.id)}
-          >
-            <Ionicons 
-              name={filter.icon as any} 
-              size={16} 
-              color={messageFilter === filter.id ? COLORS.white : COLORS.textDark} 
-            />
-            <Text style={[styles.filterButtonText, messageFilter === filter.id && styles.filterButtonTextActive]}>
-              {filter.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-      
-      {/* Messages list */}
-      <FlatList
-        data={filteredMessages}
-        renderItem={renderMessage}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.messagesList}
-        inverted
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshingConversations}
-            onRefresh={onRefreshConversations}
-            tintColor={COLORS.accent}
-          />
-        }
-        ListEmptyComponent={
-          loadingMessages ? (
-            <ActivityIndicator size="large" color={COLORS.accent} style={styles.loadingMessages} />
-          ) : (
-            <Text style={styles.noMessages}>No messages yet</Text>
-          )
-        }
-      />
-      
-      {/* Compose area */}
-      <View style={styles.composeContainer}>
-        <View style={styles.composeTypeToggle}>
-          <TouchableOpacity
-            style={[styles.composeTypeButton, composeMode === 'sms' && styles.composeTypeActive]}
-            onPress={() => setComposeMode('sms')}
-          >
-            <Ionicons name="chatbubble" size={16} color={composeMode === 'sms' ? COLORS.white : COLORS.textDark} />
-            <Text style={[styles.composeTypeText, composeMode === 'sms' && styles.composeTypeTextActive]}>SMS</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.composeTypeButton, composeMode === 'email' && styles.composeTypeActive]}
-            onPress={() => setComposeMode('email')}
-          >
-            <Ionicons name="mail" size={16} color={composeMode === 'email' ? COLORS.white : COLORS.textDark} />
-            <Text style={[styles.composeTypeText, composeMode === 'email' && styles.composeTypeTextActive]}>Email</Text>
-          </TouchableOpacity>
-        </View>
-        
-        {composeMode === 'email' && (
-          <TextInput
-            style={styles.subjectInput}
-            placeholder="Subject"
-            value={emailSubject}
-            onChangeText={setEmailSubject}
-            placeholderTextColor={COLORS.textLight}
-          />
-        )}
-        
-        <View style={styles.composeInputContainer}>
-          <TextInput
-            style={styles.composeInput}
-            placeholder={`Type your ${composeMode} message...`}
-            value={composeText}
-            onChangeText={setComposeText}
-            multiline
-            maxLength={composeMode === 'sms' ? 160 : undefined}
-            placeholderTextColor={COLORS.textLight}
-          />
-          <TouchableOpacity 
-            style={[styles.sendButton, (!composeText.trim() || sendingMessage) && styles.sendButtonDisabled]}
-            onPress={handleSendMessage}
-            disabled={!composeText.trim() || sendingMessage}
-          >
-            {sendingMessage ? (
-              <ActivityIndicator size="small" color={COLORS.white} />
-            ) : (
-              <Ionicons name="send" size={20} color={COLORS.white} />
-            )}
-          </TouchableOpacity>
-        </View>
-        
-        {composeMode === 'sms' && composeText.length > 0 && (
-          <Text style={styles.charCount}>{composeText.length}/160</Text>
-        )}
-      </View>
-    </KeyboardAvoidingView>
+    />
   );
   
   // Render notes tab
@@ -1380,174 +1071,9 @@ const styles = StyleSheet.create({
     fontFamily: FONT.semiBold,
   },
   
-  // Conversations styles
+  // Conversations container style
   conversationsContainer: {
     flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  messageFilters: {
-    flexDirection: 'row',
-    padding: 16,
-    backgroundColor: COLORS.white,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  filterButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: COLORS.background,
-    marginRight: 8,
-  },
-  filterButtonActive: {
-    backgroundColor: COLORS.accent,
-  },
-  filterButtonText: {
-    fontSize: 14,
-    fontFamily: FONT.medium,
-    color: COLORS.textDark,
-    marginLeft: 4,
-  },
-  filterButtonTextActive: {
-    color: COLORS.white,
-  },
-  messagesList: {
-    padding: 16,
-    flexGrow: 1,
-  },
-  loadingMessages: {
-    marginTop: 50,
-  },
-  noMessages: {
-    textAlign: 'center',
-    color: COLORS.textLight,
-    fontFamily: FONT.regular,
-    fontSize: 16,
-    marginTop: 50,
-  },
-  messageBubbleContainer: {
-    marginBottom: 16,
-  },
-  inboundContainer: {
-    alignItems: 'flex-start',
-  },
-  outboundContainer: {
-    alignItems: 'flex-end',
-  },
-  messageBubble: {
-    maxWidth: '80%',
-    padding: 12,
-    borderRadius: 16,
-  },
-  inboundBubble: {
-    backgroundColor: COLORS.background,
-    borderBottomLeftRadius: 4,
-  },
-  outboundBubble: {
-    backgroundColor: COLORS.accent,
-    borderBottomRightRadius: 4,
-  },
-  messageSubject: {
-    fontSize: 14,
-    fontFamily: FONT.semiBold,
-    color: COLORS.textDark,
-    marginBottom: 4,
-  },
-  messageText: {
-    fontSize: 15,
-    fontFamily: FONT.regular,
-    color: COLORS.textDark,
-    marginBottom: 4,
-  },
-  outboundText: {
-    color: COLORS.white,
-  },
-  messageTime: {
-    fontSize: 12,
-    fontFamily: FONT.regular,
-    color: COLORS.textGray,
-  },
-  composeContainer: {
-    backgroundColor: COLORS.white,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    padding: 16,
-  },
-  composeTypeToggle: {
-    flexDirection: 'row',
-    marginBottom: 12,
-  },
-  composeTypeButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: COLORS.background,
-    marginRight: 8,
-  },
-  composeTypeActive: {
-    backgroundColor: COLORS.accent,
-  },
-  composeTypeText: {
-    fontSize: 14,
-    fontFamily: FONT.medium,
-    color: COLORS.textDark,
-    marginLeft: 6,
-  },
-  composeTypeTextActive: {
-    color: COLORS.white,
-  },
-  subjectInput: {
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 15,
-    fontFamily: FONT.regular,
-    color: COLORS.textDark,
-    marginBottom: 8,
-  },
-  composeInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-  },
-  composeInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    paddingRight: 50,
-    fontSize: 15,
-    fontFamily: FONT.regular,
-    color: COLORS.textDark,
-    maxHeight: 100,
-  },
-  sendButton: {
-    position: 'absolute',
-    right: 4,
-    bottom: 4,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: COLORS.accent,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  sendButtonDisabled: {
-    backgroundColor: COLORS.textLight,
-  },
-  charCount: {
-    fontSize: 12,
-    fontFamily: FONT.regular,
-    color: COLORS.textGray,
-    textAlign: 'right',
-    marginTop: 4,
   },
   
   // Notes styles

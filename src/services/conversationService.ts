@@ -161,105 +161,106 @@ class ConversationService extends BaseService {
   }
 
   /**
-   * Get messages for a conversation
-   */
-  async getMessages(
-    conversationId: string,
-    locationId: string,
-    options?: {
-      limit?: number;
-      offset?: number;
-    }
-  ): Promise<MessageListResponse> {
+ * Get messages for a conversation
+ */
+async getMessages(
+  conversationId: string,
+  locationId: string,
+  options?: {
+    limit?: number;
+    offset?: number;
+  }
+): Promise<MessageListResponse> {
+  if (__DEV__) {
+    console.log('[conversationService.getMessages] Called with:', {
+      conversationId,
+      locationId,
+      options
+    });
+  }
+
+  const endpoint = `/api/conversations/${conversationId}/messages`;
+  
+  // Build params object
+  const params: any = {
+    locationId,
+    limit: options?.limit || 20,
+    offset: options?.offset || 0
+  };
+  
+  if (__DEV__) {
+    console.log('[conversationService.getMessages] Endpoint:', endpoint);
+    console.log('[conversationService.getMessages] Params:', params);
+  }
+
+  try {
+    const response = await this.get<MessageListResponse>(
+      endpoint,
+      {
+        cache: {
+          priority: 'network-first',      // Always try network first
+          ttl: 24 * 60 * 60 * 1000,      // Keep for 24 hours for offline
+          staleWhileRevalidate: true      // Return stale while fetching
+        },
+        params
+      },
+      {
+        endpoint,
+        method: 'GET',
+        entity: 'contact',
+      }
+    );
+
     if (__DEV__) {
-      console.log('[conversationService.getMessages] Called with:', {
-        conversationId,
-        locationId,
-        options
+      console.log('[conversationService.getMessages] Response:', {
+        success: response.success,
+        messageCount: response.messages?.length || 0,
+        pagination: response.pagination
+      });
+      // Log first message structure to see what we're working with
+      if (response.messages && response.messages.length > 0) {
+        console.log('[conversationService.getMessages] First message:', JSON.stringify(response.messages[0], null, 2));
+      }
+    }
+
+    // Don't process messages - we'll fetch email content on click
+    // const processedMessages = await this.processMessages(
+    //   response.messages,
+    //   locationId
+    // );
+
+    return response; // Return the raw response without processing
+  } catch (error: any) {
+    if (__DEV__) {
+      console.log('[conversationService.getMessages] Error:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        isOffline: !navigator.onLine
       });
     }
 
-    const endpoint = `/api/conversations/${conversationId}/messages`;
-    
-    // Build params object
-    const params: any = {
-      locationId,
-      limit: options?.limit || 20,
-      offset: options?.offset || 0
-    };
-    
-    if (__DEV__) {
-      console.log('[conversationService.getMessages] Endpoint:', endpoint);
-      console.log('[conversationService.getMessages] Params:', params);
-    }
-
-    try {
-      const response = await this.get<MessageListResponse>(
-        endpoint,
-        {
-          cache: {
-            priority: 'network-first',      // Always try network first
-            ttl: 24 * 60 * 60 * 1000,      // Keep for 24 hours for offline
-            staleWhileRevalidate: true      // Return stale while fetching
-          },
-          params
-        },
-        {
-          endpoint,
-          method: 'GET',
-          entity: 'contact',
-        }
-      );
-
-      if (__DEV__) {
-        console.log('[conversationService.getMessages] Response:', {
-          success: response.success,
-          messageCount: response.messages?.length || 0,
-          pagination: response.pagination
-        });
-      }
-
-      // Process messages to ensure email content is fetched
-      const processedMessages = await this.processMessages(
-        response.messages,
-        locationId
-      );
-
-      return {
-        ...response,
-        messages: processedMessages,
-      };
-    } catch (error: any) {
-      if (__DEV__) {
-        console.log('[conversationService.getMessages] Error:', {
-          message: error.message,
-          response: error.response?.data,
-          status: error.response?.status,
-          isOffline: !navigator.onLine
-        });
-      }
-
-      // If offline, try to return cached data
-      if (!navigator.onLine) {
-        try {
-          const cachedKey = `@lpai_cache_GET_${endpoint}_${JSON.stringify(params)}`;
-          const cached = await this.getCached(cachedKey);
-          if (cached) {
-            if (__DEV__) {
-              console.log('[conversationService.getMessages] Returning cached data for offline use');
-            }
-            return cached;
-          }
-        } catch (cacheError) {
+    // If offline, try to return cached data
+    if (!navigator.onLine) {
+      try {
+        const cachedKey = `@lpai_cache_GET_${endpoint}_${JSON.stringify(params)}`;
+        const cached = await this.getCached(cachedKey);
+        if (cached) {
           if (__DEV__) {
-            console.log('[conversationService.getMessages] Cache retrieval failed:', cacheError);
+            console.log('[conversationService.getMessages] Returning cached data for offline use');
           }
+          return cached;
+        }
+      } catch (cacheError) {
+        if (__DEV__) {
+          console.log('[conversationService.getMessages] Cache retrieval failed:', cacheError);
         }
       }
-
-      throw error;
     }
+
+    throw error;
   }
+}
 
   /**
    * Force refresh conversations (for pull-to-refresh)
