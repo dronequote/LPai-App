@@ -206,7 +206,8 @@ export function buildConversationFilter(params: ParsedQueryParams): any {
   if (params.locationId) filter.locationId = params.locationId;
   if (params.type) filter.type = params.type;
   if (params.contactId) {
-    filter.contactId = params.contactId;   }
+    filter.contactId = params.contactId;
+  }
   
   // Unread only filter
   if (params.unreadOnly === 'true') {
@@ -239,10 +240,10 @@ export function buildConversationFilter(params: ParsedQueryParams): any {
     filter.lastMessageDirection = params.lastMessageDirection;
   }
   
-  // Include both SMS and Email by default unless specified
+  // Include all conversation types by default unless specified
   if (!params.type && params.includeEmail !== 'false') {
-    // This matches the existing behavior
-    filter.type = { $in: ['sms', 'email'] };
+    // Include all official GHL conversation types
+    filter.type = { $in: ['TYPE_PHONE', 'TYPE_EMAIL', 'TYPE_FB_MESSENGER', 'TYPE_REVIEW', 'TYPE_GROUP_SMS'] };
   }
   
   return filter;
