@@ -75,27 +75,89 @@ class ConversationService extends BaseService {
     locationId: string,
     options: ConversationListOptions = {}
   ): Promise<Conversation[]> {
-    const params = new URLSearchParams({ locationId });
-    
-    if (options.contactId) params.append('contactId', options.contactId);
-    if (options.type) params.append('type', options.type);
-    if (options.includeEmail !== undefined) {
-      params.append('includeEmail', options.includeEmail.toString());
+    if (__DEV__) {
+      console.log('[conversationService.list] Called with:', {
+        locationId,
+        options,
+        locationIdType: typeof locationId,
+        hasContactId: !!options.contactId,
+        contactId: options.contactId
+      });
     }
+
+    // Don't build params into the URL - let BaseService handle it
+    const endpoint = '/api/conversations';
     
-    const endpoint = `/api/conversations?${params}`;
+    // Build all params as an object
+    const params: any = { locationId };
+    if (options.contactId) params.contactId = options.contactId;
+    if (options.type) params.type = options.type;
+    if (options.includeEmail !== undefined) params.includeEmail = options.includeEmail;
+    if (options.limit) params.limit = options.limit;
+    if (options.offset) params.offset = options.offset;
     
-    return this.get<Conversation[]>(
-      endpoint,
-      {
-        cache: { priority: 'medium', ttl: 5 * 60 * 1000 }, // 5 min
-      },
-      {
+    if (__DEV__) {
+      console.log('[conversationService.list] Calling with params:', params);
+    }
+
+    try {
+      // Smart caching: network-first with offline fallback
+      const result = await this.get<Conversation[]>(
         endpoint,
-        method: 'GET',
-        entity: 'contact',
+        {
+          cache: {
+            priority: 'network-first',      // Always try network first
+            ttl: 24 * 60 * 60 * 1000,      // Keep for 24 hours for offline
+            staleWhileRevalidate: true      // Return stale while fetching
+          },
+          params
+        },
+        {
+          endpoint,
+          method: 'GET',
+          entity: 'contact',
+        }
+      );
+
+      if (__DEV__) {
+        console.log('[conversationService.list] Response:', {
+          isArray: Array.isArray(result),
+          length: result?.length || 0,
+          firstItem: result?.[0]
+        });
       }
-    );
+
+      return result;
+    } catch (error: any) {
+      if (__DEV__) {
+        console.log('[conversationService.list] Error:', {
+          message: error.message,
+          response: error.response?.data,
+          status: error.response?.status,
+          isOffline: !navigator.onLine
+        });
+      }
+
+      // If offline, try to return cached data
+      if (!navigator.onLine) {
+        try {
+          const cachedKey = `@lpai_cache_GET_${endpoint}_${JSON.stringify(params)}`;
+          const cached = await this.getCached(cachedKey);
+          if (cached) {
+            if (__DEV__) {
+              console.log('[conversationService.list] Returning cached data for offline use');
+            }
+            return cached;
+          }
+        } catch (cacheError) {
+          if (__DEV__) {
+            console.log('[conversationService.list] Cache retrieval failed:', cacheError);
+          }
+        }
+      }
+      
+      throw error;
+    }
   }
 
   /**
@@ -109,36 +171,147 @@ class ConversationService extends BaseService {
       offset?: number;
     }
   ): Promise<MessageListResponse> {
-    const params = new URLSearchParams({
+    if (__DEV__) {
+      console.log('[conversationService.getMessages] Called with:', {
+        conversationId,
+        locationId,
+        options
+      });
+    }
+
+    const endpoint = `/api/conversations/${conversationId}/messages`;
+    
+    // Build params object
+    const params: any = {
       locationId,
-      limit: (options?.limit || 20).toString(),
-      offset: (options?.offset || 0).toString(),
-    });
-    
-    const endpoint = `/api/conversations/${conversationId}/messages?${params}`;
-    
-    const response = await this.get<MessageListResponse>(
-      endpoint,
-      {
-        cache: { priority: 'medium', ttl: 2 * 60 * 1000 }, // 2 min
-      },
-      {
-        endpoint,
-        method: 'GET',
-        entity: 'contact',
-      }
-    );
-
-    // Process messages to ensure email content is fetched
-    const processedMessages = await this.processMessages(
-      response.messages,
-      locationId
-    );
-
-    return {
-      ...response,
-      messages: processedMessages,
+      limit: options?.limit || 20,
+      offset: options?.offset || 0
     };
+    
+    if (__DEV__) {
+      console.log('[conversationService.getMessages] Endpoint:', endpoint);
+      console.log('[conversationService.getMessages] Params:', params);
+    }
+
+    try {
+      const response = await this.get<MessageListResponse>(
+        endpoint,
+        {
+          cache: {
+            priority: 'network-first',      // Always try network first
+            ttl: 24 * 60 * 60 * 1000,      // Keep for 24 hours for offline
+            staleWhileRevalidate: true      // Return stale while fetching
+          },
+          params
+        },
+        {
+          endpoint,
+          method: 'GET',
+          entity: 'contact',
+        }
+      );
+
+      if (__DEV__) {
+        console.log('[conversationService.getMessages] Response:', {
+          success: response.success,
+          messageCount: response.messages?.length || 0,
+          pagination: response.pagination
+        });
+      }
+
+      // Process messages to ensure email content is fetched
+      const processedMessages = await this.processMessages(
+        response.messages,
+        locationId
+      );
+
+      return {
+        ...response,
+        messages: processedMessages,
+      };
+    } catch (error: any) {
+      if (__DEV__) {
+        console.log('[conversationService.getMessages] Error:', {
+          message: error.message,
+          response: error.response?.data,
+          status: error.response?.status,
+          isOffline: !navigator.onLine
+        });
+      }
+
+      // If offline, try to return cached data
+      if (!navigator.onLine) {
+        try {
+          const cachedKey = `@lpai_cache_GET_${endpoint}_${JSON.stringify(params)}`;
+          const cached = await this.getCached(cachedKey);
+          if (cached) {
+            if (__DEV__) {
+              console.log('[conversationService.getMessages] Returning cached data for offline use');
+            }
+            return cached;
+          }
+        } catch (cacheError) {
+          if (__DEV__) {
+            console.log('[conversationService.getMessages] Cache retrieval failed:', cacheError);
+          }
+        }
+      }
+
+      throw error;
+    }
+  }
+
+  /**
+   * Force refresh conversations (for pull-to-refresh)
+   */
+  async refreshConversations(
+    locationId: string,
+    options: ConversationListOptions = {}
+  ): Promise<Conversation[]> {
+    if (__DEV__) {
+      console.log('[conversationService.refreshConversations] Force refreshing...');
+    }
+
+    // Clear relevant cache first
+    const endpoint = '/api/conversations';
+    const params: any = { locationId };
+    if (options.contactId) params.contactId = options.contactId;
+    
+    const cacheKey = `@lpai_cache_GET_${endpoint}_${JSON.stringify(params)}`;
+    await this.clearCache(cacheKey);
+
+    // Now fetch fresh data
+    return this.list(locationId, options);
+  }
+
+  /**
+   * Force refresh messages (for pull-to-refresh)
+   */
+  async refreshMessages(
+    conversationId: string,
+    locationId: string,
+    options?: {
+      limit?: number;
+      offset?: number;
+    }
+  ): Promise<MessageListResponse> {
+    if (__DEV__) {
+      console.log('[conversationService.refreshMessages] Force refreshing...');
+    }
+
+    // Clear relevant cache first
+    const endpoint = `/api/conversations/${conversationId}/messages`;
+    const params: any = {
+      locationId,
+      limit: options?.limit || 20,
+      offset: options?.offset || 0
+    };
+    
+    const cacheKey = `@lpai_cache_GET_${endpoint}_${JSON.stringify(params)}`;
+    await this.clearCache(cacheKey);
+
+    // Now fetch fresh data
+    return this.getMessages(conversationId, locationId, options);
   }
 
   /**
@@ -148,12 +321,19 @@ class ConversationService extends BaseService {
     emailMessageId: string,
     locationId: string
   ): Promise<EmailContent> {
+    if (__DEV__) {
+      console.log('[conversationService.getEmailContent] Called with:', {
+        emailMessageId,
+        locationId
+      });
+    }
+
     const endpoint = `/api/messages/email/${emailMessageId}?locationId=${locationId}`;
     
     return this.get<EmailContent>(
       endpoint,
       {
-        cache: { priority: 'high', ttl: 30 * 60 * 1000 }, // 30 min
+        cache: { priority: 'high', ttl: 30 * 60 * 1000 }, // 30 min - emails don't change
       },
       {
         endpoint,
@@ -171,6 +351,14 @@ class ConversationService extends BaseService {
     messageIds: string[],
     locationId: string
   ): Promise<{ success: boolean }> {
+    if (__DEV__) {
+      console.log('[conversationService.markAsRead] Called with:', {
+        conversationId,
+        messageIds,
+        locationId
+      });
+    }
+
     // This would need backend implementation
     // For now, just clear cache
     await this.clearCache(`@lpai_cache_GET_/api/conversations/${conversationId}/messages`);
@@ -185,6 +373,13 @@ class ConversationService extends BaseService {
     locationId: string,
     contactId?: string
   ): Promise<number> {
+    if (__DEV__) {
+      console.log('[conversationService.getUnreadCount] Called with:', {
+        locationId,
+        contactId
+      });
+    }
+
     const conversations = await this.list(locationId, { contactId });
     
     return conversations.reduce((total, conv) => {
@@ -204,6 +399,14 @@ class ConversationService extends BaseService {
       limit?: number;
     }
   ): Promise<ConversationMessage[]> {
+    if (__DEV__) {
+      console.log('[conversationService.searchMessages] Called with:', {
+        locationId,
+        query,
+        options
+      });
+    }
+
     // This would need backend implementation
     // For now, search in cached conversations
     const conversations = await this.list(locationId, {
@@ -240,6 +443,14 @@ class ConversationService extends BaseService {
     locationId: string,
     type: 'sms' | 'email' = 'sms'
   ): Promise<Conversation | null> {
+    if (__DEV__) {
+      console.log('[conversationService.getByContact] Called with:', {
+        contactId,
+        locationId,
+        type
+      });
+    }
+
     const conversations = await this.list(locationId, {
       contactId,
       type,
@@ -255,6 +466,10 @@ class ConversationService extends BaseService {
     messages: ConversationMessage[],
     locationId: string
   ): Promise<ConversationMessage[]> {
+    if (__DEV__) {
+      console.log('[conversationService.processMessages] Processing', messages.length, 'messages');
+    }
+
     const processed = await Promise.all(
       messages.map(async (msg) => {
         // If it's an email that needs content
@@ -344,6 +559,13 @@ class ConversationService extends BaseService {
       email: number;
     };
   }> {
+    if (__DEV__) {
+      console.log('[conversationService.getStats] Called with:', {
+        locationId,
+        dateRange
+      });
+    }
+
     const conversations = await this.list(locationId);
     
     const stats = {
@@ -378,6 +600,15 @@ class ConversationService extends BaseService {
     currentOffset: number,
     limit: number = 20
   ): Promise<MessageListResponse> {
+    if (__DEV__) {
+      console.log('[conversationService.loadMoreMessages] Called with:', {
+        conversationId,
+        locationId,
+        currentOffset,
+        limit
+      });
+    }
+
     return this.getMessages(conversationId, locationId, {
       limit,
       offset: currentOffset + limit,
@@ -388,6 +619,12 @@ class ConversationService extends BaseService {
    * Clear conversation cache
    */
   async clearConversationCache(locationId: string): Promise<void> {
+    if (__DEV__) {
+      console.log('[conversationService.clearConversationCache] Called with:', {
+        locationId
+      });
+    }
+
     await this.clearCache(`@lpai_cache_GET_/api/conversations`);
   }
 }

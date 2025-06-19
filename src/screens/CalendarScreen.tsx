@@ -1,6 +1,6 @@
 // src/screens/CalendarScreen.tsx
 // Updated: 2025-06-19
-// Description: Apple Calendar-inspired design with day, week, and month views - Optimized
+// Description: Apple Calendar-inspired design with day, week, and month views - Fixed today date
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
@@ -63,6 +63,15 @@ export default function CalendarScreen({ navigation, route }: CalendarScreenProp
   const scrollViewRef = useRef<ScrollView>(null);
   const swipeAnim = useRef(new Animated.Value(0)).current;
 
+  // Get today's date string properly
+  const getTodayString = () => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   // Helper functions - MUST BE DEFINED BEFORE USING THEM
   const getAppointmentStart = (appointment: any): string | null => {
     let possibleStart = appointment.start || appointment.startTime || appointment.time || appointment.appointmentStart;
@@ -106,8 +115,14 @@ export default function CalendarScreen({ navigation, route }: CalendarScreenProp
     return `${hour - 12} PM`;
   };
 
+  // Create a local date to avoid timezone issues
+  const createLocalDate = (dateString: string): Date => {
+    const [year, month, day] = dateString.split('-').map(Number);
+    return new Date(year, month - 1, day, 12, 0, 0); // Noon to avoid DST issues
+  };
+
   const getWeekDates = (date: string): string[] => {
-    const d = new Date(date + 'T12:00:00');
+    const d = createLocalDate(date);
     const day = d.getDay();
     const diff = d.getDate() - day;
     d.setDate(diff);
@@ -116,7 +131,10 @@ export default function CalendarScreen({ navigation, route }: CalendarScreenProp
     for (let i = 0; i < 7; i++) {
       const weekDay = new Date(d);
       weekDay.setDate(d.getDate() + i);
-      week.push(weekDay.toISOString().split('T')[0]);
+      const year = weekDay.getFullYear();
+      const month = String(weekDay.getMonth() + 1).padStart(2, '0');
+      const dayNum = String(weekDay.getDate()).padStart(2, '0');
+      week.push(`${year}-${month}-${dayNum}`);
     }
     return week;
   };
@@ -182,20 +200,26 @@ export default function CalendarScreen({ navigation, route }: CalendarScreenProp
   );
 
   const navigateToToday = () => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getTodayString();
     setSelectedDate(today);
   };
 
   const changeWeek = (direction: number) => {
-    const current = new Date(selectedDate);
+    const current = createLocalDate(selectedDate);
     current.setDate(current.getDate() + (direction * 7));
-    setSelectedDate(current.toISOString().split('T')[0]);
+    const year = current.getFullYear();
+    const month = String(current.getMonth() + 1).padStart(2, '0');
+    const day = String(current.getDate()).padStart(2, '0');
+    setSelectedDate(`${year}-${month}-${day}`);
   };
 
   const changeDay = (direction: number) => {
-    const current = new Date(selectedDate);
+    const current = createLocalDate(selectedDate);
     current.setDate(current.getDate() + direction);
-    setSelectedDate(current.toISOString().split('T')[0]);
+    const year = current.getFullYear();
+    const month = String(current.getMonth() + 1).padStart(2, '0');
+    const day = String(current.getDate()).padStart(2, '0');
+    setSelectedDate(`${year}-${month}-${day}`);
   };
 
   // Update current time every minute
@@ -261,7 +285,7 @@ export default function CalendarScreen({ navigation, route }: CalendarScreenProp
     });
     
     // Get today's date
-    const today = new Date().toISOString().split('T')[0];
+    const today = getTodayString();
     
     // Mark today with blue background
     if (!marks[today]) {
@@ -382,16 +406,15 @@ export default function CalendarScreen({ navigation, route }: CalendarScreenProp
   // Render week view
   const renderWeekView = () => {
     const weekDates = getWeekDates(selectedDate);
+    const todayString = getTodayString();
     
     if (__DEV__) {
       console.log('📅 [Calendar] Week dates:', weekDates);
-      console.log('📅 [Calendar] First day:', new Date(weekDates[0] + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long' }));
+      console.log('📅 [Calendar] Today string:', todayString);
     }
     
     const weekAppointments = weekDates.map(date => getAppointmentsForDate(date));
-    const today = new Date();
-    const todayString = today.toISOString().split('T')[0];
-    const currentHour = today.getHours() + today.getMinutes() / 60;
+    const currentHour = currentTime.getHours() + currentTime.getMinutes() / 60;
     
     return (
       <View style={styles.weekContainer}>
@@ -399,15 +422,14 @@ export default function CalendarScreen({ navigation, route }: CalendarScreenProp
         <View style={styles.weekHeader}>
           <View style={{ width: TIME_COLUMN_WIDTH }} />
           {weekDates.map((date, index) => {
-            const d = new Date(date + 'T12:00:00');
+            const d = createLocalDate(date);
             const isToday = date === todayString;
             const isSelected = date === selectedDate;
             
             return (
-              <TouchableOpacity
+              <View
                 key={date}
                 style={styles.weekHeaderDay}
-                onPress={() => setSelectedDate(date)}
               >
                 <Text style={[
                   styles.weekHeaderDayName,
@@ -422,7 +444,7 @@ export default function CalendarScreen({ navigation, route }: CalendarScreenProp
                 ]}>
                   {d.getDate()}
                 </Text>
-              </TouchableOpacity>
+              </View>
             );
           })}
         </View>
@@ -470,8 +492,8 @@ export default function CalendarScreen({ navigation, route }: CalendarScreenProp
               )}
             </View>
             
-            {/* Current time line */}
-            {currentHour >= 0 && currentHour <= 24 && (
+            {/* Current time line - only show if we're looking at current week */}
+            {weekDates.includes(todayString) && currentHour >= 0 && currentHour <= 24 && (
               <View style={[styles.currentTimeLine, { top: currentHour * HOUR_HEIGHT }]}>
                 <View style={styles.currentTimeCircle} />
                 <View style={styles.currentTimeLineBar} />
@@ -486,9 +508,9 @@ export default function CalendarScreen({ navigation, route }: CalendarScreenProp
   // Render day view
   const renderDayView = () => {
     const dayAppointments = getAppointmentsForDate(selectedDate);
-    const today = new Date();
-    const isToday = selectedDate === today.toISOString().split('T')[0];
-    const currentHour = today.getHours() + today.getMinutes() / 60;
+    const todayString = getTodayString();
+    const isToday = selectedDate === todayString;
+    const currentHour = currentTime.getHours() + currentTime.getMinutes() / 60;
     
     return (
       <ScrollView
@@ -497,12 +519,14 @@ export default function CalendarScreen({ navigation, route }: CalendarScreenProp
         showsVerticalScrollIndicator={false}
         onLayout={(e) => {
           // Scroll to current time on layout
-          const now = new Date();
-          const currentHour = now.getHours() + now.getMinutes() / 60;
-          const scrollPosition = (currentHour * HOUR_HEIGHT) - (e.nativeEvent.layout.height / 2);
-          setTimeout(() => {
-            scrollViewRef.current?.scrollTo({ y: Math.max(0, scrollPosition), animated: true });
-          }, 150);
+          if (isToday) {
+            const now = new Date();
+            const currentHour = now.getHours() + now.getMinutes() / 60;
+            const scrollPosition = (currentHour * HOUR_HEIGHT) - (e.nativeEvent.layout.height / 2);
+            setTimeout(() => {
+              scrollViewRef.current?.scrollTo({ y: Math.max(0, scrollPosition), animated: true });
+            }, 150);
+          }
         }}
       >
         {/* Time grid */}
@@ -543,11 +567,12 @@ export default function CalendarScreen({ navigation, route }: CalendarScreenProp
   // Render month view appointments
   const renderMonthAppointments = () => {
     const selectedDateAppointments = getAppointmentsForDate(selectedDate);
+    const displayDate = createLocalDate(selectedDate);
     
     return (
       <View style={styles.appointmentsList}>
         <Text style={styles.dateHeader}>
-          {new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { 
+          {displayDate.toLocaleDateString('en-US', { 
             weekday: 'long', 
             month: 'long', 
             day: 'numeric' 
@@ -732,7 +757,7 @@ export default function CalendarScreen({ navigation, route }: CalendarScreenProp
               <Ionicons name="chevron-back" size={24} color={COLORS.textDark} />
             </TouchableOpacity>
             <Text style={styles.weekTitle}>
-              {new Date(selectedDate).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+              {createLocalDate(selectedDate).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
             </Text>
             <TouchableOpacity onPress={() => changeWeek(1)} style={styles.navButton}>
               <Ionicons name="chevron-forward" size={24} color={COLORS.textDark} />
@@ -748,7 +773,7 @@ export default function CalendarScreen({ navigation, route }: CalendarScreenProp
               <Ionicons name="chevron-back" size={24} color={COLORS.textDark} />
             </TouchableOpacity>
             <Text style={styles.dayNavigationTitle}>
-              {new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { 
+              {createLocalDate(selectedDate).toLocaleDateString('en-US', { 
                 weekday: 'long', 
                 month: 'long', 
                 day: 'numeric',
