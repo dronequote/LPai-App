@@ -206,8 +206,7 @@ export function buildConversationFilter(params: ParsedQueryParams): any {
   if (params.locationId) filter.locationId = params.locationId;
   if (params.type) filter.type = params.type;
   if (params.contactId) {
-    filter.contactId = new ObjectId(params.contactId);
-  }
+    filter.contactId = params.contactId;   }
   
   // Unread only filter
   if (params.unreadOnly === 'true') {
