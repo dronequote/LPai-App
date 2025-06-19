@@ -1,33 +1,65 @@
-import React, { useEffect, useState } from 'react';
+// src/screens/ContactDetailScreen.tsx
+// Complete version with all render functions
+
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
-  TextInput,
   StyleSheet,
-  Alert,
   ScrollView,
-  KeyboardAvoidingView,
-  Platform,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
+  Linking,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
+  RefreshControl,
+  FlatList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import { useCalendar } from '../contexts/CalendarContext';
-import api from '../lib/api';
-import { COLORS, FONT, RADIUS, SHADOW } from '../styles/theme';
-import CompactAppointmentCard from '../components/CompactAppointmentCard';
-import ProjectCard from '../components/ProjectCard';
+import { useContact, useUpdateContact, useDeleteContact } from '../hooks/useContacts';
+import { useProjects } from '../hooks/useProjects';
+import { useAppointments } from '../hooks/useAppointments';
+import { projectService } from '../services/projectService';
+import { appointmentService } from '../services/appointmentService';
+import { conversationService } from '../services/conversationService';
+import { smsService } from '../services/smsService';
+import { emailService } from '../services/emailService';
+import { contactService } from '../services/contactService'; // ADD THIS LINE
 import CreateAppointmentModal from '../components/CreateAppointmentModal';
 import AddProjectForm from '../components/AddProjectForm';
-import type { Contact, Project, Appointment } from '@lp-ai/types';
+import CompactAppointmentCard from '../components/CompactAppointmentCard';
+import ProjectCard from '../components/ProjectCard';
+import { COLORS, FONT, SHADOW } from '../styles/theme';
+import type { Contact, Project, Appointment } from '../../packages/types/dist';
 
 
 type ContactDetailRouteParams = {
   contact: Contact;
 };
+
+type TabType = 'overview' | 'details' | 'conversations' | 'notes';
+type MessageFilter = 'all' | 'sms' | 'email' | 'call';
+
+const tabs: { id: TabType; label: string; icon: string }[] = [
+  { id: 'overview', label: 'Overview', icon: 'person' },
+  { id: 'details', label: 'Details', icon: 'information-circle' },
+  { id: 'conversations', label: 'Conversations', icon: 'chatbubbles' },
+  { id: 'notes', label: 'Notes', icon: 'document-text' },
+];
+
+const messageFilters: { id: MessageFilter; label: string; icon: string }[] = [
+  { id: 'all', label: 'All', icon: 'apps' },
+  { id: 'sms', label: 'SMS', icon: 'chatbubble' },
+  { id: 'email', label: 'Email', icon: 'mail' },
+  { id: 'call', label: 'Calls', icon: 'call' },
+];
+
 
 export default function ContactDetailScreen() {
   const route = useRoute();
@@ -36,508 +68,1062 @@ export default function ContactDetailScreen() {
   const { calendarMap } = useCalendar();
   
   const { contact: initialContact } = route.params as ContactDetailRouteParams;
-
-  const [contact, setContact] = useState<Contact>(initialContact);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [appointments, setAppointments] = useState<Appointment[]>([]);
-  const [allContacts, setAllContacts] = useState<Contact[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  
+  // Calculate appointment start date once to prevent infinite loop
+  const appointmentStartDate = useMemo(() => {
+    const date = new Date();
+    date.setHours(0, 0, 0, 0); // Set to start of today
+    return date.toISOString();
+  }, []);
+  
+  // State
+  const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [editing, setEditing] = useState(false);
-
-  // Modal states
   const [showCreateAppointment, setShowCreateAppointment] = useState(false);
   const [showAddProject, setShowAddProject] = useState(false);
-  const [isSyncingPipelines, setIsSyncingPipelines] = useState(false);
-
+  
+  // Conversations state
+  const [messageFilter, setMessageFilter] = useState<MessageFilter>('all');
+  const [conversations, setConversations] = useState<any[]>([]);
+  const [messages, setMessages] = useState<any[]>([]);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [composeText, setComposeText] = useState('');
+  const [composeMode, setComposeMode] = useState<'sms' | 'email'>('sms');
+  const [emailSubject, setEmailSubject] = useState('');
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const [refreshingConversations, setRefreshingConversations] = useState(false);
+  
+  // Notes state
+  const [notes, setNotes] = useState<any[]>([]);
+  const [newNote, setNewNote] = useState('');
+  const [addingNote, setAddingNote] = useState(false);
+  
   // Form fields
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
-  const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
-  const [address, setAddress] = useState('');
-  const [notes, setNotes] = useState('');
-
-  // Fetch contact details, projects, and appointments
-  useEffect(() => {
-    const fetchContactData = async () => {
-      try {
-        setLoading(true);
-        
-        // Set form fields from initial contact
-        setFirstName(contact.firstName || '');
-        setLastName(contact.lastName || '');
-        setEmail(contact.email || '');
-        setPhone(contact.phone || '');
-        setAddress(contact.address || '');
-        setNotes(contact.notes || '');
-
-        // Fetch projects for this contact
-      const projectsData = await projectService.getByContact 
-        ? await projectService.getByContact(contact._id, user.locationId)
-        : await projectService.list(user.locationId, { contactId: contact._id });
-      setProjects(Array.isArray(projectsData) ? projectsData : []);
-
-        // Fetch appointments for this contact
-        const appointmentsRes = await api.get('/api/appointments', {
-          params: { locationId: user?.locationId },
-        });
-        
-        // Filter appointments for this contact and get upcoming ones
-        const now = new Date();
-        const contactAppointments = (appointmentsRes.data || [])
-          .filter(apt => apt.contactId === contact._id)
-          .filter(apt => new Date(apt.start || apt.time) > now)
-          .sort((a, b) => new Date(a.start || a.time).getTime() - new Date(b.start || b.time).getTime())
-          .slice(0, 5); // Show next 5 appointments
-        
-        setAppointments(contactAppointments);
-
-        // Fetch all contacts for appointment modal
-        const contactsRes = await api.get('/api/contacts', {
-          params: { locationId: user?.locationId },
-        });
-        setAllContacts(contactsRes.data || []);
-
-      } catch (err) {
-        console.error('Failed to fetch contact data:', err);
-        Alert.alert('Error', 'Failed to load contact details');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    if (contact._id && user?.locationId) {
-      fetchContactData();
-    }
-  }, [contact._id, user?.locationId]);
-
-  const handleSave = async () => {
-    if (!firstName || !lastName || !email || !phone) {
-      Alert.alert('Error', 'Please fill in all required fields');
-      return;
+  const [formData, setFormData] = useState({
+    firstName: initialContact.firstName || '',
+    lastName: initialContact.lastName || '',
+    email: initialContact.email || '',
+    phone: initialContact.phone || '',
+    secondaryPhone: initialContact.secondaryPhone || '',
+    address: initialContact.address || '',
+    city: initialContact.city || '',
+    state: initialContact.state || '',
+    postalCode: initialContact.postalCode || '',
+    country: initialContact.country || '',
+    companyName: initialContact.companyName || '',
+    website: initialContact.website || '',
+    notes: initialContact.notes || '',
+    tags: initialContact.tags || [],
+    source: initialContact.source || '',
+  });
+  
+  // React Query hooks
+  const { data: contact = initialContact, isLoading: contactLoading, refetch: refetchContact } = useContact(
+    initialContact._id,
+    initialContact // Pass initial data to prevent loading state
+  );
+  const { data: projects = [], isLoading: projectsLoading } = useProjects(user?.locationId || '', {
+    contactId: contact._id,
+  });
+  const { data: appointments = [], isLoading: appointmentsLoading } = useAppointments(user?.locationId || '', {
+    contactId: contact._id,
+    start: appointmentStartDate,
+    limit: 10,
+  });
+  
+  const updateContactMutation = useUpdateContact();
+  const deleteContactMutation = useDeleteContact();
+  
+  // Get initials for avatar
+  const initials = `${contact.firstName?.[0] || ''}${contact.lastName?.[0] || ''}`.toUpperCase() || '?';
+  const fullName = `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'No Name';
+  
+  // Upcoming appointments
+  const upcomingAppointments = useMemo(() => {
+    return appointments
+      .filter(apt => new Date(apt.start || apt.time) > new Date())
+      .sort((a, b) => new Date(a.start || a.time).getTime() - new Date(b.start || b.time).getTime())
+      .slice(0, 5);
+  }, [appointments]);
+  
+ // Update the loadConversations function
+const loadConversations = async () => {
+  if (!user?.locationId || !contact._id) return;
+  
+  setLoadingMessages(true);
+  try {
+    // This should work - passing contactId in the params object
+    const convs = await conversationService.list(user.locationId, {
+      contactId: contact._id
+    });
+    
+    if (__DEV__) {
+      console.log('Loading conversations for contact:', contact._id);
+      console.log('Conversations response:', convs);
     }
     
+    if (convs && convs.length > 0) {
+      setConversations(convs);
+      
+      // Load messages from first conversation
+      try {
+        const messages = await conversationService.getMessages(
+          convs[0]._id,
+          user.locationId
+        );
+        setMessages(messages.messages || []);
+      } catch (msgError) {
+        console.error('Failed to load messages:', msgError);
+        setMessages([]);
+      }
+    } else {
+      // No conversations yet
+      setConversations([]);
+      setMessages([]);
+      
+      if (__DEV__) {
+        console.log('No conversations found for contact:', contact._id);
+      }
+    }
+  } catch (error: any) {
+    console.error('Failed to load conversations:', error);
+    
+    // Set empty state to allow viewing the tab
+    setConversations([]);
+    setMessages([]);
+  } finally {
+    setLoadingMessages(false);
+  }
+};
+  
+  // Load notes
+  const loadNotes = async () => {
+    // For now, just parse notes from contact.notes
+    // In the future, this could be a separate notes API
+    const existingNotes = contact.notes ? [{
+      id: '1',
+      text: contact.notes,
+      createdAt: contact.updatedAt || contact.createdAt,
+      createdBy: 'System'
+    }] : [];
+    setNotes(existingNotes);
+  };
+  
+  // Add refresh handler for conversations
+  const onRefreshConversations = useCallback(async () => {
+    if (!user?.locationId || !contact._id) return;
+    
+    setRefreshingConversations(true);
     try {
-      setSaving(true);
-      const updatedContact = await api.patch(`/api/contacts/${contact._id}`, {
-        firstName,
-        lastName,
-        email,
-        phone,
-        address,
-        notes,
+      // Clear cache first to force fresh data
+      await conversationService.clearConversationCache(user.locationId);
+      
+      // Now load fresh conversations
+      const convs = await conversationService.list(user.locationId, {
+        contactId: contact._id
       });
       
-      // Update local state
-      setContact({ ...contact, firstName, lastName, email, phone, address, notes });
+      if (__DEV__) {
+        console.log('Refreshing conversations for contact:', contact._id);
+        console.log('Fresh conversations response:', convs);
+      }
+      
+      if (convs && convs.length > 0) {
+        setConversations(convs);
+        
+        // Load messages from first conversation
+        try {
+          const messages = await conversationService.getMessages(
+            convs[0]._id,
+            user.locationId
+          );
+          setMessages(messages.messages || []);
+        } catch (msgError) {
+          console.error('Failed to load messages:', msgError);
+          setMessages([]);
+        }
+      } else {
+        // No conversations yet
+        setConversations([]);
+        setMessages([]);
+      }
+    } catch (error: any) {
+      console.error('Failed to refresh conversations:', error);
+      // Keep existing data on error
+    } finally {
+      setRefreshingConversations(false);
+    }
+  }, [user?.locationId, contact._id]);
+  
+  // Load data when tab changes
+  useEffect(() => {
+    if (activeTab === 'conversations') {
+      loadConversations();
+    } else if (activeTab === 'notes') {
+      loadNotes();
+    }
+  }, [activeTab, contact._id]);
+  
+  // Handle save
+  const handleSave = async () => {
+    try {
+      await updateContactMutation.mutateAsync({
+        id: contact._id,
+        data: formData,
+      });
       setEditing(false);
       Alert.alert('Success', 'Contact updated successfully');
-    } catch (err) {
-      console.error('Failed to update contact:', err);
+    } catch (error) {
       Alert.alert('Error', 'Failed to update contact');
-    } finally {
-      setSaving(false);
     }
   };
-
-  const handleProjectPress = (project: Project) => {
-    navigation.navigate('ProjectDetailScreen', { project });
+  
+  // Handle delete
+  const handleDelete = () => {
+    Alert.alert(
+      'Delete Contact',
+      'Are you sure you want to delete this contact? This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteContactMutation.mutateAsync(contact._id);
+              navigation.goBack();
+            } catch (error) {
+              Alert.alert('Error', 'Failed to delete contact');
+            }
+          },
+        },
+      ]
+    );
   };
-
-  const handleAppointmentPress = (appointment: Appointment) => {
-    navigation.navigate('AppointmentDetailScreen', { 
-      appointmentId: appointment._id 
-    });
-  };
-
-  const handleScheduleAppointment = () => {
-    setShowCreateAppointment(true);
-  };
-
-  const handleStartProject = async () => {
-    if (!user?.locationId) {
-      Alert.alert('Error', 'Missing location ID');
-      return;
+  
+  // Send message
+const handleSendMessage = async () => {
+  if (!composeText.trim() || !user?._id || !user?.locationId) return;
+  
+  setSendingMessage(true);
+  try {
+    if (composeMode === 'sms') {
+      await smsService.send({
+        contactId: contact._id,
+        locationId: user.locationId,
+        customMessage: composeText,
+        toNumber: contact.phone,
+        userId: user._id,
+      });
+      
+      // Add the message to local state immediately
+      const newMessage = {
+        id: Date.now().toString(),
+        type: 1, // SMS type
+        direction: 'outbound',
+        dateAdded: new Date().toISOString(),
+        body: composeText,
+        read: true,
+      };
+      setMessages([newMessage, ...messages]);
+    } else {
+      await emailService.send({
+        contactId: contact._id,
+        locationId: user.locationId,
+        subject: emailSubject || 'Message from ' + (user.name || 'Team'),
+        plainTextContent: composeText,
+        userId: user._id,
+      });
+      
+      // Add the email to local state immediately
+      const newMessage = {
+        id: Date.now().toString(),
+        type: 3, // Email type
+        direction: 'outbound',
+        dateAdded: new Date().toISOString(),
+        subject: emailSubject || 'Message from ' + (user.name || 'Team'),
+        body: composeText,
+        read: true,
+      };
+      setMessages([newMessage, ...messages]);
     }
     
-    // Sync pipelines before opening the modal
-    setIsSyncingPipelines(true);
+    setComposeText('');
+    setEmailSubject('');
+    Alert.alert('Success', `${composeMode.toUpperCase()} sent successfully`);
+    
+    // Try to reload conversations, but don't fail if it doesn't work
     try {
-      await api.get(`/api/ghl/pipelines/${user.locationId}`);
+      await loadConversations();
     } catch (e) {
-      console.error('[ContactDetailScreen] Failed to sync pipelines:', e);
+      // Ignore errors when reloading
     }
-    setIsSyncingPipelines(false);
-    setShowAddProject(true);
-  };
-
-  const handleCreateAppointment = async (appointmentData: any) => {
+  } catch (error) {
+    Alert.alert('Error', `Failed to send ${composeMode}`);
+  } finally {
+    setSendingMessage(false);
+  }
+};
+  
+  // Add note
+  const handleAddNote = async () => {
+    if (!newNote.trim()) return;
+    
+    setAddingNote(true);
     try {
-      await api.post('/api/appointments', appointmentData);
-      setShowCreateAppointment(false);
+      // For now, append to existing notes
+      const updatedNotes = contact.notes 
+        ? `${contact.notes}\n\n[${new Date().toLocaleString()}] ${user?.name || 'User'}: ${newNote}`
+        : `[${new Date().toLocaleString()}] ${user?.name || 'User'}: ${newNote}`;
       
-      // Refresh appointments
-      const appointmentsRes = await api.get('/api/appointments', {
-        params: { locationId: user?.locationId },
+      await updateContactMutation.mutateAsync({
+        id: contact._id,
+        data: { notes: updatedNotes },
       });
-      const now = new Date();
-      const contactAppointments = (appointmentsRes.data || [])
-        .filter(apt => apt.contactId === contact._id)
-        .filter(apt => new Date(apt.start || apt.time) > now)
-        .sort((a, b) => new Date(a.start || a.time).getTime() - new Date(b.start || b.time).getTime())
-        .slice(0, 5);
-      setAppointments(contactAppointments);
       
-      Alert.alert('Success', 'Appointment created successfully');
-    } catch (err) {
-      console.error('Failed to create appointment:', err);
-      Alert.alert('Error', 'Failed to create appointment');
+      setNewNote('');
+      loadNotes();
+      Alert.alert('Success', 'Note added successfully');
+    } catch (error) {
+      Alert.alert('Error', 'Failed to add note');
+    } finally {
+      setAddingNote(false);
     }
   };
-
-  const handleCreateProject = async (projectData: any) => {
-    try {
-      const response = await api.post('/api/projects', {
-        ...projectData,
-        locationId: user?.locationId,
-      });
+  
+  // Quick actions
+  const handleCall = (phoneNumber: string) => {
+    const phoneUrl = `tel:${phoneNumber}`;
+    Linking.openURL(phoneUrl).catch(() => {
+      Alert.alert('Error', 'Unable to make phone call');
+    });
+  };
+  
+  const handleText = (phoneNumber: string) => {
+    const smsUrl = `sms:${phoneNumber}`;
+    Linking.openURL(smsUrl).catch(() => {
+      Alert.alert('Error', 'Unable to send text message');
+    });
+  };
+  
+  const handleEmail = (emailAddress: string) => {
+    const emailUrl = `mailto:${emailAddress}`;
+    Linking.openURL(emailUrl).catch(() => {
+      Alert.alert('Error', 'Unable to send email');
+    });
+  };
+  
+  // Pull to refresh
+  const onRefresh = useCallback(async () => {
+    await refetchContact();
+  }, [refetchContact]);
+  
+  // Filter messages
+  const filteredMessages = useMemo(() => {
+    if (messageFilter === 'all') return messages;
+    
+    return messages.filter(msg => {
+      if (messageFilter === 'sms' && msg.type === 1) return true;
+      if (messageFilter === 'email' && msg.type === 3) return true;
+      if (messageFilter === 'call' && msg.type === 2) return true;
+      return false;
+    });
+  }, [messages, messageFilter]);
+  
+  // Render header
+  const renderHeader = () => (
+    <View style={styles.header}>
+      <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+        <Ionicons name="arrow-back" size={24} color={COLORS.textDark} />
+      </TouchableOpacity>
       
-      setShowAddProject(false);
+      <View style={styles.headerContent}>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>{initials}</Text>
+        </View>
+        <View style={styles.headerInfo}>
+          <Text style={styles.contactName}>{fullName}</Text>
+          {contact.companyName && (
+            <Text style={styles.companyName}>{contact.companyName}</Text>
+          )}
+          <View style={styles.tagsContainer}>
+            {contact.source && (
+              <View style={styles.tag}>
+                <Text style={styles.tagText}>{contact.source}</Text>
+              </View>
+            )}
+            {contact.tags?.slice(0, 2).map((tag, index) => (
+              <View key={index} style={styles.tag}>
+                <Text style={styles.tagText}>{tag}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      </View>
       
-      // Refresh projects
-      const projectsRes = await api.get('/api/projects/byContact', {
-        params: {
-          contactId: contact._id,
-          locationId: user?.locationId,
-        },
-      });
-      setProjects(projectsRes.data || []);
+      <View style={styles.headerActions}>
+        <TouchableOpacity onPress={() => setEditing(!editing)} style={styles.headerButton}>
+          <Ionicons name={editing ? "close" : "pencil"} size={20} color={COLORS.accent} />
+        </TouchableOpacity>
+        <TouchableOpacity onPress={handleDelete} style={styles.headerButton}>
+          <Ionicons name="trash-outline" size={20} color={COLORS.error} />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+  
+  // Render tabs
+  const renderTabs = () => (
+    <View style={styles.tabContainer}>
+      {tabs.map((tab) => (
+        <TouchableOpacity
+          key={tab.id}
+          style={[styles.tab, activeTab === tab.id && styles.tabActive]}
+          onPress={() => setActiveTab(tab.id)}
+        >
+          <Ionicons 
+            name={tab.icon as any} 
+            size={20} 
+            color={activeTab === tab.id ? COLORS.accent : COLORS.textLight} 
+          />
+          <Text style={[styles.tabText, activeTab === tab.id && styles.tabTextActive]}>
+            {tab.label}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+  
+  // Render overview tab
+  const renderOverviewTab = () => (
+    <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
+      {/* Quick Actions */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Quick Actions</Text>
+        <View style={styles.quickActions}>
+          <TouchableOpacity 
+            style={styles.actionButton} 
+            onPress={() => handleCall(contact.phone)}
+          >
+            <Ionicons name="call" size={24} color={COLORS.accent} />
+            <Text style={styles.actionText}>Call</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.actionButton} 
+            onPress={() => handleText(contact.phone)}
+          >
+            <Ionicons name="chatbubble" size={24} color={COLORS.accent} />
+            <Text style={styles.actionText}>Text</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.actionButton} 
+            onPress={() => handleEmail(contact.email)}
+          >
+            <Ionicons name="mail" size={24} color={COLORS.accent} />
+            <Text style={styles.actionText}>Email</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.actionButton} 
+            onPress={() => setActiveTab('conversations')}
+          >
+            <Ionicons name="chatbubbles" size={24} color={COLORS.accent} />
+            <Text style={styles.actionText}>History</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
       
-      Alert.alert('Success', 'Project created successfully');
+      {/* Contact Info */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Contact Information</Text>
+        <View style={styles.infoCard}>
+          <View style={styles.infoRow}>
+            <Ionicons name="mail-outline" size={20} color={COLORS.textGray} />
+            <Text style={styles.infoText}>{contact.email}</Text>
+          </View>
+          <View style={styles.infoRow}>
+            <Ionicons name="call-outline" size={20} color={COLORS.textGray} />
+            <Text style={styles.infoText}>{contact.phone}</Text>
+          </View>
+          {contact.secondaryPhone && (
+            <View style={styles.infoRow}>
+              <Ionicons name="call-outline" size={20} color={COLORS.textGray} />
+              <Text style={styles.infoText}>{contact.secondaryPhone} (Secondary)</Text>
+            </View>
+          )}
+          {contact.address && (
+            <View style={styles.infoRow}>
+              <Ionicons name="location-outline" size={20} color={COLORS.textGray} />
+              <Text style={styles.infoText}>
+                {contact.address}
+                {contact.city && `, ${contact.city}`}
+                {contact.state && `, ${contact.state}`}
+                {contact.postalCode && ` ${contact.postalCode}`}
+              </Text>
+            </View>
+          )}
+          {contact.website && (
+            <View style={styles.infoRow}>
+              <Ionicons name="globe-outline" size={20} color={COLORS.textGray} />
+              <TouchableOpacity onPress={() => Linking.openURL(contact.website!)}>
+                <Text style={[styles.infoText, styles.link]}>{contact.website}</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      </View>
       
-      // Navigate to the new project detail screen
-      const newProject = { 
-        _id: response.data.projectId, 
-        ...projectData 
-      };
-      navigation.navigate('ProjectDetailScreen', { project: newProject });
-    } catch (err) {
-      console.error('Failed to create project:', err);
-      Alert.alert('Error', 'Failed to create project');
+      {/* Projects */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Projects ({projects.length})</Text>
+          <TouchableOpacity style={styles.addButton} onPress={() => setShowAddProject(true)}>
+            <Ionicons name="add" size={20} color={COLORS.white} />
+            <Text style={styles.addButtonText}>New</Text>
+          </TouchableOpacity>
+        </View>
+        {projectsLoading ? (
+          <ActivityIndicator color={COLORS.accent} />
+        ) : projects.length === 0 ? (
+          <Text style={styles.emptyText}>No projects yet</Text>
+        ) : (
+          projects.slice(0, 3).map((project) => (
+            <ProjectCard
+              key={project._id}
+              title={project.title}
+              name={fullName}
+              email={contact.email}
+              phone={contact.phone}
+              status={project.status}
+              onPress={() => navigation.navigate('ProjectDetailScreen', { project })}
+            />
+          ))
+        )}
+        {projects.length > 3 && (
+          <TouchableOpacity 
+            style={styles.viewAllButton}
+            onPress={() => navigation.navigate('ProjectsScreen', { contactId: contact._id })}
+          >
+            <Text style={styles.viewAllText}>View all projects</Text>
+            <Ionicons name="arrow-forward" size={16} color={COLORS.accent} />
+          </TouchableOpacity>
+        )}
+      </View>
+      
+      {/* Appointments */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Upcoming Appointments</Text>
+          <TouchableOpacity style={styles.addButton} onPress={() => setShowCreateAppointment(true)}>
+            <Ionicons name="add" size={20} color={COLORS.white} />
+            <Text style={styles.addButtonText}>New</Text>
+          </TouchableOpacity>
+        </View>
+        {appointmentsLoading ? (
+          <ActivityIndicator color={COLORS.accent} />
+        ) : upcomingAppointments.length === 0 ? (
+          <Text style={styles.emptyText}>No upcoming appointments</Text>
+        ) : (
+          upcomingAppointments.map((appointment) => (
+            <CompactAppointmentCard
+              key={appointment._id}
+              appointment={appointment}
+              contact={contact}
+              calendar={calendarMap[appointment.calendarId]}
+              onPress={() => navigation.navigate('AppointmentDetail', { 
+                appointmentId: appointment._id 
+              })}
+            />
+          ))
+        )}
+      </View>
+    </ScrollView>
+  );
+  
+  // Render details tab
+  const renderDetailsTab = () => (
+    <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Basic Information</Text>
+        
+        {/* First Name */}
+        <View style={styles.fieldContainer}>
+          <Text style={styles.fieldLabel}>First Name</Text>
+          {editing ? (
+            <TextInput
+              style={styles.input}
+              value={formData.firstName}
+              onChangeText={(text) => setFormData({ ...formData, firstName: text })}
+              placeholder="First name"
+            />
+          ) : (
+            <Text style={styles.fieldValue}>{contact.firstName || '-'}</Text>
+          )}
+        </View>
+        
+        {/* Last Name */}
+        <View style={styles.fieldContainer}>
+          <Text style={styles.fieldLabel}>Last Name</Text>
+          {editing ? (
+            <TextInput
+              style={styles.input}
+              value={formData.lastName}
+              onChangeText={(text) => setFormData({ ...formData, lastName: text })}
+              placeholder="Last name"
+            />
+          ) : (
+            <Text style={styles.fieldValue}>{contact.lastName || '-'}</Text>
+          )}
+        </View>
+        
+        {/* Company */}
+        <View style={styles.fieldContainer}>
+          <Text style={styles.fieldLabel}>Company</Text>
+          {editing ? (
+            <TextInput
+              style={styles.input}
+              value={formData.companyName}
+              onChangeText={(text) => setFormData({ ...formData, companyName: text })}
+              placeholder="Company name"
+            />
+          ) : (
+            <Text style={styles.fieldValue}>{contact.companyName || '-'}</Text>
+          )}
+        </View>
+        
+        {/* Website */}
+        <View style={styles.fieldContainer}>
+          <Text style={styles.fieldLabel}>Website</Text>
+          {editing ? (
+            <TextInput
+              style={styles.input}
+              value={formData.website}
+              onChangeText={(text) => setFormData({ ...formData, website: text })}
+              placeholder="Website URL"
+              autoCapitalize="none"
+            />
+          ) : (
+            <Text style={styles.fieldValue}>{contact.website || '-'}</Text>
+          )}
+        </View>
+        
+        {/* Source */}
+        <View style={styles.fieldContainer}>
+          <Text style={styles.fieldLabel}>Source</Text>
+          {editing ? (
+            <TextInput
+              style={styles.input}
+              value={formData.source}
+              onChangeText={(text) => setFormData({ ...formData, source: text })}
+              placeholder="Lead source"
+            />
+          ) : (
+            <Text style={styles.fieldValue}>{contact.source || '-'}</Text>
+          )}
+        </View>
+      </View>
+      
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Contact Details</Text>
+        
+        {/* Email */}
+        <View style={styles.fieldContainer}>
+          <Text style={styles.fieldLabel}>Email</Text>
+          {editing ? (
+            <TextInput
+              style={styles.input}
+              value={formData.email}
+              onChangeText={(text) => setFormData({ ...formData, email: text })}
+              placeholder="Email address"
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+          ) : (
+            <Text style={styles.fieldValue}>{contact.email || '-'}</Text>
+          )}
+        </View>
+        
+        {/* Phone */}
+        <View style={styles.fieldContainer}>
+          <Text style={styles.fieldLabel}>Phone</Text>
+          {editing ? (
+            <TextInput
+              style={styles.input}
+              value={formData.phone}
+              onChangeText={(text) => setFormData({ ...formData, phone: text })}
+              placeholder="Phone number"
+              keyboardType="phone-pad"
+            />
+          ) : (
+            <Text style={styles.fieldValue}>{contact.phone || '-'}</Text>
+          )}
+        </View>
+        
+        {/* Secondary Phone */}
+        <View style={styles.fieldContainer}>
+          <Text style={styles.fieldLabel}>Secondary Phone</Text>
+          {editing ? (
+            <TextInput
+              style={styles.input}
+              value={formData.secondaryPhone}
+              onChangeText={(text) => setFormData({ ...formData, secondaryPhone: text })}
+              placeholder="Secondary phone"
+              keyboardType="phone-pad"
+            />
+          ) : (
+            <Text style={styles.fieldValue}>{contact.secondaryPhone || '-'}</Text>
+          )}
+        </View>
+      </View>
+      
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Address</Text>
+        
+        {/* Street Address */}
+        <View style={styles.fieldContainer}>
+          <Text style={styles.fieldLabel}>Street Address</Text>
+          {editing ? (
+            <TextInput
+              style={styles.input}
+              value={formData.address}
+              onChangeText={(text) => setFormData({ ...formData, address: text })}
+              placeholder="Street address"
+            />
+          ) : (
+            <Text style={styles.fieldValue}>{contact.address || '-'}</Text>
+          )}
+        </View>
+        
+        {/* City */}
+        <View style={styles.fieldContainer}>
+          <Text style={styles.fieldLabel}>City</Text>
+          {editing ? (
+            <TextInput
+              style={styles.input}
+              value={formData.city}
+              onChangeText={(text) => setFormData({ ...formData, city: text })}
+              placeholder="City"
+            />
+          ) : (
+            <Text style={styles.fieldValue}>{contact.city || '-'}</Text>
+          )}
+        </View>
+        
+        {/* State */}
+        <View style={styles.fieldContainer}>
+          <Text style={styles.fieldLabel}>State</Text>
+          {editing ? (
+            <TextInput
+              style={styles.input}
+              value={formData.state}
+              onChangeText={(text) => setFormData({ ...formData, state: text })}
+              placeholder="State"
+            />
+          ) : (
+            <Text style={styles.fieldValue}>{contact.state || '-'}</Text>
+          )}
+        </View>
+        
+        {/* Postal Code */}
+        <View style={styles.fieldContainer}>
+          <Text style={styles.fieldLabel}>Postal Code</Text>
+          {editing ? (
+            <TextInput
+              style={styles.input}
+              value={formData.postalCode}
+              onChangeText={(text) => setFormData({ ...formData, postalCode: text })}
+              placeholder="Postal code"
+              keyboardType="numeric"
+            />
+          ) : (
+            <Text style={styles.fieldValue}>{contact.postalCode || '-'}</Text>
+          )}
+        </View>
+        
+        {/* Country */}
+        <View style={styles.fieldContainer}>
+          <Text style={styles.fieldLabel}>Country</Text>
+          {editing ? (
+            <TextInput
+              style={styles.input}
+              value={formData.country}
+              onChangeText={(text) => setFormData({ ...formData, country: text })}
+              placeholder="Country"
+            />
+          ) : (
+            <Text style={styles.fieldValue}>{contact.country || '-'}</Text>
+          )}
+        </View>
+      </View>
+      
+      {editing && (
+        <TouchableOpacity 
+          style={styles.saveButton} 
+          onPress={handleSave}
+          disabled={updateContactMutation.isPending}
+        >
+          {updateContactMutation.isPending ? (
+            <ActivityIndicator color={COLORS.white} />
+          ) : (
+            <Text style={styles.saveButtonText}>Save Changes</Text>
+          )}
+        </TouchableOpacity>
+      )}
+    </ScrollView>
+  );
+  
+  // Render message bubble
+  const renderMessage = ({ item }: { item: any }) => {
+    const isInbound = item.direction === 'inbound';
+    const messageTime = new Date(item.dateAdded).toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+    
+    return (
+      <View style={[styles.messageBubbleContainer, isInbound ? styles.inboundContainer : styles.outboundContainer]}>
+        <View style={[styles.messageBubble, isInbound ? styles.inboundBubble : styles.outboundBubble]}>
+          {item.subject && (
+            <Text style={[styles.messageSubject, !isInbound && styles.outboundText]}>
+              {item.subject}
+            </Text>
+          )}
+          <Text style={[styles.messageText, !isInbound && styles.outboundText]}>
+            {item.body || item.preview || 'No content'}
+          </Text>
+          <Text style={[styles.messageTime, !isInbound && styles.outboundText]}>
+            {messageTime}
+          </Text>
+        </View>
+      </View>
+    );
+  };
+  
+  // Render conversations tab
+  const renderConversationsTab = () => (
+    <KeyboardAvoidingView 
+      style={styles.conversationsContainer}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={100}
+    >
+      {/* Message filters */}
+      <View style={styles.messageFilters}>
+        {messageFilters.map((filter) => (
+          <TouchableOpacity
+            key={filter.id}
+            style={[styles.filterButton, messageFilter === filter.id && styles.filterButtonActive]}
+            onPress={() => setMessageFilter(filter.id)}
+          >
+            <Ionicons 
+              name={filter.icon as any} 
+              size={16} 
+              color={messageFilter === filter.id ? COLORS.white : COLORS.textDark} 
+            />
+            <Text style={[styles.filterButtonText, messageFilter === filter.id && styles.filterButtonTextActive]}>
+              {filter.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      
+      {/* Messages list */}
+      <FlatList
+        data={filteredMessages}
+        renderItem={renderMessage}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.messagesList}
+        inverted
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshingConversations}
+            onRefresh={onRefreshConversations}
+            tintColor={COLORS.accent}
+          />
+        }
+        ListEmptyComponent={
+          loadingMessages ? (
+            <ActivityIndicator size="large" color={COLORS.accent} style={styles.loadingMessages} />
+          ) : (
+            <Text style={styles.noMessages}>No messages yet</Text>
+          )
+        }
+      />
+      
+      {/* Compose area */}
+      <View style={styles.composeContainer}>
+        <View style={styles.composeTypeToggle}>
+          <TouchableOpacity
+            style={[styles.composeTypeButton, composeMode === 'sms' && styles.composeTypeActive]}
+            onPress={() => setComposeMode('sms')}
+          >
+            <Ionicons name="chatbubble" size={16} color={composeMode === 'sms' ? COLORS.white : COLORS.textDark} />
+            <Text style={[styles.composeTypeText, composeMode === 'sms' && styles.composeTypeTextActive]}>SMS</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.composeTypeButton, composeMode === 'email' && styles.composeTypeActive]}
+            onPress={() => setComposeMode('email')}
+          >
+            <Ionicons name="mail" size={16} color={composeMode === 'email' ? COLORS.white : COLORS.textDark} />
+            <Text style={[styles.composeTypeText, composeMode === 'email' && styles.composeTypeTextActive]}>Email</Text>
+          </TouchableOpacity>
+        </View>
+        
+        {composeMode === 'email' && (
+          <TextInput
+            style={styles.subjectInput}
+            placeholder="Subject"
+            value={emailSubject}
+            onChangeText={setEmailSubject}
+            placeholderTextColor={COLORS.textLight}
+          />
+        )}
+        
+        <View style={styles.composeInputContainer}>
+          <TextInput
+            style={styles.composeInput}
+            placeholder={`Type your ${composeMode} message...`}
+            value={composeText}
+            onChangeText={setComposeText}
+            multiline
+            maxLength={composeMode === 'sms' ? 160 : undefined}
+            placeholderTextColor={COLORS.textLight}
+          />
+          <TouchableOpacity 
+            style={[styles.sendButton, (!composeText.trim() || sendingMessage) && styles.sendButtonDisabled]}
+            onPress={handleSendMessage}
+            disabled={!composeText.trim() || sendingMessage}
+          >
+            {sendingMessage ? (
+              <ActivityIndicator size="small" color={COLORS.white} />
+            ) : (
+              <Ionicons name="send" size={20} color={COLORS.white} />
+            )}
+          </TouchableOpacity>
+        </View>
+        
+        {composeMode === 'sms' && composeText.length > 0 && (
+          <Text style={styles.charCount}>{composeText.length}/160</Text>
+        )}
+      </View>
+    </KeyboardAvoidingView>
+  );
+  
+  // Render notes tab
+  const renderNotesTab = () => (
+    <View style={styles.notesContainer}>
+      <ScrollView style={styles.notesList} showsVerticalScrollIndicator={false}>
+        {notes.length === 0 ? (
+          <Text style={styles.noNotes}>No notes yet. Add your first note below.</Text>
+        ) : (
+          notes.map((note, index) => (
+            <View key={note.id || index} style={styles.noteItem}>
+              <Text style={styles.noteText}>{note.text || contact.notes}</Text>
+              <Text style={styles.noteMetadata}>
+                {note.createdBy || 'System'} • {new Date(note.createdAt || contact.updatedAt).toLocaleDateString()}
+              </Text>
+            </View>
+          ))
+        )}
+      </ScrollView>
+      
+      <View style={styles.addNoteContainer}>
+        <TextInput
+          style={styles.noteInput}
+          placeholder="Add a note..."
+          value={newNote}
+          onChangeText={setNewNote}
+          multiline
+          numberOfLines={3}
+          textAlignVertical="top"
+          placeholderTextColor={COLORS.textLight}
+        />
+        <TouchableOpacity
+          style={[styles.addNoteButton, (!newNote.trim() || addingNote) && styles.addNoteButtonDisabled]}
+          onPress={handleAddNote}
+          disabled={!newNote.trim() || addingNote}
+        >
+          {addingNote ? (
+            <ActivityIndicator size="small" color={COLORS.white} />
+          ) : (
+            <>
+              <Ionicons name="add" size={20} color={COLORS.white} />
+              <Text style={styles.addNoteButtonText}>Add Note</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+  
+  // Render current tab content
+  const renderTabContent = () => {
+    switch (activeTab) {
+      case 'overview':
+        return renderOverviewTab();
+      case 'details':
+        return renderDetailsTab();
+      case 'conversations':
+        return renderConversationsTab();
+      case 'notes':
+        return renderNotesTab();
+      default:
+        return null;
     }
   };
-
-  const handleCallContact = () => {
-    const phoneUrl = `tel:${contact.phone}`;
-    Alert.alert(
-      'Call Contact',
-      `Call ${contact.firstName} ${contact.lastName} at ${contact.phone}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Call', onPress: () => {
-          // In a real app, you'd use Linking.openURL(phoneUrl)
-          console.log('Calling:', phoneUrl);
-        }}
-      ]
-    );
-  };
-
-  const handleTextContact = () => {
-    const smsUrl = `sms:${contact.phone}`;
-    Alert.alert(
-      'Text Contact',
-      `Send text to ${contact.firstName} ${contact.lastName}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Text', onPress: () => {
-          // In a real app, you'd use Linking.openURL(smsUrl)
-          console.log('Texting:', smsUrl);
-        }}
-      ]
-    );
-  };
-
-  const handleEmailContact = () => {
-    const emailUrl = `mailto:${contact.email}`;
-    Alert.alert(
-      'Email Contact',
-      `Send email to ${contact.email}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Email', onPress: () => {
-          // In a real app, you'd use Linking.openURL(emailUrl)
-          console.log('Emailing:', emailUrl);
-        }}
-      ]
-    );
-  };
-
-  if (loading) {
+  
+  if (contactLoading) {
     return (
       <SafeAreaView style={styles.container}>
-        <ActivityIndicator size="large" color={COLORS.accent} style={{ marginTop: 50 }} />
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={COLORS.accent} />
+          <Text style={styles.loadingText}>Loading contact...</Text>
+        </View>
       </SafeAreaView>
     );
   }
-
+  
   return (
     <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()}>
-            <Ionicons name="arrow-back" size={24} color={COLORS.textDark} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Contact Details</Text>
-          <TouchableOpacity 
-            onPress={() => setEditing(!editing)}
-            style={styles.editButton}
-          >
-            <Ionicons 
-              name={editing ? "close" : "pencil"} 
-              size={20} 
-              color={COLORS.accent} 
-            />
-          </TouchableOpacity>
-        </View>
-
-        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-          {/* Contact Information */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Contact Information</Text>
-
-            {/* First Name */}
-            <View style={styles.fieldContainer}>
-              <Text style={styles.label}>First Name</Text>
-              {editing ? (
-                <TextInput
-                  style={styles.input}
-                  value={firstName}
-                  onChangeText={setFirstName}
-                  placeholder="First name"
-                />
-              ) : (
-                <Text style={styles.value}>{contact.firstName}</Text>
-              )}
-            </View>
-
-            {/* Last Name */}
-            <View style={styles.fieldContainer}>
-              <Text style={styles.label}>Last Name</Text>
-              {editing ? (
-                <TextInput
-                  style={styles.input}
-                  value={lastName}
-                  onChangeText={setLastName}
-                  placeholder="Last name"
-                />
-              ) : (
-                <Text style={styles.value}>{contact.lastName}</Text>
-              )}
-            </View>
-
-            {/* Email */}
-            <View style={styles.fieldContainer}>
-              <Text style={styles.label}>Email</Text>
-              {editing ? (
-                <TextInput
-                  style={styles.input}
-                  value={email}
-                  onChangeText={setEmail}
-                  placeholder="Email address"
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                />
-              ) : (
-                <Text style={styles.value}>{contact.email}</Text>
-              )}
-            </View>
-
-            {/* Phone */}
-            <View style={styles.fieldContainer}>
-              <Text style={styles.label}>Phone</Text>
-              {editing ? (
-                <TextInput
-                  style={styles.input}
-                  value={phone}
-                  onChangeText={setPhone}
-                  placeholder="Phone number"
-                  keyboardType="phone-pad"
-                />
-              ) : (
-                <Text style={styles.value}>{contact.phone}</Text>
-              )}
-            </View>
-
-            {/* Address */}
-            <View style={styles.fieldContainer}>
-              <Text style={styles.label}>Address</Text>
-              {editing ? (
-                <TextInput
-                  style={styles.input}
-                  value={address}
-                  onChangeText={setAddress}
-                  placeholder="Address"
-                />
-              ) : (
-                <Text style={styles.value}>{contact.address || 'No address provided'}</Text>
-              )}
-            </View>
-
-            {/* Notes */}
-            <View style={styles.fieldContainer}>
-              <Text style={styles.label}>Notes</Text>
-              {editing ? (
-                <TextInput
-                  style={[styles.input, styles.notesInput]}
-                  value={notes}
-                  onChangeText={setNotes}
-                  placeholder="Notes"
-                  multiline
-                  numberOfLines={3}
-                />
-              ) : (
-                <Text style={styles.value}>{contact.notes || 'No notes'}</Text>
-              )}
-            </View>
-
-            {/* Save button when editing */}
-            {editing && (
-              <TouchableOpacity
-                style={styles.saveButton}
-                onPress={handleSave}
-                disabled={saving}
-              >
-                {saving ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.saveButtonText}>Save Changes</Text>
-                )}
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {/* Quick Actions */}
-          {!editing && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Quick Actions</Text>
-              <View style={styles.actionRow}>
-                <TouchableOpacity style={styles.actionButton} onPress={handleCallContact}>
-                  <Ionicons name="call" size={20} color={COLORS.accent} />
-                  <Text style={styles.actionText}>Call</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.actionButton} onPress={handleTextContact}>
-                  <Ionicons name="chatbubble" size={20} color={COLORS.accent} />
-                  <Text style={styles.actionText}>Text</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.actionButton} onPress={handleEmailContact}>
-                  <Ionicons name="mail" size={20} color={COLORS.accent} />
-                  <Text style={styles.actionText}>Email</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
-
-          {/* Upcoming Appointments */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Upcoming Appointments</Text>
-              {!editing && (
-                <TouchableOpacity 
-                  style={styles.addButton} 
-                  onPress={handleScheduleAppointment}
-                >
-                  <Ionicons name="add" size={16} color="#fff" />
-                  <Text style={styles.addButtonText}>Schedule</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-            {appointments.length === 0 ? (
-              <Text style={styles.emptyText}>No upcoming appointments</Text>
-            ) : (
-              appointments.map((appointment) => (
-                <CompactAppointmentCard
-                  key={appointment._id}
-                  appointment={appointment}
-                  contact={contact}
-                  calendar={calendarMap[appointment.calendarId]}
-                  onPress={() => handleAppointmentPress(appointment)}
-                />
-              ))
-            )}
-          </View>
-
-          {/* Projects */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Projects</Text>
-              {!editing && (
-                <TouchableOpacity 
-                  style={[
-                    styles.addButton,
-                    isSyncingPipelines && { opacity: 0.6 }
-                  ]} 
-                  onPress={handleStartProject}
-                  disabled={isSyncingPipelines}
-                >
-                  <Ionicons 
-                    name={isSyncingPipelines ? "sync" : "add"} 
-                    size={16} 
-                    color="#fff" 
-                  />
-                  <Text style={styles.addButtonText}>
-                    {isSyncingPipelines ? 'Loading...' : 'Start Project'}
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
-            {projects.length === 0 ? (
-              <Text style={styles.emptyText}>No projects found</Text>
-            ) : (
-              projects.map((project) => (
-                <ProjectCard
-                  key={project._id}
-                  title={project.title}
-                  name={`${contact.firstName} ${contact.lastName}`}
-                  email={contact.email}
-                  phone={contact.phone}
-                  status={project.status}
-                  onPress={() => handleProjectPress(project)}
-                />
-              ))
-            )}
-          </View>
-
-          {/* Bottom padding */}
-          <View style={{ height: 50 }} />
-        </ScrollView>
-
-        {/* Create Appointment Modal */}
-        <CreateAppointmentModal
-          visible={showCreateAppointment}
-          onClose={() => setShowCreateAppointment(false)}
-          onSubmit={handleCreateAppointment}
-          contacts={allContacts}
-          preSelectedContact={contact}
-        />
-
-        {/* Add Project Modal - Updated to use new standalone modal */}
-        <AddProjectForm
-          visible={showAddProject}
-          onClose={() => setShowAddProject(false)}
-          onSubmit={handleCreateProject}
-          onAddContactPress={() => {
+      {renderHeader()}
+      {renderTabs()}
+      {renderTabContent()}
+      
+      {/* Modals */}
+      <CreateAppointmentModal
+        visible={showCreateAppointment}
+        onClose={() => setShowCreateAppointment(false)}
+        onSubmit={async (data) => {
+          try {
+            await appointmentService.create(data);
+            setShowCreateAppointment(false);
+            Alert.alert('Success', 'Appointment created');
+          } catch (error) {
+            Alert.alert('Error', 'Failed to create appointment');
+          }
+        }}
+        contacts={[contact]}
+        preSelectedContact={contact}
+      />
+      
+      <AddProjectForm
+        visible={showAddProject}
+        onClose={() => setShowAddProject(false)}
+        onSubmit={async (data) => {
+          try {
+            const newProject = await projectService.create({
+              ...data,
+              contactId: contact._id,
+              locationId: user?.locationId,
+            });
             setShowAddProject(false);
-            // Could navigate to add contact if needed
-          }}
-          preSelectedContact={contact}
-          isModal={true} // Use as standalone modal
-        />
-      </KeyboardAvoidingView>
+            navigation.navigate('ProjectDetailScreen', { project: newProject });
+          } catch (error) {
+            Alert.alert('Error', 'Failed to create project');
+          }
+        }}
+        preSelectedContact={contact}
+        isModal={true}
+      />
     </SafeAreaView>
   );
 }
@@ -547,37 +1133,128 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.background,
   },
-  header: {
-    flexDirection: 'row',
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
-    justifyContent: 'space-between',
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    fontFamily: FONT.regular,
+    color: COLORS.textGray,
+  },
+  header: {
+    backgroundColor: COLORS.white,
     paddingHorizontal: 20,
     paddingVertical: 16,
-    backgroundColor: COLORS.card,
-    ...SHADOW.card,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+    ...SHADOW.light,
   },
-  headerTitle: {
-    fontSize: FONT.sectionTitle,
-    fontWeight: '600',
-    color: COLORS.textDark,
-    flex: 1,
-    textAlign: 'center',
-    marginHorizontal: 16,
-  },
-  editButton: {
+  backButton: {
+    position: 'absolute',
+    left: 20,
+    top: 16,
+    zIndex: 1,
     padding: 8,
   },
-  content: {
+  headerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 40,
+  },
+  avatar: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: COLORS.accent,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  avatarText: {
+    fontSize: 24,
+    fontFamily: FONT.bold,
+    color: COLORS.white,
+  },
+  headerInfo: {
     flex: 1,
-    paddingHorizontal: 20,
+  },
+  contactName: {
+    fontSize: 20,
+    fontFamily: FONT.semiBold,
+    color: COLORS.textDark,
+    marginBottom: 4,
+  },
+  companyName: {
+    fontSize: 14,
+    fontFamily: FONT.regular,
+    color: COLORS.textGray,
+    marginBottom: 4,
+  },
+  tagsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  tag: {
+    backgroundColor: COLORS.lightAccent,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginRight: 6,
+    marginTop: 4,
+  },
+  tagText: {
+    fontSize: 12,
+    fontFamily: FONT.regular,
+    color: COLORS.accent,
+  },
+  headerActions: {
+    position: 'absolute',
+    right: 20,
+    top: 16,
+    flexDirection: 'row',
+  },
+  headerButton: {
+    padding: 8,
+    marginLeft: 8,
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: COLORS.white,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  tab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+  },
+  tabActive: {
+    borderBottomWidth: 2,
+    borderBottomColor: COLORS.accent,
+  },
+  tabText: {
+    fontSize: 14,
+    fontFamily: FONT.regular,
+    color: COLORS.textLight,
+    marginLeft: 6,
+  },
+  tabTextActive: {
+    fontFamily: FONT.semiBold,
+    color: COLORS.accent,
+  },
+  tabContent: {
+    flex: 1,
   },
   section: {
-    marginTop: 24,
-  },
-  sectionTitle: {
-    fontSize: FONT.sectionTitle,
-    fontWeight: '600',
-    color: COLORS.textDark,
+    backgroundColor: COLORS.white,
+    marginTop: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -585,85 +1262,362 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
+  sectionTitle: {
+    fontSize: 18,
+    fontFamily: FONT.semiBold,
+    color: COLORS.textDark,
+  },
   addButton: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: COLORS.accent,
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: RADIUS.button,
+    borderRadius: 16,
   },
   addButtonText: {
-    color: '#fff',
-    fontSize: FONT.meta,
-    fontWeight: '600',
+    color: COLORS.white,
+    fontSize: 14,
+    fontFamily: FONT.medium,
     marginLeft: 4,
   },
-  actionRow: {
+  quickActions: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    paddingVertical: 8,
+    marginTop: 16,
   },
   actionButton: {
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: COLORS.card,
+    backgroundColor: COLORS.background,
     paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: RADIUS.button,
-    minWidth: 80,
-    ...SHADOW.card,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    minWidth: 70,
   },
   actionText: {
-    fontSize: FONT.meta,
-    fontWeight: '500',
+    fontSize: 12,
+    fontFamily: FONT.medium,
     color: COLORS.accent,
-    marginTop: 4,
+    marginTop: 6,
+  },
+  infoCard: {
+    marginTop: 16,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  infoText: {
+    fontSize: 15,
+    fontFamily: FONT.regular,
+    color: COLORS.textDark,
+    marginLeft: 12,
+    flex: 1,
+  },
+  link: {
+    color: COLORS.accent,
+    textDecorationLine: 'underline',
+  },
+  emptyText: {
+    fontSize: 14,
+    fontFamily: FONT.regular,
+    color: COLORS.textLight,
+    textAlign: 'center',
+    paddingVertical: 20,
+  },
+  viewAllButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    marginTop: 8,
+  },
+  viewAllText: {
+    fontSize: 14,
+    fontFamily: FONT.medium,
+    color: COLORS.accent,
+    marginRight: 4,
   },
   fieldContainer: {
     marginBottom: 16,
   },
-  label: {
-    fontSize: FONT.label,
-    fontWeight: '600',
+  fieldLabel: {
+    fontSize: 12,
+    fontFamily: FONT.medium,
     color: COLORS.textGray,
-    marginBottom: 8,
+    marginBottom: 4,
+    textTransform: 'uppercase',
   },
-  value: {
-    fontSize: FONT.input,
+  fieldValue: {
+    fontSize: 16,
+    fontFamily: FONT.regular,
     color: COLORS.textDark,
-    lineHeight: 22,
   },
   input: {
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: RADIUS.input,
-    backgroundColor: COLORS.card,
-    padding: 12,
-    fontSize: FONT.input,
+    borderRadius: 8,
+    backgroundColor: COLORS.background,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
+    fontFamily: FONT.regular,
     color: COLORS.textDark,
-  },
-  notesInput: {
-    height: 80,
-    textAlignVertical: 'top',
   },
   saveButton: {
     backgroundColor: COLORS.accent,
-    borderRadius: RADIUS.button,
-    padding: 16,
+    borderRadius: 8,
+    paddingVertical: 14,
     alignItems: 'center',
-    marginTop: 16,
+    margin: 20,
   },
   saveButtonText: {
-    color: '#fff',
-    fontSize: FONT.input,
-    fontWeight: '600',
+    color: COLORS.white,
+    fontSize: 16,
+    fontFamily: FONT.semiBold,
   },
-  emptyText: {
-    fontSize: FONT.meta,
-    color: COLORS.textLight,
-    fontStyle: 'italic',
+  
+  // Conversations styles
+  conversationsContainer: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
+  messageFilters: {
+    flexDirection: 'row',
+    padding: 16,
+    backgroundColor: COLORS.white,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  filterButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: COLORS.background,
+    marginRight: 8,
+  },
+  filterButtonActive: {
+    backgroundColor: COLORS.accent,
+  },
+  filterButtonText: {
+    fontSize: 14,
+    fontFamily: FONT.medium,
+    color: COLORS.textDark,
+    marginLeft: 4,
+  },
+  filterButtonTextActive: {
+    color: COLORS.white,
+  },
+  messagesList: {
+    padding: 16,
+    flexGrow: 1,
+  },
+  loadingMessages: {
+    marginTop: 50,
+  },
+  noMessages: {
     textAlign: 'center',
-    paddingVertical: 20,
+    color: COLORS.textLight,
+    fontFamily: FONT.regular,
+    fontSize: 16,
+    marginTop: 50,
+  },
+  messageBubbleContainer: {
+    marginBottom: 16,
+  },
+  inboundContainer: {
+    alignItems: 'flex-start',
+  },
+  outboundContainer: {
+    alignItems: 'flex-end',
+  },
+  messageBubble: {
+    maxWidth: '80%',
+    padding: 12,
+    borderRadius: 16,
+  },
+  inboundBubble: {
+    backgroundColor: COLORS.background,
+    borderBottomLeftRadius: 4,
+  },
+  outboundBubble: {
+    backgroundColor: COLORS.accent,
+    borderBottomRightRadius: 4,
+  },
+  messageSubject: {
+    fontSize: 14,
+    fontFamily: FONT.semiBold,
+    color: COLORS.textDark,
+    marginBottom: 4,
+  },
+  messageText: {
+    fontSize: 15,
+    fontFamily: FONT.regular,
+    color: COLORS.textDark,
+    marginBottom: 4,
+  },
+  outboundText: {
+    color: COLORS.white,
+  },
+  messageTime: {
+    fontSize: 12,
+    fontFamily: FONT.regular,
+    color: COLORS.textGray,
+  },
+  composeContainer: {
+    backgroundColor: COLORS.white,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+    padding: 16,
+  },
+  composeTypeToggle: {
+    flexDirection: 'row',
+    marginBottom: 12,
+  },
+  composeTypeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: COLORS.background,
+    marginRight: 8,
+  },
+  composeTypeActive: {
+    backgroundColor: COLORS.accent,
+  },
+  composeTypeText: {
+    fontSize: 14,
+    fontFamily: FONT.medium,
+    color: COLORS.textDark,
+    marginLeft: 6,
+  },
+  composeTypeTextActive: {
+    color: COLORS.white,
+  },
+  subjectInput: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 15,
+    fontFamily: FONT.regular,
+    color: COLORS.textDark,
+    marginBottom: 8,
+  },
+  composeInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+  },
+  composeInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    paddingRight: 50,
+    fontSize: 15,
+    fontFamily: FONT.regular,
+    color: COLORS.textDark,
+    maxHeight: 100,
+  },
+  sendButton: {
+    position: 'absolute',
+    right: 4,
+    bottom: 4,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.accent,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sendButtonDisabled: {
+    backgroundColor: COLORS.textLight,
+  },
+  charCount: {
+    fontSize: 12,
+    fontFamily: FONT.regular,
+    color: COLORS.textGray,
+    textAlign: 'right',
+    marginTop: 4,
+  },
+  
+  // Notes styles
+  notesContainer: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
+  notesList: {
+    flex: 1,
+    padding: 16,
+  },
+  noNotes: {
+    textAlign: 'center',
+    color: COLORS.textLight,
+    fontFamily: FONT.regular,
+    fontSize: 16,
+    marginTop: 50,
+  },
+  noteItem: {
+    backgroundColor: COLORS.white,
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 12,
+    ...SHADOW.light,
+  },
+  noteText: {
+    fontSize: 15,
+    fontFamily: FONT.regular,
+    color: COLORS.textDark,
+    marginBottom: 8,
+    lineHeight: 22,
+  },
+  noteMetadata: {
+    fontSize: 12,
+    fontFamily: FONT.regular,
+    color: COLORS.textGray,
+  },
+  addNoteContainer: {
+    backgroundColor: COLORS.white,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+    padding: 16,
+  },
+  noteInput: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 15,
+    fontFamily: FONT.regular,
+    color: COLORS.textDark,
+    minHeight: 80,
+    marginBottom: 12,
+  },
+  addNoteButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accent,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  addNoteButtonDisabled: {
+    backgroundColor: COLORS.textLight,
+  },
+  addNoteButtonText: {
+    color: COLORS.white,
+    fontSize: 16,
+    fontFamily: FONT.semiBold,
+    marginLeft: 6,
   },
 });

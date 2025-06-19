@@ -30,12 +30,30 @@ interface UpdateContactInput {
 
 class ContactService extends BaseService {
   protected serviceName = 'contacts';
+  
+  /**
+   * Get single contact by ID - FIXED to avoid recursion
+   */
+  async get(contactId: string): Promise<Contact> {
+    const endpoint = `/api/contacts/${contactId}`;
+    
+    // Call the parent class's get method using super
+    return super.get<Contact>(
+      endpoint,
+      {
+        cache: { priority: 'high', ttl: 10 * 60 * 1000 },
+      },
+      {
+        endpoint,
+        method: 'GET',
+        entity: 'contact',
+      }
+    );
+  }
+
   /**
    * Get contacts from MongoDB (already synced from GHL)
    */
-// Fix for src/services/contactService.ts
-// Update the list method to properly pass locationId as a query parameter
-
   async list(
     locationId: string,
     options: ContactListOptions = {}
@@ -50,7 +68,7 @@ class ContactService extends BaseService {
     
     const endpoint = '/api/contacts/search/lpai';
     
-    return this.get<Contact[]>(
+    return super.get<Contact[]>(
       endpoint,
       {
         params, // Pass params in the config object
@@ -65,24 +83,10 @@ class ContactService extends BaseService {
   }
 
   /**
-   * Get single contact - YOUR endpoint pattern
+   * Get single contact - Alias for get method
    */
-  async getDetails(
-    contactId: string
-  ): Promise<Contact> {
-    const endpoint = `/api/contacts/${contactId}`;
-    
-    return this.get<Contact>(
-      endpoint,
-      {
-        cache: { priority: 'high' },
-      },
-      {
-        endpoint,
-        method: 'GET',
-        entity: 'contact',
-      }
-    );
+  async getDetails(contactId: string): Promise<Contact> {
+    return this.get(contactId);
   }
 
   /**
@@ -93,7 +97,7 @@ class ContactService extends BaseService {
   ): Promise<Contact> {
     const endpoint = '/api/contacts';
     
-    const newContact = await this.post<Contact>(
+    const newContact = await super.post<Contact>(
       endpoint,
       data,
       {
@@ -123,7 +127,7 @@ class ContactService extends BaseService {
   ): Promise<Contact> {
     const endpoint = `/api/contacts/${contactId}`;
     
-    const updated = await this.patch<Contact>(
+    const updated = await super.patch<Contact>(
       endpoint,
       data,
       {
@@ -142,6 +146,30 @@ class ContactService extends BaseService {
     await this.cacheService.set(cacheKey, updated, { priority: 'high' });
     
     return updated;
+  }
+
+  /**
+   * Delete contact
+   */
+  async delete(contactId: string): Promise<void> {
+    const endpoint = `/api/contacts/${contactId}`;
+    
+    await super.delete<void>(
+      endpoint,
+      {
+        offline: true,
+      },
+      {
+        endpoint,
+        method: 'DELETE',
+        entity: 'contact',
+        priority: 'high',
+      }
+    );
+
+    // Clear caches
+    await this.clearCache(`@lpai_cache_GET_/api/contacts/${contactId}`);
+    await this.clearCache('@lpai_cache_GET_/api/contacts/search/lpai');
   }
 
   /**
@@ -165,7 +193,7 @@ class ContactService extends BaseService {
     
     const endpoint = `/api/contacts/${contactId}/conversations?${params}`;
     
-    return this.get(
+    return super.get(
       endpoint,
       {
         cache: { priority: 'medium', ttl: 5 * 60 * 1000 },
@@ -188,7 +216,7 @@ class ContactService extends BaseService {
     const params = { locationId };
     const endpoint = '/api/contacts/withProjects';
     
-    return this.get<Contact[]>(
+    return super.get<Contact[]>(
       endpoint,
       {
         params, // Pass params in the config object
@@ -211,7 +239,7 @@ class ContactService extends BaseService {
   ): Promise<Note[]> {
     const endpoint = `/api/contacts/${contactId}/sync-notes`;
     
-    const result = await this.post<any>(
+    const result = await super.post<any>(
       endpoint,
       { locationId },
       {
@@ -236,7 +264,7 @@ class ContactService extends BaseService {
   ): Promise<{ synced: number; errors: number }> {
     const endpoint = '/api/ghl/syncContacts';
     
-    const result = await this.post<any>(
+    const result = await super.post<any>(
       endpoint,
       { locationId },
       {
@@ -268,7 +296,7 @@ class ContactService extends BaseService {
   ): Promise<Contact[]> {
     const endpoint = '/api/contacts/search/ghl';
     
-    return this.post<Contact[]>(
+    return super.post<Contact[]>(
       endpoint,
       { 
         locationId,
