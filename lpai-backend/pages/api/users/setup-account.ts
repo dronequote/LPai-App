@@ -1,5 +1,5 @@
 // pages/api/users/setup-account.ts
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs'; // Changed from 'bcrypt' to 'bcryptjs'
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {

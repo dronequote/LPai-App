@@ -1,5 +1,5 @@
 // pages/api/users/set-password.ts
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs'; // Changed from 'bcrypt' to 'bcryptjs'
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
