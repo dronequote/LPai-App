@@ -6,31 +6,31 @@
     },
     {
       "path": "/api/cron/process-critical",
-      "schedule": "* * * * *"
+      "schedule": "*/2 * * * *"
     },
     {
       "path": "/api/cron/process-messages",
-      "schedule": "* * * * *"
+      "schedule": "*/5 * * * *"
     },
     {
       "path": "/api/cron/process-appointments",
-      "schedule": "* * * * *"
+      "schedule": "*/10 * * * *"
     },
     {
       "path": "/api/cron/process-contacts",
-      "schedule": "* * * * *"
+      "schedule": "*/10 * * * *"
     },
     {
-     "path": "/api/cron/process-projects",
-      "schedule": "* * * * *"
+      "path": "/api/cron/process-projects",
+      "schedule": "*/10 * * * *"
     },
     {
       "path": "/api/cron/process-financial",
-      "schedule": "* * * * *"
+      "schedule": "*/15 * * * *"
     },
     {
       "path": "/api/cron/process-general",
-      "schedule": "* * * * *"
+      "schedule": "*/15 * * * *"
     },
     {
       "path": "/api/cron/process-install-queue",

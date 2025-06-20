@@ -2,26 +2,44 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User } from '@lpai/types';
 import { authService } from '../services/authService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
+import api from '../services/api';
 
 interface AuthContextType {
   user: User | null;
   token: string | null;
   loading: boolean;
+  expoPushToken: string | null;
   login: (data: { email: string; password: string }) => Promise<void>;
   logout: () => Promise<void>;
   updateUser: (updates: Partial<User>) => Promise<void>;
+  updatePushToken: (token: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+interface AuthProviderProps {
+  children: React.ReactNode;
+  expoPushToken?: string;
+}
+
+export const AuthProvider: React.FC<AuthProviderProps> = ({ children, expoPushToken }) => {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [pushToken, setPushToken] = useState<string | null>(null);
 
   useEffect(() => {
     initializeAuth();
   }, []);
+
+  useEffect(() => {
+    // Update push token when it's received
+    if (expoPushToken && user) {
+      updatePushToken(expoPushToken);
+    }
+  }, [expoPushToken, user]);
 
   const initializeAuth = async () => {
     try {
@@ -46,6 +64,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               name: currentUser.name,
               role: currentUser.role,
             });
+          }
+
+          // Check for stored push token
+          const storedPushToken = await AsyncStorage.getItem('expoPushToken');
+          if (storedPushToken) {
+            setPushToken(storedPushToken);
           }
         }
       }
@@ -87,6 +111,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           role: userData.role,
         });
       }
+
+      // After successful login, update push token if available
+      const storedPushToken = await AsyncStorage.getItem('expoPushToken');
+      if (storedPushToken && userData._id) {
+        try {
+          await api.post('/users/push-token', {
+            userId: userData._id,
+            pushToken: storedPushToken,
+            platform: Platform.OS,
+            deviceInfo: {
+              osVersion: Platform.Version,
+              model: Platform.select({
+                ios: 'iPhone',
+                android: 'Android Device',
+              }),
+            },
+          });
+          setPushToken(storedPushToken);
+          if (__DEV__) {
+            console.log('📱 [AuthContext] Push token updated after login');
+          }
+        } catch (error) {
+          console.log('⚠️ [AuthContext] Failed to update push token:', error);
+          // Don't fail login if push token update fails
+        }
+      }
     } catch (error: any) {
       console.error('❌ [AuthContext] Login error:', error);
       
@@ -108,6 +158,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (__DEV__) {
         console.log('🔐 [AuthContext] Logout initiated');
       }
+
+      // Clear push token on server before logout
+      if (user?._id && pushToken) {
+        try {
+          await api.post('/users/push-token', {
+            userId: user._id,
+            pushToken: null, // Clear the token
+            platform: Platform.OS,
+          });
+        } catch (error) {
+          console.log('⚠️ [AuthContext] Failed to clear push token:', error);
+          // Don't fail logout if push token clear fails
+        }
+      }
       
       // Let authService handle all cleanup
       await authService.logout();
@@ -115,6 +179,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Clear local state
       setToken(null);
       setUser(null);
+      setPushToken(null);
       
       if (__DEV__) {
         console.log('🔐 [AuthContext] Logout complete');
@@ -124,6 +189,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Even if logout fails, clear local state
       setToken(null);
       setUser(null);
+      setPushToken(null);
     }
   };
 
@@ -161,15 +227,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const updatePushToken = async (token: string) => {
+    if (!user?._id) {
+      console.warn('⚠️ [AuthContext] Cannot update push token - no user logged in');
+      return;
+    }
+
+    try {
+      await api.post('/users/push-token', {
+        userId: user._id,
+        pushToken: token,
+        platform: Platform.OS,
+        deviceInfo: {
+          osVersion: Platform.Version,
+          model: Platform.select({
+            ios: 'iPhone',
+            android: 'Android Device',
+          }),
+        },
+      });
+      
+      setPushToken(token);
+      await AsyncStorage.setItem('expoPushToken', token);
+      
+      if (__DEV__) {
+        console.log('📱 [AuthContext] Push token updated successfully');
+      }
+    } catch (error) {
+      console.error('❌ [AuthContext] Failed to update push token:', error);
+      throw error;
+    }
+  };
+
   return (
     <AuthContext.Provider 
       value={{ 
         user, 
         token, 
-        loading, 
+        loading,
+        expoPushToken: pushToken,
         login, 
         logout, 
-        updateUser 
+        updateUser,
+        updatePushToken
       }}
     >
       {children}

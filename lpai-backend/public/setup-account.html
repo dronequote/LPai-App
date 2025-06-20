@@ -1,0 +1,110 @@
+<!-- public/setup-account.html -->
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Set Up Your LPai Account</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 400px;
+      margin: 50px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #333;
+      text-align: center;
+    }
+    input {
+      width: 100%;
+      padding: 10px;
+      margin: 10px 0;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 16px;
+    }
+    button {
+      width: 100%;
+      padding: 12px;
+      background: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #45a049;
+    }
+    .error {
+      color: red;
+      margin: 10px 0;
+    }
+    .success {
+      color: green;
+      margin: 10px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Set Up Your Account</h1>
+    <div id="message"></div>
+    <form id="setupForm">
+      <input type="password" id="password" placeholder="Password" required minlength="8">
+      <input type="password" id="confirmPassword" placeholder="Confirm Password" required>
+      <button type="submit">Set Up Account</button>
+    </form>
+  </div>
+
+  <script>
+    // Get token from URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const token = urlParams.get('token');
+    
+    if (!token) {
+      document.getElementById('message').innerHTML = '<div class="error">Invalid setup link</div>';
+      document.getElementById('setupForm').style.display = 'none';
+    }
+
+    document.getElementById('setupForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const password = document.getElementById('password').value;
+      const confirmPassword = document.getElementById('confirmPassword').value;
+      const messageDiv = document.getElementById('message');
+      
+      if (password !== confirmPassword) {
+        messageDiv.innerHTML = '<div class="error">Passwords do not match</div>';
+        return;
+      }
+      
+      try {
+        const response = await fetch('/api/users/setup-account', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, password })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+          messageDiv.innerHTML = '<div class="success">Account set up successfully! You can now log in to the LPai app.</div>';
+          document.getElementById('setupForm').style.display = 'none';
+        } else {
+          messageDiv.innerHTML = `<div class="error">${data.error || 'Setup failed'}</div>`;
+        }
+      } catch (error) {
+        messageDiv.innerHTML = '<div class="error">Network error. Please try again.</div>';
+      }
+    });
+  </script>
+</body>
+</html>
