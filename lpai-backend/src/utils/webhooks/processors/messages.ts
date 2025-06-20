@@ -324,7 +324,7 @@ export class MessagesProcessor extends BaseProcessor {
     }
 
     // Find contact
-    const contact = await this.db.collection('contacts').findOne(
+    let contact = await this.db.collection('contacts').findOne(
       { ghlContactId: contactId, locationId },
       { 
         projection: { 
@@ -339,8 +339,46 @@ export class MessagesProcessor extends BaseProcessor {
     );
     
     if (!contact) {
-      console.warn(`[MessagesProcessor] Contact not found for outbound message: ${contactId}`);
-      return;
+      console.warn(`[MessagesProcessor] Contact not found for outbound message: ${contactId}, creating minimal contact`);
+      
+      // Create a minimal contact record
+      const newContact = {
+        _id: new ObjectId(),
+        ghlContactId: contactId,
+        locationId,
+        firstName: '',
+        lastName: '',
+        fullName: 'Unknown Contact',
+        email: '',
+        phone: '',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        createdByWebhook: webhookId,
+        needsSync: true // Flag for later sync
+      };
+      
+      try {
+        await this.db.collection('contacts').insertOne(newContact);
+        console.log(`[MessagesProcessor] Created minimal contact for outbound message: ${contactId}`);
+        contact = newContact;
+      } catch (insertError: any) {
+        // Handle duplicate key error - contact might have been created by another process
+        if (insertError.code === 11000) {
+          // Try to find the contact again
+          contact = await this.db.collection('contacts').findOne(
+            { ghlContactId: contactId, locationId },
+            { projection: { _id: 1, firstName: 1, lastName: 1, email: 1, phone: 1, fullName: 1 } }
+          );
+          
+          if (!contact) {
+            console.error(`[MessagesProcessor] Failed to create or find contact for outbound message: ${contactId}`);
+            return;
+          }
+        } else {
+          console.error(`[MessagesProcessor] Failed to create contact for outbound message:`, insertError);
+          return;
+        }
+      }
     }
 
     // Find user who sent it
@@ -373,7 +411,7 @@ export class MessagesProcessor extends BaseProcessor {
           lastMessageBody: message?.body?.substring(0, 200) || '',
           lastMessageType: message?.messageType || 'TYPE_PHONE',
           lastMessageDirection: 'outbound',
-          contactName: contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
+          contactName: contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'Unknown',
           contactEmail: contact.email,
           contactPhone: contact.phone,
           updatedAt: new Date()

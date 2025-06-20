@@ -469,6 +469,17 @@ export default function ConversationsList({
       const hasContent = item.body && !item.needsContentFetch;
       const isFetching = item.emailMessageId && fetchingEmails.has(item.emailMessageId);
       
+      // Debug log to check email structure
+      if (__DEV__) {
+        console.log('Email message structure:', {
+          id: item.id,
+          emailMessageId: item.emailMessageId,
+          ghlMessageId: item.ghlMessageId,
+          needsContentFetch: item.needsContentFetch,
+          hasContent
+        });
+      }
+      
       return (
         <TouchableOpacity 
           style={[styles.messageBubbleContainer, isInbound ? styles.inboundContainer : styles.outboundContainer]}
