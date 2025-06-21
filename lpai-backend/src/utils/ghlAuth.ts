@@ -37,7 +37,7 @@ export function tokenNeedsRefresh(location: any): boolean {
   
   const expiresAt = new Date(location.ghlOAuth.expiresAt);
   const now = new Date();
-  const bufferTime = 4 * 60 * 60 * 1000; // 4 hour buffer (changed from 8)
+  const bufferTime = 12 * 60 * 60 * 1000; // 12 hour buffer instead of 4
   
   return (expiresAt.getTime() - now.getTime()) < bufferTime;
 }
