@@ -2,6 +2,8 @@
 import { BaseProcessor } from './base';
 import { QueueItem } from '../queueManager';
 import { ObjectId, Db } from 'mongodb';
+import { generateSecureToken } from '../../security/tokenGenerator';
+import { sendWelcomeEmail } from '../../email/welcomeEmail';
 
 export class CriticalProcessor extends BaseProcessor {
   constructor(db?: Db) {
@@ -32,9 +34,133 @@ export class CriticalProcessor extends BaseProcessor {
         await this.processPlanChange(payload, webhookId);
         break;
         
+      case 'UserCreate':
+        await this.processUserCreate(payload, webhookId);
+        break;
+        
       default:
         console.warn(`[CriticalProcessor] Unknown critical type: ${type}`);
         throw new Error(`Unsupported critical webhook type: ${type}`);
+    }
+  }
+
+  /**
+   * Process user creation with welcome email
+   */
+  private async processUserCreate(payload: any, webhookId: string): Promise<void> {
+    const startTime = Date.now();
+    
+    // Handle nested structure
+    let userData;
+    let locationId;
+    
+    if (payload.webhookPayload) {
+      userData = payload.webhookPayload;
+      locationId = payload.locationId || userData.locationId;
+    } else {
+      userData = payload;
+      locationId = payload.locationId;
+    }
+    
+    const user = userData.user || userData;
+    
+    console.log(`[CriticalProcessor] Processing UserCreate for ${user.email}`);
+    
+    // Check if user already exists
+    const existingUser = await this.db.collection('users').findOne({
+      $or: [
+        { ghlUserId: user.id },
+        { email: user.email, locationId }
+      ]
+    });
+
+    if (!existingUser) {
+      // Generate setup token for new user
+      const setupToken = generateSecureToken();
+      const setupTokenExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+      
+      // Create user with all fields
+      const newUser = {
+        _id: new ObjectId(),
+        ghlUserId: user.id,
+        locationId,
+        email: user.email,
+        firstName: user.firstName || '',
+        lastName: user.lastName || '',
+        name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim(),
+        phone: user.phone || '',
+        role: user.role || user.type || 'user',
+        permissions: user.permissions || ['read'],
+        extension: user.extension || null,
+        
+        // Setup fields
+        setupToken,
+        setupTokenExpiry,
+        needsSetup: true,
+        hashedPassword: null,
+        needsPasswordReset: false,
+        onboardingStatus: 'pending',
+        
+        // Metadata
+        createdAt: new Date(),
+        createdByWebhook: webhookId,
+        lastWebhookUpdate: new Date(),
+        isActive: true,
+        
+        // Default preferences
+        preferences: {
+          notifications: true,
+          defaultCalendarView: 'week',
+          emailSignature: '',
+          theme: 'system',
+          timezone: 'America/Denver',
+          dateFormat: 'MM/DD/YYYY',
+          timeFormat: '12h',
+          firstDayOfWeek: 0,
+          language: 'en'
+        }
+      };
+
+      await this.db.collection('users').insertOne(newUser);
+      
+      // Send welcome email
+      try {
+        const location = await this.db.collection('locations').findOne({ locationId });
+        
+        await sendWelcomeEmail({
+          email: user.email,
+          firstName: user.firstName || 'User',
+          locationName: location?.name || 'LPai',
+          setupToken,
+          setupUrl: `https://lpai-backend-omega.vercel.app/setup-account.html?token=${setupToken}`
+        });
+        
+        console.log(`[CriticalProcessor] Welcome email sent to: ${user.email}`);
+      } catch (emailError) {
+        console.error(`[CriticalProcessor] Failed to send welcome email:`, emailError);
+        // Don't fail the webhook if email fails
+      }
+      
+      const duration = Date.now() - startTime;
+      console.log(`[CriticalProcessor] User created in ${duration}ms`);
+    } else {
+      // Update existing user
+      await this.db.collection('users').updateOne(
+        { _id: existingUser._id },
+        {
+          $set: {
+            firstName: user.firstName || existingUser.firstName,
+            lastName: user.lastName || existingUser.lastName,
+            name: user.name || existingUser.name,
+            phone: user.phone || existingUser.phone,
+            role: user.role || existingUser.role,
+            permissions: user.permissions || existingUser.permissions,
+            lastWebhookUpdate: new Date()
+          }
+        }
+      );
+      
+      console.log(`[CriticalProcessor] Updated existing user: ${user.email}`);
     }
   }
 
@@ -105,160 +231,168 @@ export class CriticalProcessor extends BaseProcessor {
     companyName?: string;
     planId?: string;
     webhookId: string;
-    timestamp?: string;
+    timestamp?: Date;
   }): Promise<void> {
     const { locationId, companyId, userId, companyName, planId, webhookId, timestamp } = params;
 
-    // Use a session for atomic operations
-  const session = this.client.startSession();
+    // Use session for atomic operations
+    const session = this.client.startSession();
+    
     try {
       await session.withTransaction(async () => {
-        // Update or create location record
+        // Update or create location
         await this.db.collection('locations').updateOne(
           { locationId },
           {
             $set: {
-              locationId,
-              companyId,
-              name: companyName || `Location ${locationId}`,
               appInstalled: true,
               installedAt: new Date(timestamp || Date.now()),
               installedBy: userId,
-              installType: 'Location',
-              planId,
               installWebhookId: webhookId,
+              installPlanId: planId,
+              companyId,
+              companyName,
               updatedAt: new Date()
             },
+            $unset: {
+              uninstalledAt: "",
+              uninstalledBy: "",
+              uninstallReason: "",
+              uninstallWebhookId: ""
+            },
             $setOnInsert: {
+              _id: new ObjectId(),
+              locationId,
               createdAt: new Date()
             }
           },
           { upsert: true, session }
         );
 
-        // Record install event
+        // Track install event
         await this.db.collection('app_events').insertOne({
           _id: new ObjectId(),
           type: 'install',
-          installType: 'Location',
-          locationId,
+          entityType: 'location',
+          entityId: locationId,
           companyId,
           userId,
           planId,
-          timestamp: new Date(timestamp || Date.now()),
           webhookId,
-          processedAt: new Date()
+          timestamp: new Date(timestamp || Date.now()),
+          metadata: {
+            companyName,
+            installType: 'location'
+          }
         }, { session });
       });
 
-      // Trigger location setup (outside transaction)
-      await this.triggerLocationSetup(locationId, webhookId);
-
+      // Queue location setup (outside transaction)
+      await this.queueLocationSetup(locationId, webhookId);
+      
     } finally {
       await session.endSession();
     }
   }
 
   /**
-   * Process company-level installation
+   * Process company-wide installation
    */
   private async processCompanyInstall(params: {
     companyId: string;
     companyName?: string;
     planId?: string;
     webhookId: string;
-    timestamp?: string;
+    timestamp?: Date;
   }): Promise<void> {
     const { companyId, companyName, planId, webhookId, timestamp } = params;
 
-    await this.db.collection('locations').updateOne(
-      { companyId, locationId: null },
-      {
-        $set: {
-          companyId,
-          name: companyName || 'Company-Level Install',
-          appInstalled: true,
-          installedAt: new Date(timestamp || Date.now()),
-          installType: 'Company',
-          isCompanyLevel: true,
-          planId,
-          installWebhookId: webhookId,
-          updatedAt: new Date()
-        },
-        $setOnInsert: {
-          locationId: null,
-          createdAt: new Date()
-        }
-      },
-      { upsert: true }
-    );
+    // Track company install
+    await this.db.collection('app_events').insertOne({
+      _id: new ObjectId(),
+      type: 'install',
+      entityType: 'company',
+      entityId: companyId,
+      companyId,
+      planId,
+      webhookId,
+      timestamp: new Date(timestamp || Date.now()),
+      metadata: {
+        companyName,
+        installType: 'company'
+      }
+    });
 
-    // Queue agency sync for later
-    await this.queueAgencySync(companyId, webhookId);
+    // Queue sync job for all company locations
+    await this.db.collection('sync_queue').insertOne({
+      _id: new ObjectId(),
+      type: 'SYNC_AGENCY',
+      companyId,
+      status: 'pending',
+      priority: 3,
+      createdAt: new Date(),
+      metadata: {
+        installWebhookId: webhookId,
+        planId,
+        source: 'company_install'
+      }
+    });
+
+    console.log(`[CriticalProcessor] Company install tracked for ${companyId}`);
   }
 
   /**
- * Trigger location setup process
- */
-private async triggerLocationSetup(locationId: string, webhookId: string): Promise<void> {
-  try {
-    console.log(`[CriticalProcessor] Queueing setup for location ${locationId}`);
-    
-    // Track setup start
-    await this.db.collection('webhook_metrics').updateOne(
-      { webhookId },
-      { $set: { 'timestamps.steps.setupQueued': new Date() } }
-    );
-
-    // Add to install retry queue for background processing
-    await this.db.collection('install_retry_queue').insertOne({
-      _id: new ObjectId(),
-      webhookId: `setup_${locationId}_${webhookId}`,
-      payload: {
+   * Queue location setup in install retry queue
+   */
+  private async queueLocationSetup(locationId: string, webhookId: string): Promise<void> {
+    try {
+      await this.db.collection('install_retry_queue').insertOne({
+        _id: new ObjectId(),
         type: 'SETUP_LOCATION',
-        locationId: locationId,
-        fullSync: true,
-        originalWebhookId: webhookId
-      },
-      reason: 'install_webhook_setup',
-      attempts: 0,
-      status: 'pending',
-      createdAt: new Date(),
-      nextRetryAt: new Date() // Process immediately
-    });
+        payload: {
+          locationId,
+          fullSync: true,
+          originalWebhookId: webhookId
+        },
+        status: 'pending',
+        attempts: 0,
+        maxAttempts: 3,
+        createdAt: new Date(),
+        nextRetryAt: new Date() // Process immediately
+      });
 
-    // Update location to indicate setup is queued
-    await this.db.collection('locations').updateOne(
-      { locationId },
-      {
-        $set: {
-          setupQueued: true,
-          setupQueuedAt: new Date(),
-          lastSetupWebhook: webhookId
+      // Update location to indicate setup is queued
+      await this.db.collection('locations').updateOne(
+        { locationId },
+        {
+          $set: {
+            setupQueued: true,
+            setupQueuedAt: new Date(),
+            lastSetupWebhook: webhookId
+          }
         }
-      }
-    );
+      );
 
-    console.log(`[CriticalProcessor] Setup queued successfully for ${locationId}`);
+      console.log(`[CriticalProcessor] Setup queued successfully for ${locationId}`);
 
-  } catch (error: any) {
-    console.error(`[CriticalProcessor] Failed to queue setup for ${locationId}:`, error);
-    
-    // Mark location as needing manual setup
-    await this.db.collection('locations').updateOne(
-      { locationId },
-      {
-        $set: {
-          setupError: error.message,
-          needsManualSetup: true,
-          setupFailedAt: new Date()
+    } catch (error: any) {
+      console.error(`[CriticalProcessor] Failed to queue setup for ${locationId}:`, error);
+      
+      // Mark location as needing manual setup
+      await this.db.collection('locations').updateOne(
+        { locationId },
+        {
+          $set: {
+            setupError: error.message,
+            needsManualSetup: true,
+            setupFailedAt: new Date()
+          }
         }
-      }
-    );
+      );
 
-    // Don't throw - install succeeded even if queuing failed
+      // Don't throw - install succeeded even if queuing failed
+    }
   }
-}
 
   /**
    * Process app uninstallation
@@ -282,108 +416,78 @@ private async triggerLocationSetup(locationId: string, webhookId: string): Promi
             updatedAt: new Date()
           },
           $unset: {
-            ghlOAuth: '',
-            installedAt: '',
-            installedBy: '',
-            setupCompleted: ''
+            ghlOAuth: "",
+            setupCompleted: "",
+            setupCompletedAt: ""
           }
         }
       );
 
-      // Mark users as needing reauth
+      // Mark all users as requiring reauth
       await this.db.collection('users').updateMany(
         { locationId },
-        { $set: { requiresReauth: true } }
-      );
-
-    } else if (companyId) {
-      // Company-level uninstall
-      await this.db.collection('locations').updateOne(
-        { companyId, locationId: null, isCompanyLevel: true },
         {
           $set: {
-            appInstalled: false,
-            uninstalledAt: new Date(timestamp || Date.now()),
-            uninstallWebhookId: webhookId
-          },
-          $unset: {
-            ghlOAuth: '',
-            installedAt: ''
+            requiresReauth: true,
+            reauthReason: 'App was uninstalled',
+            updatedAt: new Date()
           }
         }
-      );
-
-      // Mark all locations under company as needing reauth
-      await this.db.collection('locations').updateMany(
-        { companyId, locationId: { $ne: null } },
-        { $set: { hasCompanyOAuth: false } }
       );
     }
 
-    // Record uninstall event
+    // Track uninstall event
     await this.db.collection('app_events').insertOne({
       _id: new ObjectId(),
       type: 'uninstall',
-      locationId,
+      entityType: locationId ? 'location' : 'company',
+      entityId: locationId || companyId,
       companyId,
       userId,
       reason,
-      timestamp: new Date(timestamp || Date.now()),
       webhookId,
-      processedAt: new Date()
+      timestamp: new Date(timestamp || Date.now())
     });
+
+    console.log(`[CriticalProcessor] Uninstall processed successfully`);
   }
 
   /**
-   * Process plan changes
+   * Process plan change
    */
   private async processPlanChange(payload: any, webhookId: string): Promise<void> {
-    const { locationId, companyId, oldPlanId, newPlanId, timestamp } = payload;
+    const { locationId, companyId, oldPlanId, newPlanId, userId, timestamp } = payload;
     
     console.log(`[CriticalProcessor] Processing plan change from ${oldPlanId} to ${newPlanId}`);
 
-    const filter = locationId ? { locationId } : { companyId, isCompanyLevel: true };
-    
-    await this.db.collection('locations').updateOne(
-      filter,
-      {
-        $set: {
-          planId: newPlanId,
-          previousPlanId: oldPlanId,
-          planChangedAt: new Date(timestamp || Date.now()),
-          planChangeWebhookId: webhookId,
-          updatedAt: new Date()
-        }
-      }
-    );
-
-    // Record plan change event
+    // Track plan change event
     await this.db.collection('app_events').insertOne({
       _id: new ObjectId(),
       type: 'plan_change',
-      locationId,
+      entityType: locationId ? 'location' : 'company',
+      entityId: locationId || companyId,
       companyId,
+      userId,
       oldPlanId,
       newPlanId,
-      timestamp: new Date(timestamp || Date.now()),
       webhookId,
-      processedAt: new Date()
+      timestamp: new Date(timestamp || Date.now())
     });
-  }
 
-  /**
-   * Queue agency sync for later processing
-   */
-  private async queueAgencySync(companyId: string, webhookId: string): Promise<void> {
-    await this.db.collection('sync_queue').insertOne({
-      _id: new ObjectId(),
-      type: 'agency_sync',
-      companyId,
-      webhookId,
-      status: 'pending',
-      attempts: 0,
-      createdAt: new Date(),
-      scheduledFor: new Date(Date.now() + 5000) // 5 seconds from now
-    });
+    // Update location if applicable
+    if (locationId) {
+      await this.db.collection('locations').updateOne(
+        { locationId },
+        {
+          $set: {
+            currentPlanId: newPlanId,
+            planChangedAt: new Date(),
+            updatedAt: new Date()
+          }
+        }
+      );
+    }
+
+    console.log(`[CriticalProcessor] Plan change processed successfully`);
   }
 }

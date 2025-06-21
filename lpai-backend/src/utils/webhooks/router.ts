@@ -111,7 +111,7 @@ export function analyzeWebhook(payload: any): any {
     case 'LocationCreate':
     case 'LocationUpdate':
       queueType = 'general';
-      priority = 4;
+      priority = 1;
       break;
 
     // Campaign events
