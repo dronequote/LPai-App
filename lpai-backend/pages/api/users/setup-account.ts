@@ -1,5 +1,9 @@
 // pages/api/users/setup-account.ts
-import bcrypt from 'bcryptjs'; // Changed from 'bcrypt' to 'bcryptjs'
+import { NextApiRequest, NextApiResponse } from 'next';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import clientPromise from '../../../src/lib/mongodb';
+import { ObjectId } from 'mongodb';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -49,16 +53,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     );
 
     // Generate JWT for auto-login
-    const token = generateJWT({
-      userId: user._id.toString(),
-      email: user.email,
-      locationId: user.locationId,
-      role: user.role
-    });
+    const jwtToken = jwt.sign(
+      {
+        userId: user._id.toString(),
+        email: user.email,
+        locationId: user.locationId,
+        role: user.role
+      },
+      process.env.JWT_SECRET!,
+      { expiresIn: '30d' }
+    );
 
     return res.status(200).json({
       success: true,
-      token,
+      token: jwtToken,
       user: {
         id: user._id.toString(),
         email: user.email,
