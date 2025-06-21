@@ -36,8 +36,6 @@ export function analyzeWebhook(payload: any): any {
     case 'PLAN_CHANGE':
     case 'EXTERNAL_AUTH_CONNECTED':
     case 'UserCreate':
-    case 'LocationCreate':
-    case 'LocationUpdate':
       queueType = 'critical';
       priority = 1;
       break;
@@ -109,6 +107,12 @@ export function analyzeWebhook(payload: any): any {
       priority = 3;
       break;
 
+    // User & Location events
+    case 'LocationCreate':
+    case 'LocationUpdate':
+      queueType = 'general';
+      priority = 1;
+      break;
 
     // Campaign events
     case 'CampaignStatusUpdate':

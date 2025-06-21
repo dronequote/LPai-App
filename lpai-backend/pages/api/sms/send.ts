@@ -62,20 +62,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).json({ error: 'No API key found for location' });
     }
 
-    // Get contact
-    const contact = await db.collection('contacts').findOne({ 
-      _id: new ObjectId(contactId),
-      locationId 
-    });
-    
-    if (!contact?.ghlContactId) {
-      logger.error('SMS_SEND_NO_CONTACT', new Error('Contact not found'), {
-        requestId,
-        contactId,
-        locationId
+      // Get contact
+      const contact = await db.collection('contacts').findOne({ 
+        _id: new ObjectId(contactId),
+        locationId 
       });
-      return res.status(400).json({ error: 'Contact not found or missing GHL ID' });
-    }
+
+      if (!contact) {
+        logger.error('SMS_SEND_NO_CONTACT', new Error('Contact not found'), {
+          requestId,
+          contactId,
+          locationId
+        });
+        return res.status(404).json({ error: 'Contact not found' });
+      }
+
+      if (!contact.ghlContactId) {
+        logger.error('SMS_SEND_NO_GHL_ID', new Error('Contact missing GHL ID'), {
+          requestId,
+          contactId,
+          locationId
+        });
+        return res.status(400).json({ error: 'Contact missing GHL ID' });
+      }
 
     // Get user for phone number and name
     const user = userId ? await db.collection('users').findOne({ 
