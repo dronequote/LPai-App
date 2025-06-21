@@ -20,6 +20,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     // Exchange code for tokens
     console.log('[OAuth Callback] Exchanging code for tokens...');
+    console.log('[OAuth Debug] Full query params:', req.query);
+    console.log('[OAuth Debug] Full URL:', req.url);
+    console.log('[OAuth Debug] Headers:', req.headers);
     
     const tokenResponse = await axios.post(
       'https://services.leadconnectorhq.com/oauth/token',
