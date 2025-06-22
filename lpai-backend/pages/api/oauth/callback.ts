@@ -212,6 +212,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                               selectedLocations : [selectedLocations];
         }
         
+        // NEW: Check for recently installed locations if no locations were provided
+        if (locationsToProcess.length === 0) {
+          console.log('[OAuth Callback] No location params, checking for recently installed locations...');
+          
+          const recentlyInstalled = await db.collection('locations').find({
+            companyId: finalCompanyId,
+            appInstalled: true,
+            installedAt: { 
+              $gte: new Date(Date.now() - 5 * 60 * 1000) // Within last 5 minutes
+            },
+            locationId: { $ne: null }
+          }).toArray();
+          
+          if (recentlyInstalled.length > 0) {
+            console.log('[OAuth Callback] Found recently installed locations:', recentlyInstalled.map(l => l.locationId));
+            locationsToProcess = recentlyInstalled.map(loc => loc.locationId);
+          }
+        }
+        
         console.log('[OAuth Callback] Locations to process:', locationsToProcess);
         
         // Process each location
@@ -276,14 +295,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           }
         }
         
-        // Redirect to company progress page
-        const progressUrl = `/api/sync/progress/${finalCompanyId}?ui=true`;
-        console.log('[OAuth Callback] Redirecting to:', progressUrl);
-        res.writeHead(302, { Location: progressUrl });
-        return res.end();
+        // Redirect to appropriate page
+        if (locationsToProcess.length === 1) {
+          // Single location - go to location progress page
+          const progressUrl = `/api/sync/progress/${locationsToProcess[0]}?ui=true`;
+          console.log('[OAuth Callback] Redirecting to location progress:', progressUrl);
+          res.writeHead(302, { Location: progressUrl });
+          return res.end();
+        } else {
+          // Multiple locations or company - go to company progress page
+          const progressUrl = `/api/sync/progress/${finalCompanyId}?ui=true`;
+          console.log('[OAuth Callback] Redirecting to company progress:', progressUrl);
+          res.writeHead(302, { Location: progressUrl });
+          return res.end();
+        }
         
       } else if (tokenLocationId) {
-        // Location-level install
+        // Location-level install (direct location install)
         console.log('[OAuth Callback] Location-level install for:', tokenLocationId);
         
         // Check if location exists, create if not
