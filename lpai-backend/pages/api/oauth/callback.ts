@@ -6,9 +6,9 @@ import axios from 'axios';
 import { acquireInstallLock, releaseInstallLock } from '../../../src/utils/installQueue';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const { code, locationId, companyId } = req.query;
+  const { code } = req.query;
   
-  console.log('[OAuth Callback] Received:', { code, locationId, companyId });
+  console.log('[OAuth Callback] Received:', req.query);
 
   if (!code) {
     return res.status(400).json({ error: 'Missing authorization code' });
@@ -43,7 +43,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     console.log('[OAuth Callback] Token response:', tokenResponse.data);
 
-    // Extract data from response
+    // Extract data from token response
     const { 
       access_token, 
       refresh_token, 
@@ -51,27 +51,36 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       locationId: tokenLocationId,
       userId,
       companyId: tokenCompanyId,
-      userType,
-      approvedLocations
+      userType
     } = tokenResponse.data;
 
-    const finalLocationId = tokenLocationId || locationId;
-    const finalCompanyId = tokenCompanyId || companyId;
+    // Get OAuth parameters from query
+    const {
+      locationId: selectedLocations,
+      companyId: queryCompanyId,
+      approveAllLocations,
+      excludedLocations
+    } = req.query;
+
+    const finalCompanyId = tokenCompanyId || queryCompanyId;
+    
+    // Determine which locations to process
+    let locationsToProcess = [];
 
     // Acquire install lock
-    const lockKey = `oauth_${finalCompanyId}_${finalLocationId || 'company'}_${Date.now()}`;
+    const lockKey = `oauth_${finalCompanyId}_${tokenLocationId || 'company'}_${Date.now()}`;
     let lockAcquired = false;
 
     try {
       lockAcquired = await acquireInstallLock(
         db,
         finalCompanyId,
-        finalLocationId,
+        tokenLocationId,
         lockKey
       );
 
       if (!lockAcquired) {
-        console.log(`[OAuth Callback] Install already in progress for ${finalLocationId || finalCompanyId}`);
+        console.log(`[OAuth Callback] Install already in progress for ${tokenLocationId || finalCompanyId}`);
         
         // Return a "processing" page that auto-refreshes
         const html = `
@@ -129,7 +138,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               <div class="spinner"></div>
               <p>Another installation is currently being processed for this location.</p>
               <div class="details">
-                <strong>Location:</strong> ${finalLocationId || 'Company-level'}<br>
+                <strong>Location:</strong> ${tokenLocationId || 'Company-level'}<br>
                 <strong>Company:</strong> ${finalCompanyId || 'Unknown'}
               </div>
               <p>This page will refresh automatically every 5 seconds...</p>
@@ -146,6 +155,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (userType === 'Company' && !tokenLocationId) {
         // Company-level install
         console.log('[OAuth Callback] Company-level install detected');
+        console.log('[OAuth Callback] OAuth params:', {
+          selectedLocations,
+          approveAllLocations,
+          excludedLocations
+        });
         
         // Store company-level tokens
         await db.collection('locations').updateOne(
@@ -160,8 +174,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 tokenType: 'Bearer',
                 userType: 'Company',
                 installedAt: new Date(),
-                installedBy: userId,
-                approvedLocations: approvedLocations || []
+                installedBy: userId
               },
               isCompanyLevel: true,
               updatedAt: new Date()
@@ -177,11 +190,34 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         
         console.log('[OAuth Callback] Company tokens stored');
         
-        // If we have approved locations, create/update records for them
-        if (approvedLocations && approvedLocations.length > 0) {
-          console.log('[OAuth Callback] Processing approved locations:', approvedLocations);
+        // Determine which locations to set up
+        if (approveAllLocations === 'true' || approveAllLocations === true) {
+          // Get all locations for this company
+          const allLocations = await db.collection('locations').find({
+            companyId: finalCompanyId,
+            locationId: { $ne: null }
+          }).toArray();
           
-          for (const locId of approvedLocations) {
+          // Filter out excluded locations
+          const excludedList = Array.isArray(excludedLocations) ? excludedLocations : 
+                              (excludedLocations ? [excludedLocations] : []);
+          
+          locationsToProcess = allLocations
+            .filter(loc => !excludedList.includes(loc.locationId))
+            .map(loc => loc.locationId);
+            
+        } else if (selectedLocations) {
+          // Specific locations were selected
+          locationsToProcess = Array.isArray(selectedLocations) ? 
+                              selectedLocations : [selectedLocations];
+        }
+        
+        console.log('[OAuth Callback] Locations to process:', locationsToProcess);
+        
+        // Process each location
+        for (const locId of locationsToProcess) {
+          try {
+            // Update location record
             await db.collection('locations').updateOne(
               { locationId: locId },
               {
@@ -198,8 +234,53 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               },
               { upsert: true }
             );
+            
+            // Generate location tokens
+            console.log(`[OAuth Callback] Generating tokens for location ${locId}`);
+            const tokenResponse = await fetch(
+              `${process.env.NEXT_PUBLIC_API_URL || 'https://lpai-backend-omega.vercel.app'}/api/oauth/get-location-tokens`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  companyId: finalCompanyId,
+                  locationId: locId
+                })
+              }
+            );
+            
+            if (tokenResponse.ok) {
+              // Add to setup queue with proper webhookId
+              await db.collection('install_retry_queue').insertOne({
+                _id: new ObjectId(),
+                webhookId: `setup_${locId}_${Date.now()}`,  // Guaranteed non-null
+                payload: {
+                  type: 'INSTALL',
+                  locationId: locId,
+                  companyId: finalCompanyId
+                },
+                reason: 'oauth_callback_company_install',
+                attempts: 0,
+                status: 'pending',
+                createdAt: new Date(),
+                nextRetryAt: new Date()
+              });
+              
+              console.log(`[OAuth Callback] Location ${locId} added to setup queue`);
+            } else {
+              console.error(`[OAuth Callback] Failed to generate tokens for location ${locId}`);
+            }
+            
+          } catch (error) {
+            console.error(`[OAuth Callback] Failed to process location ${locId}:`, error);
           }
         }
+        
+        // Redirect to company progress page
+        const progressUrl = `/api/sync/progress/${finalCompanyId}?ui=true`;
+        console.log('[OAuth Callback] Redirecting to:', progressUrl);
+        res.writeHead(302, { Location: progressUrl });
+        return res.end();
         
       } else if (tokenLocationId) {
         // Location-level install
@@ -222,7 +303,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
 
         // Update location with OAuth tokens
-        const updateResult = await db.collection('locations').updateOne(
+        await db.collection('locations').updateOne(
           { locationId: tokenLocationId },
           {
             $set: {
@@ -239,7 +320,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               hasLocationOAuth: true,
               updatedAt: new Date()
             },
-              $unset: {
+            $unset: {
               uninstalledAt: "",      // Clear uninstall timestamp
               uninstallReason: "",    // Clear uninstall reason
               uninstallWebhookId: ""  // Clear uninstall webhook ID
@@ -248,39 +329,37 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         );
 
         console.log('[OAuth Callback] Location tokens stored for:', tokenLocationId);
-      }
-
-      // After storing tokens...
-        console.log('[OAuth Callback] Location tokens stored');
-
+        
         // Add to setup queue for reliable processing
         await db.collection('install_retry_queue').insertOne({
           _id: new ObjectId(),
-          webhookId: `setup_${tokenLocationId || finalCompanyId}_${Date.now()}`,
+          webhookId: `setup_${tokenLocationId}_${Date.now()}`,
           payload: {
             type: 'INSTALL',
-            locationId: tokenLocationId || finalCompanyId
+            locationId: tokenLocationId,
+            companyId: finalCompanyId
           },
-          reason: 'oauth_callback_setup',
+          reason: 'oauth_callback_location_install',
           attempts: 0,
           status: 'pending',
           createdAt: new Date(),
-          nextRetryAt: new Date() // Process immediately
+          nextRetryAt: new Date()
         });
 
         console.log('[OAuth Callback] Added to setup queue for reliable processing');
 
-      // Redirect to progress page
-      const progressUrl = `/api/sync/progress/${tokenLocationId || finalCompanyId}?ui=true`;
-      console.log('[OAuth Callback] Redirecting to:', progressUrl);
+        // Redirect to location progress page
+        const progressUrl = `/api/sync/progress/${tokenLocationId}?ui=true`;
+        console.log('[OAuth Callback] Redirecting to:', progressUrl);
+        res.writeHead(302, { Location: progressUrl });
+        return res.end();
+      }
 
-      res.writeHead(302, { Location: progressUrl });
-      return res.end();
-      } finally {
+    } finally {
       // Always release the lock when done
       if (lockAcquired) {
-        await releaseInstallLock(db, finalCompanyId, finalLocationId, lockKey);
-        console.log(`[OAuth Callback] Released lock for ${finalLocationId || finalCompanyId}`);
+        await releaseInstallLock(db, finalCompanyId, tokenLocationId, lockKey);
+        console.log(`[OAuth Callback] Released lock for ${tokenLocationId || finalCompanyId}`);
       }
     }
 
