@@ -423,8 +423,7 @@ private async processInstall(payload: any, webhookId: string): Promise<void> {
       // Don't throw - install succeeded even if queuing failed
     }
   }
-
-  /**
+/**
  * Process app uninstallation
  */
 private async processUninstall(payload: any, webhookId: string): Promise<void> {
@@ -465,6 +464,17 @@ private async processUninstall(payload: any, webhookId: string): Promise<void> {
           setupQueuedAt: "",
           lastSetupRun: "",
           lastSetupWebhook: "",
+          setupResults: "",
+          
+          // Sync progress cleanup
+          syncProgress: "",
+          contactSyncStatus: "",
+          lastContactSync: "",
+          conversationSyncStatus: "",
+          lastConversationSync: "",
+          appointmentSyncStatus: "",
+          lastAppointmentSync: "",
+          lastInvoiceSync: "",
           
           // Company approval cleanup
           approvedViaCompany: ""
@@ -483,7 +493,7 @@ private async processUninstall(payload: any, webhookId: string): Promise<void> {
         }
       }
     );
-  }
+  } // <-- This closes the if (locationId) block
 
   // Track uninstall event
   await this.db.collection('app_events').insertOne({
@@ -538,5 +548,4 @@ private async processPlanChange(payload: any, webhookId: string): Promise<void> 
   }
 
   console.log(`[CriticalProcessor] Plan change processed successfully`);
-}
-}
+}}
