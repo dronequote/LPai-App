@@ -28,6 +28,8 @@ import ProfileScreen from '../screens/ProfileScreen';
 import NotificationScreen from '../screens/NotificationScreen';
 import ProjectsScreen from '../screens/ProjectsScreen';
 import SettingsScreen from '../screens/SettingsScreen';  // Now using the real SettingsScreen
+import LocationSettingsScreen from '../screens/LocationSettingsScreen';
+
 
 // Import placeholder for screens that don't exist yet
 import PlaceholderScreen from '../screens/PlaceholderScreen';
@@ -99,7 +101,8 @@ export type RootStackParamList = {
   ProfileScreen: undefined;
   NotificationScreen: undefined;
   SettingsScreen: undefined;
-  ChangePasswordScreen: undefined;  // Add this
+  ChangePasswordScreen: undefined;
+  LocationSettingsScreen: undefined;
   TeamScreen: undefined;
   ProductLibraryScreen: undefined;
   TemplatesScreen: undefined;
@@ -234,6 +237,13 @@ export default function StackNavigator() {
               headerShown: true,
               title: 'Change Password',
               headerBackTitle: 'Back'
+            }}
+          />
+          <Stack.Screen 
+            name="LocationSettingsScreen" 
+            component={LocationSettingsScreen}
+            options={{ 
+              headerShown: false,  // LocationSettingsScreen has its own header
             }}
           />
           
