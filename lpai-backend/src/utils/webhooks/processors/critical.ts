@@ -423,65 +423,93 @@ private async processInstall(payload: any, webhookId: string): Promise<void> {
       // Don't throw - install succeeded even if queuing failed
     }
   }
+/**
+ * Process app uninstallation
+ */
+private async processUninstall(payload: any, webhookId: string): Promise<void> {
+  const { locationId, companyId, userId, reason, timestamp } = payload;
+  
+  console.log(`[CriticalProcessor] Processing uninstall for ${locationId || companyId}`);
 
-  /**
-   * Process app uninstallation
-   */
-  private async processUninstall(payload: any, webhookId: string): Promise<void> {
-    const { locationId, companyId, userId, reason, timestamp } = payload;
-    
-    console.log(`[CriticalProcessor] Processing uninstall for ${locationId || companyId}`);
-
-    if (locationId) {
-      // Location-specific uninstall
-      await this.db.collection('locations').updateOne(
-        { locationId },
-        {
-          $set: {
-            appInstalled: false,
-            uninstalledAt: new Date(timestamp || Date.now()),
-            uninstalledBy: userId,
-            uninstallReason: reason || 'User uninstalled',
-            uninstallWebhookId: webhookId,
-            updatedAt: new Date()
-          },
-          $unset: {
-            ghlOAuth: "",
-            setupCompleted: "",
-            setupCompletedAt: ""
-          }
+  if (locationId) {
+    // Location-specific uninstall
+    await this.db.collection('locations').updateOne(
+      { locationId },
+      {
+        $set: {
+          appInstalled: false,
+          uninstalledAt: new Date(timestamp || Date.now()),
+          uninstalledBy: userId,
+          uninstallReason: reason || 'User uninstalled',
+          uninstallWebhookId: webhookId,
+          updatedAt: new Date()
+        },
+        $unset: {
+          // OAuth cleanup
+          ghlOAuth: "",
+          hasLocationOAuth: "",
+          hasCompanyOAuth: "",
+          
+          // Installation data cleanup
+          installedAt: "",
+          installedBy: "",
+          installWebhookId: "",
+          installType: "",
+          installPlanId: "",
+          
+          // Setup data cleanup
+          setupCompleted: "",
+          setupCompletedAt: "",
+          setupQueued: "",
+          setupQueuedAt: "",
+          lastSetupRun: "",
+          lastSetupWebhook: "",
+          setupResults: "",
+          
+          // Sync progress cleanup
+          syncProgress: "",
+          contactSyncStatus: "",
+          lastContactSync: "",
+          conversationSyncStatus: "",
+          lastConversationSync: "",
+          appointmentSyncStatus: "",
+          lastAppointmentSync: "",
+          lastInvoiceSync: "",
+          
+          // Company approval cleanup
+          approvedViaCompany: ""
         }
-      );
+      }
+    );
 
-      // Mark all users as requiring reauth
-      await this.db.collection('users').updateMany(
-        { locationId },
-        {
-          $set: {
-            requiresReauth: true,
-            reauthReason: 'App was uninstalled',
-            updatedAt: new Date()
-          }
+    // Mark all users as requiring reauth
+    await this.db.collection('users').updateMany(
+      { locationId },
+      {
+        $set: {
+          requiresReauth: true,
+          reauthReason: 'App was uninstalled',
+          updatedAt: new Date()
         }
-      );
-    }
-
-    // Track uninstall event
-    await this.db.collection('app_events').insertOne({
-      _id: new ObjectId(),
-      type: 'uninstall',
-      entityType: locationId ? 'location' : 'company',
-      entityId: locationId || companyId,
-      companyId,
-      userId,
-      reason,
-      webhookId,
-      timestamp: new Date(timestamp || Date.now())
-    });
-
-    console.log(`[CriticalProcessor] Uninstall processed successfully`);
+      }
+    );
   }
 
+  // Track uninstall event
+  await this.db.collection('app_events').insertOne({
+    _id: new ObjectId(),
+    type: 'uninstall',
+    entityType: locationId ? 'location' : 'company',
+    entityId: locationId || companyId,
+    companyId,
+    userId,
+    reason,
+    webhookId,
+    timestamp: new Date(timestamp || Date.now())
+  });
+
+  console.log(`[CriticalProcessor] Uninstall processed successfully`);
+}
   /**
    * Process plan change
    */
