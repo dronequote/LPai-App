@@ -132,21 +132,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       
       try {
         // Get token for this specific location
-        const tokenResponse = await axios.post(
-          'https://services.leadconnectorhq.com/oauth/locationToken',
-          {
-            companyId: companyId,
-            locationId: locationId
-          },
-          {
-            headers: {
-              'Authorization': `Bearer ${companyRecord.ghlOAuth.accessToken}`,
-              'Version': '2021-07-28',
-              'Content-Type': 'application/x-www-form-urlencoded'
-            },
-            timeout: 15000 // 15 second timeout
-          }
-        );
+          const tokenResponse = await axios.post(
+            'https://services.leadconnectorhq.com/oauth/locationToken',
+            new URLSearchParams({
+              companyId: companyId,
+              locationId: locationId
+            }).toString(), // Convert to URL encoded string
+            {
+              headers: {
+                'Authorization': `Bearer ${companyRecord.ghlOAuth.accessToken}`,
+                'Version': '2021-07-28',
+                'Content-Type': 'application/x-www-form-urlencoded'
+              },
+              timeout: 15000
+            }
+          );
 
         console.log(`[Get Location Tokens] Got token response for location ${locationId}`);
 
@@ -300,21 +300,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 // If app is installed for this location, try to get location-specific token
                 if (isInstalled && companyRecord.ghlOAuth) {
                   try {
-                    const tokenResponse = await axios.post(
-                      'https://services.leadconnectorhq.com/oauth/locationToken',
-                      {
-                        companyId: companyId,
-                        locationId: location.id
+                  const tokenResponse = await axios.post(
+                    'https://services.leadconnectorhq.com/oauth/locationToken',
+                    new URLSearchParams({
+                      companyId: companyId,
+                      locationId: locationId
+                    }).toString(), // Convert to URL encoded string
+                    {
+                      headers: {
+                        'Authorization': `Bearer ${companyRecord.ghlOAuth.accessToken}`,
+                        'Version': '2021-07-28',
+                        'Content-Type': 'application/x-www-form-urlencoded'
                       },
-                      {
-                        headers: {
-                          'Authorization': `Bearer ${companyRecord.ghlOAuth.accessToken}`,
-                          'Version': '2021-07-28',
-                          'Content-Type': 'application/x-www-form-urlencoded'
-                        },
-                        timeout: 10000 // 10 second timeout per location
-                      }
-                    );
+                      timeout: 15000
+                    }
+                  );
 
                     // Update with OAuth tokens
                     await db.collection('locations').updateOne(
