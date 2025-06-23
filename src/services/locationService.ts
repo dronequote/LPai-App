@@ -453,6 +453,26 @@ async getDetails(
       lastSyncDate: new Date().toISOString(),
     };
   }
+    async getSettings(locationId: string) {
+    return this.request('get', `/locations/${locationId}/settings`);
+  }
+  
+  async updateSetting(locationId: string, settingType: string, data: any) {
+    return this.request('patch', `/locations/${locationId}/settings`, {
+      settingType,
+      data
+    });
+  }
+  
+  // Convenience methods
+  async getSmsNumbers(locationId: string) {
+    const response = await this.getSettings(locationId);
+    return response.settings.smsPhoneNumbers;
+  }
+  
+  async updateSmsNumbers(locationId: string, numbers: any[]) {
+    return this.updateSetting(locationId, 'smsPhoneNumbers', numbers);
+  }
 }
 
 export const locationService = new LocationService();

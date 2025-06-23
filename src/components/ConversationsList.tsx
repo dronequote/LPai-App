@@ -339,6 +339,28 @@ export default function ConversationsList({
     setSendingMessage(true);
     try {
       if (composeMode === 'sms') {
+        // Check if SMS is configured first
+        const isConfigured = await smsService.isConfigured();
+        
+        if (!isConfigured) {
+          Alert.alert(
+            'SMS Setup Required',
+            'Please select your SMS number in Profile settings before sending messages.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { 
+                text: 'Go to Profile', 
+                onPress: () => {
+                  // Navigate to profile - you'll need to pass navigation prop or use a navigation service
+                  // navigation.navigate('ProfileScreen');
+                }
+              }
+            ]
+          );
+          setSendingMessage(false);
+          return;
+        }
+        
         await smsService.send({
           contactId: contactId,
           locationId: locationId,
@@ -358,6 +380,7 @@ export default function ConversationsList({
         };
         setMessages([newMessage, ...messages]);
       } else {
+        // Email sending code remains the same
         await emailService.send({
           contactId: contactId,
           locationId: locationId,
@@ -389,8 +412,46 @@ export default function ConversationsList({
       } catch (e) {
         // Ignore errors when reloading
       }
-    } catch (error) {
-      Alert.alert('Error', `Failed to send ${composeMode}`);
+    } catch (error: any) {
+      // Handle specific SMS errors
+      if (error.message.includes('No SMS number configured')) {
+        Alert.alert(
+          'SMS Setup Required',
+          'Please select your SMS number in Profile settings.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { 
+              text: 'Go to Profile', 
+              onPress: () => {
+                // Navigate to profile
+                // navigation.navigate('ProfileScreen');
+              }
+            }
+          ]
+        );
+      } else if (error.message.includes('Selected SMS number is no longer available')) {
+        Alert.alert(
+          'SMS Configuration Error',
+          'Your selected SMS number is no longer available. Please update your settings.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { 
+              text: 'Go to Profile', 
+              onPress: () => {
+                // Navigate to profile
+                // navigation.navigate('ProfileScreen');
+              }
+            }
+          ]
+        );
+      } else if (error.message.includes('phone numbers do not include')) {
+        Alert.alert(
+          'Invalid Phone Number',
+          'The selected phone number is not configured in GoHighLevel. Please contact your administrator.',
+        );
+      } else {
+        Alert.alert('Error', `Failed to send ${composeMode}: ${error.message}`);
+      }
     } finally {
       setSendingMessage(false);
     }

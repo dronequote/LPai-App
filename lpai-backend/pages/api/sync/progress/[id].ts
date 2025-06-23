@@ -1,4 +1,4 @@
-// pages/api/sync/progress/[id].ts - CLEAN OBSERVATION-ONLY VERSION
+// pages/api/sync/progress/[id].ts - CLEAN OBSERVATION-ONLY VERSION WITH SMOOTH UPDATES
 
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../../src/lib/mongodb';
@@ -267,6 +267,26 @@ function generateProgressUI(entityId: string, isCompany: boolean, locations: any
             background: linear-gradient(to bottom, #3b82f6, #8b5cf6);
             border-radius: 4px;
         }
+        
+        /* Smooth progress animations */
+        @keyframes pulse-light {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .pulse-light {
+            animation: pulse-light 1.5s ease-in-out infinite;
+        }
+
+        .status-syncing {
+            color: #3b82f6;
+            font-weight: bold;
+        }
+
+        .spin-icon {
+            display: inline-block;
+            animation: spin 1s linear infinite;
+        }
     </style>
 </head>
 <body class="text-white">
@@ -402,12 +422,44 @@ function generateProgressUI(entityId: string, isCompany: boolean, locations: any
             return durationStr;
         }
 
+        // Smooth animation function
+        function animateProgress(element, from, to, duration = 500) {
+            if (!element) return;
+            
+            const startTime = performance.now();
+            
+            function animate(currentTime) {
+                const elapsed = currentTime - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                
+                // Ease-out animation
+                const easeOut = 1 - Math.pow(1 - progress, 3);
+                const currentValue = from + (to - from) * easeOut;
+                
+                // Handle different element types
+                if (element.style !== undefined) {
+                    element.style.width = currentValue + '%';
+                } else if (element.getAttribute) {
+                    // For SVG elements
+                    const dashArray = currentValue * 5.52 + ' 552';
+                    element.setAttribute('stroke-dasharray', dashArray);
+                }
+                
+                if (progress < 1) {
+                    requestAnimationFrame(animate);
+                }
+            }
+            
+            requestAnimationFrame(animate);
+        }
+
         // OBSERVATION ONLY - Just check progress, don't trigger anything
         const entityId = '${entityId}';
         const isCompany = ${isCompany};
         const hasLocations = ${hasLocations};
         let pollInterval;
         let isComplete = ${allComplete};
+        let previousData = {};
 
         async function checkProgress() {
             try {
@@ -420,8 +472,8 @@ function generateProgressUI(entityId: string, isCompany: boolean, locations: any
                         window.location.reload();
                     }, 2000);
                 } else if (!isComplete) {
-                    // Update progress displays
-                    updateProgress(data);
+                    // Update progress displays with smooth animations
+                    updateProgressSmooth(data);
                 }
                 
             } catch (error) {
@@ -429,28 +481,45 @@ function generateProgressUI(entityId: string, isCompany: boolean, locations: any
             }
         }
 
-        function updateProgress(data) {
-            // Update each location's progress
+        function updateProgressSmooth(data) {
+            // Update each location's progress with smooth animations
             data.locations.forEach(location => {
-                updateLocationProgress(location);
+                updateLocationProgressSmooth(location);
             });
+            previousData = data;
         }
 
-        function updateLocationProgress(location) {
+        function updateLocationProgressSmooth(location) {
             const card = document.getElementById(\`location-\${location.locationId}\`);
             if (!card) return;
 
-            // Update overall progress
+            // Calculate and animate overall progress
             const progress = calculateOverallProgress(location.syncProgress);
-            const progressBar = card.querySelector('.progress-bar');
-            const progressText = card.querySelector('.progress-text');
-            const progressRing = card.querySelector('.progress-ring-fill');
+            const previousProgress = previousData.locations?.find(l => l.locationId === location.locationId);
+            const oldProgress = previousProgress ? calculateOverallProgress(previousProgress.syncProgress) : 0;
             
-            if (progressBar) progressBar.style.width = \`\${progress}%\`;
-            if (progressText) progressText.textContent = \`\${progress}%\`;
-            if (progressRing) progressRing.setAttribute('stroke-dasharray', \`\${progress * 5.52} 552\`);
+            // Animate progress bar
+            const progressBar = card.querySelector('.progress-bar');
+            if (progressBar) {
+                animateProgress(progressBar, oldProgress, progress);
+            }
+            
+            // Animate progress text
+            const progressText = card.querySelector('.progress-text');
+            if (progressText) {
+                const startValue = parseInt(progressText.textContent) || 0;
+                animateTextValue(progressText, startValue, progress);
+            }
+            
+            // Animate progress ring
+            const progressRing = card.querySelector('.progress-ring-fill');
+            if (progressRing) {
+                const currentDash = progressRing.getAttribute('stroke-dasharray')?.split(' ')[0] || '0';
+                const fromValue = parseFloat(currentDash) / 5.52;
+                animateProgress(progressRing, fromValue, progress);
+            }
 
-            // Update step statuses
+            // Update step statuses with animations
             if (location.syncProgress) {
                 Object.keys(location.syncProgress).forEach(stepKey => {
                     if (stepKey === 'overall') return;
@@ -461,22 +530,62 @@ function generateProgressUI(entityId: string, isCompany: boolean, locations: any
                         const statusIcon = stepElement.querySelector('.status-icon');
                         const statusText = stepElement.querySelector('.status-text');
                         
+                        // Add animation classes for status changes
                         if (statusIcon) {
-                            statusIcon.textContent = 
-                                step.status === 'complete' ? '✓' : 
-                                step.status === 'syncing' ? '⟳' : 
-                                step.status === 'failed' ? '✗' : '○';
+                            const newIcon = step.status === 'complete' ? '✓' : 
+                                          step.status === 'syncing' ? '⟳' : 
+                                          step.status === 'failed' ? '✗' : '○';
+                            
+                            if (statusIcon.textContent !== newIcon) {
+                                statusIcon.style.transition = 'all 0.3s ease';
+                                statusIcon.textContent = newIcon;
+                                if (step.status === 'syncing') {
+                                    statusIcon.classList.add('spin-icon');
+                                } else {
+                                    statusIcon.classList.remove('spin-icon');
+                                }
+                            }
                         }
                         
                         if (statusText) {
-                            statusText.textContent = 
-                                step.status === 'complete' ? 'Complete' : 
-                                step.status === 'syncing' ? 'Syncing...' : 
-                                step.status === 'failed' ? 'Failed' : 'Pending';
+                            const newText = step.status === 'complete' ? 'Complete' : 
+                                          step.status === 'syncing' ? 'Syncing...' : 
+                                          step.status === 'failed' ? 'Failed' : 'Pending';
+                            
+                            if (statusText.textContent !== newText) {
+                                statusText.style.transition = 'all 0.3s ease';
+                                statusText.textContent = newText;
+                                if (step.status === 'syncing') {
+                                    statusText.classList.add('status-syncing', 'pulse-light');
+                                } else {
+                                    statusText.classList.remove('status-syncing', 'pulse-light');
+                                }
+                            }
                         }
                     }
                 });
             }
+        }
+
+        function animateTextValue(element, from, to, duration = 500) {
+            const startTime = performance.now();
+            
+            function animate(currentTime) {
+                const elapsed = currentTime - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                
+                // Ease-out animation
+                const easeOut = 1 - Math.pow(1 - progress, 3);
+                const currentValue = Math.round(from + (to - from) * easeOut);
+                
+                element.textContent = currentValue + '%';
+                
+                if (progress < 1) {
+                    requestAnimationFrame(animate);
+                }
+            }
+            
+            requestAnimationFrame(animate);
         }
 
         function calculateOverallProgress(syncProgress) {
@@ -494,13 +603,13 @@ function generateProgressUI(entityId: string, isCompany: boolean, locations: any
             window.location.href = \`/api/sync/progress/\${locationId}?ui=true\`;
         }
 
-        // Start polling immediately
+        // Start polling immediately with faster interval
         if (!hasLocations || !isComplete) {
             // Check immediately
             checkProgress();
             
-            // Poll more frequently if no locations yet
-            const interval = hasLocations ? 3000 : 1000; // 1 second if waiting for initial data
+            // Poll more frequently for better real-time feel
+            const interval = hasLocations ? 1000 : 500; // 1 second if syncing, 0.5 second if waiting
             pollInterval = setInterval(checkProgress, interval);
         }
 
@@ -792,7 +901,7 @@ function generateDetailedProgress(location: any): string {
                         ${countStr}
                       </p>` :
                       isSyncing ? 
-                      `<p class="text-sm text-blue-400 mt-1">Processing...</p>` :
+                      `<p class="text-sm text-blue-400 mt-1 pulse-light">Processing...</p>` :
                       isFailed && stepResult.error ? 
                       `<p class="text-sm text-red-400 mt-1">${stepResult.error}</p>` :
                       ''
@@ -800,18 +909,18 @@ function generateDetailedProgress(location: any): string {
                   </div>
                 </div>
                 <div class="flex items-center gap-3">
-                  <span class="status-text text-sm text-gray-400">
+                  <span class="status-text text-sm text-gray-400 ${isSyncing ? 'status-syncing pulse-light' : ''}">
                     ${isComplete ? 'Complete' : isSyncing ? 'Syncing...' : isFailed ? 'Failed' : 'Pending'}
                   </span>
-                  <span class="status-icon text-xl">
+                  <span class="status-icon text-xl ${isSyncing ? 'spin-icon' : ''}">
                     ${isComplete ? '✓' : isSyncing ? '⟳' : isFailed ? '✗' : '○'}
                   </span>
                 </div>
               </div>
               
-              ${isSyncing ? `
+              ${isSyncing && stepResult.percent !== undefined ? `
                 <div class="mt-3 h-2 bg-gray-700 rounded-full overflow-hidden progress-bar">
-                  <div class="h-full bg-blue-500 rounded-full" style="width: 50%"></div>
+                  <div class="h-full bg-blue-500 rounded-full progress-fill" style="width: ${stepResult.percent}%"></div>
                 </div>
               ` : ''}
             </div>

@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+// src/screens/ProfileScreen.tsx
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,76 +9,72 @@ import {
   TextInput,
   Alert,
   ActivityIndicator,
-  Image,
-  KeyboardAvoidingView,
-  Platform,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../contexts/AuthContext';
 import { userService } from '../services/userService';
+import api from '../lib/api';
 import { COLORS, FONT, RADIUS, SHADOW } from '../styles/theme';
 
 export default function ProfileScreen({ navigation }) {
   const { user, updateUser } = useAuth();
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState(false);
-  
-  // Form fields
-  const [formData, setFormData] = useState({
-    firstName: user?.firstName || '',
-    lastName: user?.lastName || '',
+  const [profile, setProfile] = useState({
+    name: user?.name || '',
     email: user?.email || '',
     phone: user?.phone || '',
-    avatar: user?.avatar || '',
-    emailSignature: user?.preferences?.emailSignature || '',
-    businessSignature: user?.preferences?.business?.signature?.value || '',
   });
+  
+  // SMS Preference State
+  const [smsConfig, setSmsConfig] = useState({
+    availableNumbers: [],
+    userPreference: null
+  });
+  const [showSmsPicker, setShowSmsPicker] = useState(false);
+  const [loadingSmsConfig, setLoadingSmsConfig] = useState(true);
+
+  useEffect(() => {
+    loadSmsConfig();
+  }, []);
+
+  const loadSmsConfig = async () => {
+    try {
+      const config = await userService.getSmsPreference();
+      setSmsConfig({
+        availableNumbers: config.availableNumbers || [],
+        userPreference: config.userPreference
+      });
+    } catch (error) {
+      console.error('Failed to load SMS config:', error);
+    } finally {
+      setLoadingSmsConfig(false);
+    }
+  };
+
+const updateSmsPreference = async (numberId) => {
+  try {
+    await userService.updateSmsPreference(numberId);
+    
+    setSmsConfig(prev => ({
+      ...prev,
+      userPreference: numberId
+    }));
+    
+    setShowSmsPicker(false);
+    Alert.alert('Success', 'SMS preference updated');
+  } catch (error) {
+    Alert.alert('Error', 'Failed to update SMS preference');
+  }
+};
 
   const handleSave = async () => {
     setLoading(true);
     try {
-      // Update basic profile
-      await userService.updateProfile(user._id, {
-        name: `${formData.firstName} ${formData.lastName}`.trim(),
-        phone: formData.phone,
-        avatar: formData.avatar,
-      });
-
-      // Update preferences
-      await userService.updatePreferences(user._id, {
-        emailSignature: formData.emailSignature,
-        business: {
-          ...user.preferences?.business,
-          signature: {
-            type: 'text',
-            value: formData.businessSignature,
-          },
-        },
-      });
-
-      // Update local user
-      updateUser({
-        ...user,
-        firstName: formData.firstName,
-        lastName: formData.lastName,
-        name: `${formData.firstName} ${formData.lastName}`.trim(),
-        phone: formData.phone,
-        avatar: formData.avatar,
-        preferences: {
-          ...user.preferences,
-          emailSignature: formData.emailSignature,
-          business: {
-            ...user.preferences?.business,
-            signature: {
-              type: 'text',
-              value: formData.businessSignature,
-            },
-          },
-        },
-      });
-
+      await userService.updateProfile(profile);
+      updateUser({ ...user, ...profile });
       setEditing(false);
       Alert.alert('Success', 'Profile updated successfully');
     } catch (error) {
@@ -87,204 +84,174 @@ export default function ProfileScreen({ navigation }) {
     }
   };
 
-  const handleImagePick = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.5,
-    });
-
-    if (!result.canceled) {
-      setFormData({ ...formData, avatar: result.assets[0].uri });
-    }
-  };
-
-  const getInitials = () => {
-    const name = `${formData.firstName} ${formData.lastName}`.trim();
-    return name
-      .split(' ')
-      .map(n => n[0])
-      .join('')
-      .toUpperCase() || 'U';
-  };
+  const selectedNumber = smsConfig.availableNumbers.find(
+    n => n._id?.toString() === smsConfig.userPreference?.toString()
+  );
 
   return (
     <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.keyboardView}
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()}>
-            <Ionicons name="arrow-back" size={24} color={COLORS.textDark} />
-          </TouchableOpacity>
-          <Text style={styles.title}>Profile</Text>
-          {editing ? (
-            <TouchableOpacity onPress={handleSave} disabled={loading}>
-              {loading ? (
-                <ActivityIndicator size="small" color={COLORS.accent} />
-              ) : (
-                <Text style={styles.saveButton}>Save</Text>
-              )}
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity onPress={() => setEditing(true)}>
-              <Text style={styles.editButton}>Edit</Text>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Ionicons name="arrow-back" size={24} color={COLORS.textDark} />
+        </TouchableOpacity>
+        <Text style={styles.title}>Profile</Text>
+        <TouchableOpacity onPress={() => setEditing(!editing)}>
+          <Text style={styles.editButton}>{editing ? 'Cancel' : 'Edit'}</Text>
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView style={styles.content}>
+        {/* Profile Info Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Personal Information</Text>
+          
+          <View style={styles.field}>
+            <Text style={styles.label}>Name</Text>
+            {editing ? (
+              <TextInput
+                style={styles.input}
+                value={profile.name}
+                onChangeText={(text) => setProfile({...profile, name: text})}
+              />
+            ) : (
+              <Text style={styles.value}>{profile.name}</Text>
+            )}
+          </View>
+
+          <View style={styles.field}>
+            <Text style={styles.label}>Email</Text>
+            <Text style={styles.value}>{profile.email}</Text>
+          </View>
+
+          <View style={styles.field}>
+            <Text style={styles.label}>Phone</Text>
+            {editing ? (
+              <TextInput
+                style={styles.input}
+                value={profile.phone}
+                onChangeText={(text) => setProfile({...profile, phone: text})}
+                keyboardType="phone-pad"
+              />
+            ) : (
+              <Text style={styles.value}>{profile.phone || 'Not set'}</Text>
+            )}
+          </View>
+
+          {editing && (
+            <TouchableOpacity
+              style={styles.saveButton}
+              onPress={handleSave}
+              disabled={loading}
+            >
+              <Text style={styles.saveButtonText}>
+                {loading ? 'Saving...' : 'Save Changes'}
+              </Text>
             </TouchableOpacity>
           )}
         </View>
 
-        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-          {/* Avatar Section */}
-          <View style={styles.avatarSection}>
-            <TouchableOpacity 
-              style={styles.avatarContainer}
-              onPress={editing ? handleImagePick : null}
-              disabled={!editing}
-            >
-              {formData.avatar ? (
-                <Image source={{ uri: formData.avatar }} style={styles.avatar} />
-              ) : (
-                <View style={styles.avatarPlaceholder}>
-                  <Text style={styles.avatarText}>{getInitials()}</Text>
-                </View>
-              )}
-              {editing && (
-                <View style={styles.avatarOverlay}>
-                  <Ionicons name="camera" size={24} color="#fff" />
-                </View>
-              )}
-            </TouchableOpacity>
-            <Text style={styles.userName}>
-              {`${formData.firstName} ${formData.lastName}`.trim() || 'Your Name'}
+        {/* SMS Preference Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>SMS Settings</Text>
+          
+          <TouchableOpacity
+            style={styles.smsSelector}
+            onPress={() => setShowSmsPicker(true)}
+            disabled={loadingSmsConfig || smsConfig.availableNumbers.length === 0}
+          >
+            <View style={styles.smsSelectorContent}>
+              <Ionicons name="chatbox-outline" size={24} color={COLORS.accent} />
+              <View style={styles.smsSelectorText}>
+                <Text style={styles.smsSelectorLabel}>Send SMS From</Text>
+                {loadingSmsConfig ? (
+                  <ActivityIndicator size="small" color={COLORS.accent} />
+                ) : selectedNumber ? (
+                  <View>
+                    <Text style={styles.smsSelectorValue}>{selectedNumber.label}</Text>
+                    <Text style={styles.smsSelectorNumber}>{selectedNumber.number}</Text>
+                  </View>
+                ) : smsConfig.availableNumbers.length > 0 ? (
+                  <Text style={styles.smsSelectorPlaceholder}>Select a number</Text>
+                ) : (
+                  <Text style={styles.smsSelectorPlaceholder}>No numbers available</Text>
+                )}
+              </View>
+            </View>
+            {smsConfig.availableNumbers.length > 0 && (
+              <Ionicons name="chevron-forward" size={20} color={COLORS.textGray} />
+            )}
+          </TouchableOpacity>
+
+          {smsConfig.availableNumbers.length === 0 && !loadingSmsConfig && (
+            <Text style={styles.helperText}>
+              Contact your administrator to configure SMS phone numbers
             </Text>
-            <Text style={styles.userRole}>{user?.role || 'User'}</Text>
+          )}
+        </View>
+
+        {/* Account Info */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Account Information</Text>
+          
+          <View style={styles.field}>
+            <Text style={styles.label}>Role</Text>
+            <Text style={styles.value}>{user?.role || 'User'}</Text>
           </View>
-
-          {/* Personal Information */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>PERSONAL INFORMATION</Text>
-            
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>First Name</Text>
-              <TextInput
-                style={[styles.input, !editing && styles.inputDisabled]}
-                value={formData.firstName}
-                onChangeText={(text) => setFormData({ ...formData, firstName: text })}
-                placeholder="First Name"
-                editable={editing}
-              />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Last Name</Text>
-              <TextInput
-                style={[styles.input, !editing && styles.inputDisabled]}
-                value={formData.lastName}
-                onChangeText={(text) => setFormData({ ...formData, lastName: text })}
-                placeholder="Last Name"
-                editable={editing}
-              />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Email</Text>
-              <TextInput
-                style={[styles.input, styles.inputDisabled]}
-                value={formData.email}
-                editable={false}
-                keyboardType="email-address"
-              />
-              <Text style={styles.helper}>Email cannot be changed</Text>
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Phone</Text>
-              <TextInput
-                style={[styles.input, !editing && styles.inputDisabled]}
-                value={formData.phone}
-                onChangeText={(text) => setFormData({ ...formData, phone: text })}
-                placeholder="+1 (555) 123-4567"
-                keyboardType="phone-pad"
-                editable={editing}
-              />
-            </View>
+          
+          <View style={styles.field}>
+            <Text style={styles.label}>Location ID</Text>
+            <Text style={styles.value}>{user?.locationId}</Text>
           </View>
+        </View>
+      </ScrollView>
 
-          {/* Signatures */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>SIGNATURES</Text>
-            
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Email Signature</Text>
-              <TextInput
-                style={[styles.textArea, !editing && styles.inputDisabled]}
-                value={formData.emailSignature}
-                onChangeText={(text) => setFormData({ ...formData, emailSignature: text })}
-                placeholder="Best regards,\nJohn Smith\nABC Company"
-                multiline
-                numberOfLines={4}
-                editable={editing}
-              />
+      {/* SMS Number Picker Modal */}
+      <Modal
+        visible={showSmsPicker}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowSmsPicker(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowSmsPicker(false)}
+        >
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select SMS Number</Text>
+              <TouchableOpacity onPress={() => setShowSmsPicker(false)}>
+                <Ionicons name="close" size={24} color={COLORS.textDark} />
+              </TouchableOpacity>
             </View>
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Document Signature</Text>
-              <TextInput
-                style={[styles.input, !editing && styles.inputDisabled]}
-                value={formData.businessSignature}
-                onChangeText={(text) => setFormData({ ...formData, businessSignature: text })}
-                placeholder="John Smith"
-                editable={editing}
-              />
-              <Text style={styles.helper}>Used for quotes and documents</Text>
-            </View>
+            <ScrollView style={styles.modalBody}>
+              {smsConfig.availableNumbers.map((number) => (
+                <TouchableOpacity
+                  key={number._id}
+                  style={styles.numberOption}
+                  onPress={() => updateSmsPreference(number._id)}
+                >
+                  <View style={styles.radioContainer}>
+                    <View style={styles.radioButton}>
+                      {smsConfig.userPreference?.toString() === number._id?.toString() && (
+                        <View style={styles.radioSelected} />
+                      )}
+                    </View>
+                    <View style={styles.numberOptionText}>
+                      <Text style={styles.numberOptionLabel}>{number.label}</Text>
+                      <Text style={styles.numberOptionNumber}>{number.number}</Text>
+                      {number.isDefault && (
+                        <Text style={styles.defaultIndicator}>Location default</Text>
+                      )}
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
           </View>
-
-          {/* Account Actions */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>ACCOUNT</Text>
-            
-            <TouchableOpacity 
-              style={styles.actionButton}
-              onPress={() => navigation.navigate('ChangePasswordScreen')}
-            >
-              <Ionicons name="lock-closed-outline" size={20} color={COLORS.textDark} />
-              <Text style={styles.actionText}>Change Password</Text>
-              <Ionicons name="chevron-forward" size={20} color={COLORS.textLight} />
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={styles.actionButton}
-              onPress={() => navigation.navigate('NotificationScreen')}
-            >
-              <Ionicons name="notifications-outline" size={20} color={COLORS.textDark} />
-              <Text style={styles.actionText}>Notification Preferences</Text>
-              <Ionicons name="chevron-forward" size={20} color={COLORS.textLight} />
-            </TouchableOpacity>
-          </View>
-
-          {/* Account Info */}
-          <View style={styles.infoSection}>
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>User ID</Text>
-              <Text style={styles.infoValue}>{user?._id}</Text>
-            </View>
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Location ID</Text>
-              <Text style={styles.infoValue}>{user?.locationId}</Text>
-            </View>
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Member Since</Text>
-              <Text style={styles.infoValue}>
-                {new Date(user?.createdAt || Date.now()).toLocaleDateString()}
-              </Text>
-            </View>
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -294,175 +261,199 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.background,
   },
-  keyboardView: {
-    flex: 1,
-  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingVertical: 16,
+    backgroundColor: COLORS.white,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
-    backgroundColor: '#fff',
   },
   title: {
-    fontSize: FONT.header,
-    fontWeight: '600',
+    fontSize: 18,
+    fontFamily: FONT.semiBold,
     color: COLORS.textDark,
   },
-  saveButton: {
-    fontSize: FONT.body,
-    color: COLORS.accent,
-    fontWeight: '600',
-  },
   editButton: {
-    fontSize: FONT.body,
+    fontSize: 16,
+    fontFamily: FONT.medium,
     color: COLORS.accent,
-    fontWeight: '500',
   },
   content: {
     flex: 1,
   },
-  avatarSection: {
-    alignItems: 'center',
-    paddingVertical: 24,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  avatarContainer: {
-    position: 'relative',
-    marginBottom: 12,
-  },
-  avatar: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-  },
-  avatarPlaceholder: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: COLORS.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    fontSize: 32,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  avatarOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    backgroundColor: COLORS.textDark,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 3,
-    borderColor: '#fff',
-  },
-  userName: {
-    fontSize: FONT.large,
-    fontWeight: '600',
-    color: COLORS.textDark,
-    marginBottom: 4,
-  },
-  userRole: {
-    fontSize: FONT.body,
-    color: COLORS.textLight,
-    textTransform: 'capitalize',
-  },
   section: {
-    backgroundColor: '#fff',
-    marginTop: 16,
+    backgroundColor: COLORS.white,
+    marginVertical: 8,
     paddingVertical: 16,
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: COLORS.border,
+    ...SHADOW.light,
   },
   sectionTitle: {
-    fontSize: FONT.small,
-    fontWeight: '600',
-    color: COLORS.textLight,
-    marginHorizontal: 20,
-    marginBottom: 12,
-    letterSpacing: 0.5,
+    fontSize: 16,
+    fontFamily: FONT.semiBold,
+    color: COLORS.textDark,
+    paddingHorizontal: 20,
+    marginBottom: 16,
   },
-  inputGroup: {
-    marginHorizontal: 20,
+  field: {
+    paddingHorizontal: 20,
     marginBottom: 16,
   },
   label: {
-    fontSize: FONT.small,
-    fontWeight: '500',
-    color: COLORS.textDark,
+    fontSize: 14,
+    fontFamily: FONT.regular,
+    color: COLORS.textGray,
     marginBottom: 8,
   },
+  value: {
+    fontSize: 16,
+    fontFamily: FONT.regular,
+    color: COLORS.textDark,
+  },
   input: {
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: RADIUS.small,
-    padding: 12,
-    fontSize: FONT.body,
-    color: COLORS.textDark,
-    backgroundColor: '#fff',
-  },
-  inputDisabled: {
     backgroundColor: COLORS.background,
-    color: COLORS.textLight,
-  },
-  textArea: {
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: RADIUS.small,
+    borderRadius: RADIUS.medium,
     padding: 12,
-    fontSize: FONT.body,
+    fontSize: 16,
+    fontFamily: FONT.regular,
     color: COLORS.textDark,
-    backgroundColor: '#fff',
-    minHeight: 100,
-    textAlignVertical: 'top',
   },
-  helper: {
-    fontSize: FONT.small,
-    color: COLORS.textLight,
-    marginTop: 4,
+  saveButton: {
+    backgroundColor: COLORS.accent,
+    marginHorizontal: 20,
+    marginTop: 8,
+    paddingVertical: 12,
+    borderRadius: RADIUS.medium,
+    alignItems: 'center',
   },
-  actionButton: {
+  saveButtonText: {
+    fontSize: 16,
+    fontFamily: FONT.medium,
+    color: COLORS.white,
+  },
+  smsSelector: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingVertical: 14,
+    paddingVertical: 16,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+  },
+  smsSelectorContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  smsSelectorText: {
+    marginLeft: 16,
+    flex: 1,
+  },
+  smsSelectorLabel: {
+    fontSize: 14,
+    fontFamily: FONT.regular,
+    color: COLORS.textGray,
+    marginBottom: 4,
+  },
+  smsSelectorValue: {
+    fontSize: 16,
+    fontFamily: FONT.medium,
+    color: COLORS.textDark,
+  },
+  smsSelectorNumber: {
+    fontSize: 14,
+    fontFamily: FONT.regular,
+    color: COLORS.textGray,
+    marginTop: 2,
+  },
+  smsSelectorPlaceholder: {
+    fontSize: 16,
+    fontFamily: FONT.regular,
+    color: COLORS.textLight,
+  },
+  helperText: {
+    fontSize: 14,
+    fontFamily: FONT.regular,
+    color: COLORS.textGray,
+    paddingHorizontal: 20,
+    marginTop: 8,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: COLORS.white,
+    borderTopLeftRadius: RADIUS.large,
+    borderTopRightRadius: RADIUS.large,
+    maxHeight: '70%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
   },
-  actionText: {
-    flex: 1,
-    fontSize: FONT.body,
+  modalTitle: {
+    fontSize: 18,
+    fontFamily: FONT.semiBold,
     color: COLORS.textDark,
-    marginLeft: 12,
   },
-  infoSection: {
-    padding: 20,
-    marginTop: 16,
+  modalBody: {
+    paddingVertical: 8,
   },
-  infoRow: {
+  numberOption: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  radioContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
+    alignItems: 'center',
   },
-  infoLabel: {
-    fontSize: FONT.small,
-    color: COLORS.textLight,
+  radioButton: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: COLORS.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 16,
   },
-  infoValue: {
-    fontSize: FONT.small,
+  radioSelected: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: COLORS.accent,
+  },
+  numberOptionText: {
+    flex: 1,
+  },
+  numberOptionLabel: {
+    fontSize: 16,
+    fontFamily: FONT.medium,
     color: COLORS.textDark,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    marginBottom: 2,
+  },
+  numberOptionNumber: {
+    fontSize: 14,
+    fontFamily: FONT.regular,
+    color: COLORS.textGray,
+  },
+  defaultIndicator: {
+    fontSize: 12,
+    fontFamily: FONT.regular,
+    color: COLORS.accent,
+    marginTop: 4,
   },
 });
