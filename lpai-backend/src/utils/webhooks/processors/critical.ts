@@ -494,7 +494,31 @@ private async processUninstall(payload: any, webhookId: string): Promise<void> {
       }
     );
   }
+    // Mark all users as requiring reauth
+    await this.db.collection('users').updateMany(
+      { locationId },
+      {
+        $set: {
+          requiresReauth: true,
+          reauthReason: 'App was uninstalled',
+          updatedAt: new Date()
+        }
+      }
+    );
+  }
 
+  // Track uninstall event
+  await this.db.collection('app_events').insertOne({
+    _id: new ObjectId(),
+    type: 'uninstall',
+    entityType: locationId ? 'location' : 'company',
+    entityId: locationId || companyId,
+    companyId,
+    userId,
+    reason,
+    webhookId,
+    timestamp: new Date(timestamp || Date.now())
+  });
   // Track uninstall event
   await this.db.collection('app_events').insertOne({
     _id: new ObjectId(),
@@ -518,34 +542,34 @@ private async processUninstall(payload: any, webhookId: string): Promise<void> {
     
     console.log(`[CriticalProcessor] Processing plan change from ${oldPlanId} to ${newPlanId}`);
 
-    // Track plan change event
-    await this.db.collection('app_events').insertOne({
-      _id: new ObjectId(),
-      type: 'plan_change',
-      entityType: locationId ? 'location' : 'company',
-      entityId: locationId || companyId,
-      companyId,
-      userId,
-      oldPlanId,
-      newPlanId,
-      webhookId,
-      timestamp: new Date(timestamp || Date.now())
-    });
+  // Track plan change event
+  await this.db.collection('app_events').insertOne({
+    _id: new ObjectId(),
+    type: 'plan_change',
+    entityType: locationId ? 'location' : 'company',
+    entityId: locationId || companyId,
+    companyId,
+    userId,
+    oldPlanId,
+    newPlanId,
+    webhookId,
+    timestamp: new Date(timestamp || Date.now())
+  });
 
-    // Update location if applicable
-    if (locationId) {
-      await this.db.collection('locations').updateOne(
-        { locationId },
-        {
-          $set: {
-            currentPlanId: newPlanId,
-            planChangedAt: new Date(),
-            updatedAt: new Date()
-          }
+  // Update location if applicable
+  if (locationId) {
+    await this.db.collection('locations').updateOne(
+      { locationId },
+      {
+        $set: {
+          currentPlanId: newPlanId,
+          planChangedAt: new Date(),
+          updatedAt: new Date()
         }
-      );
-    }
-
-    console.log(`[CriticalProcessor] Plan change processed successfully`);
+      }
+    );
   }
+
+  console.log(`[CriticalProcessor] Plan change processed successfully`);
+}
 }
