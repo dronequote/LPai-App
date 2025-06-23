@@ -164,47 +164,77 @@ export class CriticalProcessor extends BaseProcessor {
     }
   }
 
-  /**
-   * Process app installation
-   */
-  private async processInstall(payload: any, webhookId: string): Promise<void> {
-    const { installType, locationId, companyId, userId, companyName, planId } = payload;
-    
-    console.log(`[CriticalProcessor] Processing ${installType} install for ${locationId || companyId}`);
+ /**
+ * Process app installation
+ */
+private async processInstall(payload: any, webhookId: string): Promise<void> {
+  const { installType, locationId, companyId, userId, companyName, planId } = payload;
+  
+  console.log(`[CriticalProcessor] Processing ${installType} install for ${locationId || companyId}`);
 
-    // Track install start time
-    const installStartTime = Date.now();
-    
-    // Update metrics with install steps
-    await this.db.collection('webhook_metrics').updateOne(
-      { webhookId },
-      { 
-        $set: { 
-          'timestamps.steps.installStarted': new Date(),
-          'installType': installType
-        } 
-      }
-    );
-
-    if (installType === 'Location' && locationId) {
-      await this.processLocationInstall({
-        locationId,
-        companyId,
-        userId,
-        companyName,
-        planId,
-        webhookId,
-        timestamp: payload.timestamp
-      });
-    } else if (installType === 'Company' && companyId) {
-      await this.processCompanyInstall({
-        companyId,
-        companyName,
-        planId,
-        webhookId,
-        timestamp: payload.timestamp
-      });
+  // Track install start time
+  const installStartTime = Date.now();
+  
+  // Update metrics with install steps
+  await this.db.collection('webhook_metrics').updateOne(
+    { webhookId },
+    { 
+      $set: { 
+        'timestamps.steps.installStarted': new Date(),
+        'installType': installType
+      } 
     }
+  );
+
+  if (installType === 'Location' && locationId) {
+    // Check if we need to fetch OAuth tokens for this location
+    const location = await this.db.collection('locations').findOne({ locationId });
+    
+    if (!location?.ghlOAuth?.accessToken && companyId) {
+      console.log(`[CriticalProcessor] No OAuth token found for location ${locationId}, fetching from company...`);
+      
+      try {
+        const response = await fetch(
+          `${process.env.NEXT_PUBLIC_API_URL || 'https://lpai-backend-omega.vercel.app'}/api/oauth/get-location-tokens`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              companyId: companyId,
+              locationId: locationId
+            })
+          }
+        );
+        
+        if (response.ok) {
+          console.log(`[CriticalProcessor] Location OAuth token fetched successfully`);
+        } else {
+          console.error(`[CriticalProcessor] Failed to fetch location token: ${response.status}`);
+        }
+      } catch (error) {
+        console.error(`[CriticalProcessor] Error fetching location token:`, error);
+      }
+    }
+    
+    await this.processLocationInstall({
+      locationId,
+      companyId,
+      userId,
+      companyName,
+      planId,
+      webhookId,
+      timestamp: payload.timestamp
+    });
+  } else if (installType === 'Company' && companyId) {
+    await this.processCompanyInstall({
+      companyId,
+      companyName,
+      planId,
+      webhookId,
+      timestamp: payload.timestamp
+    });
+  }
+
 
     // Update metrics with completion
     const installDuration = Date.now() - installStartTime;
