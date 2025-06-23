@@ -425,99 +425,118 @@ private async processInstall(payload: any, webhookId: string): Promise<void> {
   }
 
   /**
-   * Process app uninstallation
-   */
-  private async processUninstall(payload: any, webhookId: string): Promise<void> {
-    const { locationId, companyId, userId, reason, timestamp } = payload;
-    
-    console.log(`[CriticalProcessor] Processing uninstall for ${locationId || companyId}`);
+ * Process app uninstallation
+ */
+private async processUninstall(payload: any, webhookId: string): Promise<void> {
+  const { locationId, companyId, userId, reason, timestamp } = payload;
+  
+  console.log(`[CriticalProcessor] Processing uninstall for ${locationId || companyId}`);
 
-    if (locationId) {
-      // Location-specific uninstall
-      await this.db.collection('locations').updateOne(
-        { locationId },
-        {
-          $set: {
-            appInstalled: false,
-            uninstalledAt: new Date(timestamp || Date.now()),
-            uninstalledBy: userId,
-            uninstallReason: reason || 'User uninstalled',
-            uninstallWebhookId: webhookId,
-            updatedAt: new Date()
-          },
-          $unset: {
-            ghlOAuth: "",
-            setupCompleted: "",
-            setupCompletedAt: ""
-          }
+  if (locationId) {
+    // Location-specific uninstall
+    await this.db.collection('locations').updateOne(
+      { locationId },
+      {
+        $set: {
+          appInstalled: false,
+          uninstalledAt: new Date(timestamp || Date.now()),
+          uninstalledBy: userId,
+          uninstallReason: reason || 'User uninstalled',
+          uninstallWebhookId: webhookId,
+          updatedAt: new Date()
+        },
+        $unset: {
+          // OAuth cleanup
+          ghlOAuth: "",
+          hasLocationOAuth: "",
+          hasCompanyOAuth: "",
+          
+          // Installation data cleanup
+          installedAt: "",
+          installedBy: "",
+          installWebhookId: "",
+          installType: "",
+          installPlanId: "",
+          
+          // Setup data cleanup
+          setupCompleted: "",
+          setupCompletedAt: "",
+          setupQueued: "",
+          setupQueuedAt: "",
+          lastSetupRun: "",
+          lastSetupWebhook: "",
+          
+          // Company approval cleanup
+          approvedViaCompany: ""
         }
-      );
+      }
+    );
 
-      // Mark all users as requiring reauth
-      await this.db.collection('users').updateMany(
-        { locationId },
-        {
-          $set: {
-            requiresReauth: true,
-            reauthReason: 'App was uninstalled',
-            updatedAt: new Date()
-          }
+    // Mark all users as requiring reauth
+    await this.db.collection('users').updateMany(
+      { locationId },
+      {
+        $set: {
+          requiresReauth: true,
+          reauthReason: 'App was uninstalled',
+          updatedAt: new Date()
         }
-      );
-    }
-
-    // Track uninstall event
-    await this.db.collection('app_events').insertOne({
-      _id: new ObjectId(),
-      type: 'uninstall',
-      entityType: locationId ? 'location' : 'company',
-      entityId: locationId || companyId,
-      companyId,
-      userId,
-      reason,
-      webhookId,
-      timestamp: new Date(timestamp || Date.now())
-    });
-
-    console.log(`[CriticalProcessor] Uninstall processed successfully`);
+      }
+    );
   }
 
-  /**
-   * Process plan change
-   */
-  private async processPlanChange(payload: any, webhookId: string): Promise<void> {
-    const { locationId, companyId, oldPlanId, newPlanId, userId, timestamp } = payload;
-    
-    console.log(`[CriticalProcessor] Processing plan change from ${oldPlanId} to ${newPlanId}`);
+  // Track uninstall event
+  await this.db.collection('app_events').insertOne({
+    _id: new ObjectId(),
+    type: 'uninstall',
+    entityType: locationId ? 'location' : 'company',
+    entityId: locationId || companyId,
+    companyId,
+    userId,
+    reason,
+    webhookId,
+    timestamp: new Date(timestamp || Date.now())
+  });
 
-    // Track plan change event
-    await this.db.collection('app_events').insertOne({
-      _id: new ObjectId(),
-      type: 'plan_change',
-      entityType: locationId ? 'location' : 'company',
-      entityId: locationId || companyId,
-      companyId,
-      userId,
-      oldPlanId,
-      newPlanId,
-      webhookId,
-      timestamp: new Date(timestamp || Date.now())
-    });
+  console.log(`[CriticalProcessor] Uninstall processed successfully`);
+}
 
-    // Update location if applicable
-    if (locationId) {
-      await this.db.collection('locations').updateOne(
-        { locationId },
-        {
-          $set: {
-            currentPlanId: newPlanId,
-            planChangedAt: new Date(),
-            updatedAt: new Date()
-          }
+/**
+ * Process plan change
+ */
+private async processPlanChange(payload: any, webhookId: string): Promise<void> {
+  const { locationId, companyId, oldPlanId, newPlanId, userId, timestamp } = payload;
+  
+  console.log(`[CriticalProcessor] Processing plan change from ${oldPlanId} to ${newPlanId}`);
+
+  // Track plan change event
+  await this.db.collection('app_events').insertOne({
+    _id: new ObjectId(),
+    type: 'plan_change',
+    entityType: locationId ? 'location' : 'company',
+    entityId: locationId || companyId,
+    companyId,
+    userId,
+    oldPlanId,
+    newPlanId,
+    webhookId,
+    timestamp: new Date(timestamp || Date.now())
+  });
+
+  // Update location if applicable
+  if (locationId) {
+    await this.db.collection('locations').updateOne(
+      { locationId },
+      {
+        $set: {
+          currentPlanId: newPlanId,
+          planChangedAt: new Date(),
+          updatedAt: new Date()
         }
-      );
-    }
-
-    console.log(`[CriticalProcessor] Plan change processed successfully`);
+      }
+    );
   }
+
+  console.log(`[CriticalProcessor] Plan change processed successfully`);
+}
 }
