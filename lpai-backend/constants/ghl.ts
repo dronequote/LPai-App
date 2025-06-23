@@ -13,7 +13,8 @@ export const GHL_ENDPOINTS = {
     },
     INVOICES: {
         base: `${BASE_URL}/invoices/`,
-      },
+        byId: (id: string) => `${BASE_URL}/invoices/${id}`,
+    },
     LOCATIONS: {
       search: `${BASE_URL}/locations/search`,
       get: (locationId: string) => `${BASE_URL}/locations/${locationId}`,
