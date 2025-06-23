@@ -99,6 +99,13 @@ export default function MoreScreen() {
       requiresRole: ['admin', 'manager'],
     },
     {
+    id: 'locationSettings',
+    label: 'Location Settings',
+    icon: 'business-outline',
+    onPress: () => handleNavigate('LocationSettingsScreen'),
+    requiresRole: ['admin'], // Only admin can see this
+  },
+    {
       id: 'productLibrary',
       label: 'Product Library',
       icon: 'pricetag-outline',

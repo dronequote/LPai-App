@@ -344,6 +344,30 @@ class UserService extends BaseService {
       } 
     });
   }
+  async getUserSettings() {
+    return this.request('get', '/users/settings');
+  }
+  
+  async updateUserSetting(settingType: string, value: any) {
+    return this.request('patch', '/users/settings', {
+      settingType,
+      value
+    });
+  }
+  
+  // Convenience methods
+  async getSmsPreference() {
+    const response = await this.getUserSettings();
+    return {
+      availableNumbers: response.settings.availableSmsNumbers,
+      userPreference: response.settings.preferredSmsNumberId
+    };
+  }
+  
+  async updateSmsPreference(numberI
+: string) {
+    return this.updateUserSetting('smsPreference', numberId);
+  }
 }
 
 export const userService = new UserService();

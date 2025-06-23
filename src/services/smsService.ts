@@ -1,6 +1,7 @@
 // services/smsService.ts
 import { BaseService } from './baseService';
 import { Contact, Appointment, Project } from '../../packages/types';
+import { userService } from './userService';
 
 interface SMSTemplate {
   key: string;
@@ -55,7 +56,42 @@ interface UpdateTemplateInput {
   scope: 'location' | 'user';
 }
 
+interface SendSmsParams {
+  contactId: string;
+  message: string;
+  templateKey?: string;
+  fromNumber?: string; // Optional override
+}
+
 class SMSService extends BaseService {
+  /**
+   * Get user's configured SMS number
+   * @private
+   */
+  private async getUserSmsNumber(): Promise<string> {
+    try {
+      const smsConfig = await userService.getSmsPreference();
+      
+      if (!smsConfig.userPreference) {
+        throw new Error('No SMS number configured. Please select your SMS number in Profile settings.');
+      }
+      
+      // Find the selected number
+      const selectedNumber = smsConfig.availableNumbers.find(
+        n => n._id?.toString() === smsConfig.userPreference?.toString()
+      );
+      
+      if (!selectedNumber) {
+        throw new Error('Selected SMS number is no longer available. Please update your settings.');
+      }
+      
+      return selectedNumber.number;
+    } catch (error) {
+      console.error('[SMS Service] Failed to get user SMS preference:', error);
+      throw error;
+    }
+  }
+
   /**
    * Get SMS templates with customizations
    */
@@ -89,11 +125,82 @@ class SMSService extends BaseService {
   ): Promise<SMSResponse> {
     const endpoint = '/api/sms/send';
     
+    // If no fromNumber provided, get user's configured number
+    if (!data.fromNumber) {
+      data.fromNumber = await this.getUserSmsNumber();
+    }
+    
     const result = await this.post<SMSResponse>(
       endpoint,
       data,
       {
         offline: true, // Queue SMS when offline
+      },
+      {
+        endpoint,
+        method: 'POST',
+        entity: 'sms',
+        priority: 'high',
+      }
+    );
+    
+    return result;
+  }
+
+  /**
+   * Send SMS with simplified params
+   */
+  async sendSimple(params: SendSmsParams): Promise<SMSResponse> {
+    const { contactId, message, templateKey = 'custom', fromNumber } = params;
+    
+    // Get user data from auth context
+    const user = await userService.getCurrentUser();
+    
+    return this.send({
+      contactId,
+      locationId: user.locationId,
+      userId: user._id,
+      customMessage: message,
+      templateKey,
+      fromNumber, // Will use user's preference if not provided
+    });
+  }
+
+  /**
+   * Send batch SMS
+   */
+  async sendBatch(
+    contactIds: string[], 
+    message: string, 
+    templateKey: string = 'custom'
+  ): Promise<{
+    success: boolean;
+    sent: number;
+    failed: number;
+    results: Array<{
+      contactId: string;
+      success: boolean;
+      error?: string;
+    }>;
+  }> {
+    // Get user's configured number once for the batch
+    const fromNumber = await this.getUserSmsNumber();
+    const user = await userService.getCurrentUser();
+    
+    const endpoint = '/api/sms/batch';
+    
+    const result = await this.post<any>(
+      endpoint,
+      {
+        contactIds,
+        message,
+        templateKey,
+        fromNumber,
+        locationId: user.locationId,
+        userId: user._id,
+      },
+      {
+        offline: true, // Queue batch when offline
       },
       {
         endpoint,
@@ -494,6 +601,35 @@ class SMSService extends BaseService {
       byTemplate: {},
       averageResponseTime: undefined,
     };
+  }
+
+  /**
+   * Check if user has SMS configured
+   */
+  async isConfigured(): Promise<boolean> {
+    try {
+      const smsConfig = await userService.getSmsPreference();
+      return !!smsConfig.userPreference;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Get available SMS numbers for current user
+   */
+  async getAvailableNumbers(): Promise<Array<{
+    _id: string;
+    number: string;
+    label: string;
+    isDefault: boolean;
+  }>> {
+    try {
+      const smsConfig = await userService.getSmsPreference();
+      return smsConfig.availableNumbers || [];
+    } catch {
+      return [];
+    }
   }
 }
 
