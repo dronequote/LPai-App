@@ -371,58 +371,64 @@ private async processInstall(payload: any, webhookId: string): Promise<void> {
     console.log(`[CriticalProcessor] Company install tracked for ${companyId}`);
   }
 
-  /**
-   * Queue location setup in install retry queue
-   */
-  private async queueLocationSetup(locationId: string, webhookId: string): Promise<void> {
-    try {
-      await this.db.collection('install_retry_queue').insertOne({
-        _id: new ObjectId(),
-        type: 'SETUP_LOCATION',
-        payload: {
-          locationId,
-          fullSync: true,
-          originalWebhookId: webhookId
-        },
-        status: 'pending',
-        attempts: 0,
-        maxAttempts: 3,
-        createdAt: new Date(),
-        nextRetryAt: new Date() // Process immediately
-      });
+    /**
+     * Queue location setup in install retry queue
+     */
+    private async queueLocationSetup(locationId: string, webhookId: string): Promise<void> {
+      try {
+        // Create a unique ID for this setup task
+        const setupId = new ObjectId();
+        
+        await this.db.collection('install_retry_queue').insertOne({
+          _id: setupId,
+          // Use the ObjectId as webhookId to ensure uniqueness
+          webhookId: setupId.toString(),
+          type: 'SETUP_LOCATION',
+          payload: {
+            type: 'SETUP_LOCATION',
+            locationId,
+            fullSync: true,
+            originalWebhookId: webhookId
+          },
+          status: 'pending',
+          attempts: 0,
+          maxAttempts: 3,
+          createdAt: new Date(),
+          nextRetryAt: new Date() // Process immediately
+        });
 
-      // Update location to indicate setup is queued
-      await this.db.collection('locations').updateOne(
-        { locationId },
-        {
-          $set: {
-            setupQueued: true,
-            setupQueuedAt: new Date(),
-            lastSetupWebhook: webhookId
+        // Update location to indicate setup is queued
+        await this.db.collection('locations').updateOne(
+          { locationId },
+          {
+            $set: {
+              setupQueued: true,
+              setupQueuedAt: new Date(),
+              lastSetupWebhook: webhookId
+            }
           }
-        }
-      );
+        );
 
-      console.log(`[CriticalProcessor] Setup queued successfully for ${locationId}`);
+        console.log(`[CriticalProcessor] Setup queued successfully for ${locationId}`);
 
-    } catch (error: any) {
-      console.error(`[CriticalProcessor] Failed to queue setup for ${locationId}:`, error);
-      
-      // Mark location as needing manual setup
-      await this.db.collection('locations').updateOne(
-        { locationId },
-        {
-          $set: {
-            setupError: error.message,
-            needsManualSetup: true,
-            setupFailedAt: new Date()
+      } catch (error: any) {
+        console.error(`[CriticalProcessor] Failed to queue setup for ${locationId}:`, error);
+        
+        // Mark location as needing manual setup
+        await this.db.collection('locations').updateOne(
+          { locationId },
+          {
+            $set: {
+              setupError: error.message,
+              needsManualSetup: true,
+              setupFailedAt: new Date()
+            }
           }
-        }
-      );
+        );
 
-      // Don't throw - install succeeded even if queuing failed
+        // Don't throw - install succeeded even if queuing failed
+      }
     }
-  }
 /**
  * Process app uninstallation
  */
