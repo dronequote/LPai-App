@@ -1,4 +1,6 @@
 // lpai-backend/pages/api/conversations/[conversationId]/messages.ts
+// Updated Date 06/24/2025
+
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
@@ -25,7 +27,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Verify conversation exists and belongs to location
     const conversation = await db.collection('conversations').findOne({
-      _id: new ObjectId(conversationId),
+      _id: new ObjectId(conversationId),  // FIXED: Use conversationId from URL
       locationId: locationId
     });
 
@@ -34,10 +36,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // Get messages for this conversation
-    // FIXED: conversationId should be ObjectId, not string
     const messages = await db.collection('messages')
       .find({
-        conversationId: new ObjectId(conversationId), // FIXED: Convert to ObjectId
+        conversationId: new ObjectId(conversationId), // Correct - ObjectId
         locationId: locationId
       })
       .sort({ dateAdded: -1 }) // Most recent first
@@ -47,7 +48,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Get total count for pagination
     const totalCount = await db.collection('messages').countDocuments({
-      conversationId: new ObjectId(conversationId), // FIXED: Convert to ObjectId
+      conversationId: new ObjectId(conversationId), // Correct - ObjectId
       locationId: locationId
     });
 
@@ -60,7 +61,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         direction: msg.direction || 'inbound',
         dateAdded: msg.dateAdded,
         source: msg.source,
-        read: msg.read || false
+        read: msg.read || false,
+        // Include contact info for frontend
+        contactObjectId: msg.contactObjectId?.toString(),
+        ghlContactId: msg.ghlContactId
       };
 
       // Add type-specific fields
@@ -69,7 +73,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           return {
             ...base,
             body: msg.body || msg.message || '', // Check both fields
-            status: msg.status
+            status: msg.status,
+            fromNumber: msg.fromNumber,
+            toNumber: msg.toNumber
           };
           
         case 3: // Email
@@ -79,7 +85,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               ...base,
               emailMessageId: msg.emailMessageId,
               needsContentFetch: true,
-              preview: msg.lastMessageBody || 'Email content not loaded'
+              subject: msg.subject,
+              preview: msg.body || 'Email content not loaded'
             };
           } else {
             // Email content already fetched
@@ -88,6 +95,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               emailMessageId: msg.emailMessageId,
               subject: msg.subject,
               body: msg.body,
+              htmlBody: msg.htmlBody,
               from: msg.from,
               to: msg.to,
               needsContentFetch: false
@@ -96,6 +104,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           
         case 25: // Activity - Contact
         case 26: // Activity - Invoice
+        case 27: // Activity - Opportunity
+        case 28: // Activity - Appointment
           return {
             ...base,
             body: msg.body,

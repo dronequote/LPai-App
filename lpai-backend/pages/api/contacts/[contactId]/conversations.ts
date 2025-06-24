@@ -1,4 +1,6 @@
 // pages/api/contacts/[contactId]/conversations.ts
+// Updated Date 06/24/2025
+
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
@@ -34,8 +36,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // Build query
+    // FIXED: Use contactObjectId and pass as ObjectId
     const query: any = {
-      contactId: contactId,
+      contactObjectId: new ObjectId(contactId),  // Changed from contactId string to contactObjectId ObjectId
       locationId: locationId
     };
 
@@ -56,11 +59,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const totalCount = await db.collection('conversations').countDocuments(query);
 
     // Get unread message counts for each conversation
-    const conversationIds = conversations.map(c => c._id.toString());
+    // FIXED: Use ObjectId directly, not string
+    const conversationIds = conversations.map(c => c._id);
     const unreadCounts = await db.collection('messages').aggregate([
       {
         $match: {
-          conversationId: { $in: conversationIds },
+          conversationId: { $in: conversationIds },  // Use ObjectId array directly
           read: false,
           direction: 'inbound'
         }
@@ -73,8 +77,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     ]).toArray();
 
+    // FIXED: Create map using ObjectId toString for lookup
     const unreadMap = Object.fromEntries(
-      unreadCounts.map(item => [item._id, item.count])
+      unreadCounts.map(item => [item._id.toString(), item.count])
     );
 
     // Format conversations for response
@@ -88,6 +93,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       unreadCount: unreadMap[conv._id.toString()] || 0,
       starred: conv.starred || false,
       tags: conv.tags || [],
+      // Include GHL IDs for reference
+      ghlConversationId: conv.ghlConversationId,
+      ghlContactId: conv.ghlContactId || contact.ghlContactId,
       // Include project info if available
       projectId: conv.projectId,
       projectTitle: conv.projectTitle
@@ -97,6 +105,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       success: true,
       contactId: contactId,
       contactName: contact.fullName || `${contact.firstName} ${contact.lastName}`,
+      ghlContactId: contact.ghlContactId,  // Include GHL ID for reference
       conversations: formattedConversations,
       pagination: {
         total: totalCount,

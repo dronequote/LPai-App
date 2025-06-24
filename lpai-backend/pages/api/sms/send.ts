@@ -1,4 +1,6 @@
 // lpai-backend/pages/api/sms/send.ts
+//Updated Date 06/24/2025
+
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
@@ -183,27 +185,32 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const conversationResult = await db.collection('conversations').findOneAndUpdate(
         { 
           locationId,
-          contactId: new ObjectId(contactId),
-          type: 'TYPE_PHONE' // Use TYPE_PHONE to match existing conversations
+          contactObjectId: new ObjectId(contactId),  // CHANGED: Use contactObjectId
+          type: 'TYPE_PHONE'
         },
         {
           $set: {
             locationId,
-            contactId: new ObjectId(contactId),
-            ghlContactId: contact.ghlContactId,
-            type: 'TYPE_PHONE', // Use TYPE_PHONE for SMS conversations
+            contactObjectId: new ObjectId(contactId),  // CHANGED: Use contactObjectId
+            ghlContactId: contact.ghlContactId,         // ADD: Store GHL contact ID
+            ghlConversationId: ghlResponse.conversationId, // Store GHL conversation ID if provided
+            type: 'TYPE_PHONE',
             lastMessageAt: new Date(),
-            lastMessageDate: new Date(), // Add both fields for compatibility
+            lastMessageDate: new Date(),
             lastMessagePreview: message.substring(0, 100),
-            lastMessageBody: message.substring(0, 200), // Add lastMessageBody
+            lastMessageBody: message.substring(0, 200),
             lastMessageDirection: 'outbound',
-            lastMessageType: 'TYPE_SMS', // Add message type
+            lastMessageType: 'TYPE_SMS',
             unreadCount: 0,
-            updatedAt: new Date()
+            updatedAt: new Date(),
+            // Contact info (denormalized for performance)
+            contactName: contact.fullName || `${contact.firstName} ${contact.lastName}`,
+            contactEmail: contact.email,
+            contactPhone: contact.phone
           },
           $setOnInsert: {
             createdAt: new Date(),
-            dateAdded: new Date(), // Add dateAdded for compatibility
+            dateAdded: new Date(),
             inbox: true,
             starred: false,
             tags: [],
@@ -230,8 +237,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           // Fallback: fetch the conversation we just created/updated
           conversation = await db.collection('conversations').findOne({
             locationId,
-            contactId: new ObjectId(contactId),
-            type: 'sms'
+            contactObjectId: new ObjectId(contactId),  // CHANGED: Use contactObjectId
+            type: 'TYPE_PHONE'  // CHANGED: Use TYPE_PHONE for consistency
           });
           conversationId = conversation?._id || new ObjectId();
         }
@@ -254,22 +261,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Add message to messages collection
     const messageRecord = {
       _id: new ObjectId(),
-      conversationId: conversationId instanceof ObjectId ? conversationId : new ObjectId(conversationId), // Ensure ObjectId
+      conversationId: conversationId instanceof ObjectId ? conversationId : new ObjectId(conversationId),
       locationId,
-      contactId: new ObjectId(contactId),
+      contactObjectId: new ObjectId(contactId),   // CHANGED: Use contactObjectId
+      ghlContactId: contact.ghlContactId,         // ADD: Store GHL contact ID
+      ghlMessageId: messageId,
+      ghlConversationId: ghlResponse.conversationId, // Store GHL conversation ID
       direction: 'outbound',
-      type: 1, // Numeric type for SMS (1 = SMS, 3 = Email)
-      messageType: 'TYPE_SMS', // String type for compatibility
-      body: message, // Changed from 'message' to 'body' to match schema
-      message: message, // Keep for backwards compatibility
+      type: 1, // Numeric type for SMS
+      messageType: 'TYPE_SMS',
+      body: message,
       fromNumber: finalFromNumber,
       toNumber: finalToNumber,
       status: 'sent',
-      ghlMessageId: messageId,
       templateKey: templateKey || null,
       sentBy: userId,
       sentAt: new Date(),
-      dateAdded: new Date(), // Add dateAdded field
+      dateAdded: new Date(),
       read: true,
       source: 'app',
       metadata: {
@@ -285,7 +293,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const smsRecord = {
       _id: new ObjectId(),
       locationId,
-      contactId,
+      contactObjectId: new ObjectId(contactId),   // CHANGED: Use contactObjectId if this collection uses it
+      ghlContactId: contact.ghlContactId,         // ADD: Store GHL contact ID if needed
       appointmentId: appointmentId ? new ObjectId(appointmentId) : null,
       projectId: projectId ? new ObjectId(projectId) : null,
       templateKey: templateKey || 'custom',
@@ -383,7 +392,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       
       await db.collection('sms_logs').insertOne({
         locationId,
-        contactId,
+        contactId,  // Keep as is for failed logs - they might not have full contact info
         appointmentId: appointmentId ? new ObjectId(appointmentId) : null,
         projectId: projectId ? new ObjectId(projectId) : null,
         templateKey: templateKey || 'custom',

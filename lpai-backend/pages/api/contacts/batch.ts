@@ -1,4 +1,6 @@
 // pages/api/contacts/batch.ts
+// Updated Date 06/24/2025
+
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
@@ -384,10 +386,10 @@ async function processBatchOperation(db: any, body: any, res: NextApiResponse) {
           const duplicateObjectIds = duplicateIds.map((id: string) => new ObjectId(id));
           
           await Promise.all([
-            // Update projects
+            // Update projects - FIXED: Use contactObjectId
             db.collection('projects').updateMany(
-              { contactId: { $in: duplicateObjectIds } },
-              { $set: { contactId: new ObjectId(primaryId) } }
+              { contactObjectId: { $in: duplicateObjectIds } },
+              { $set: { contactObjectId: new ObjectId(primaryId) } }
             ),
             // Update appointments
             db.collection('appointments').updateMany(
@@ -399,10 +401,10 @@ async function processBatchOperation(db: any, body: any, res: NextApiResponse) {
               { contactId: { $in: duplicateObjectIds } },
               { $set: { contactId: new ObjectId(primaryId) } }
             ),
-            // Update conversations
+            // Update conversations - FIXED: Use contactObjectId
             db.collection('conversations').updateMany(
-              { contactId: { $in: duplicateObjectIds } },
-              { $set: { contactId: new ObjectId(primaryId) } }
+              { contactObjectId: { $in: duplicateObjectIds } },
+              { $set: { contactObjectId: new ObjectId(primaryId) } }
             )
           ]);
           
