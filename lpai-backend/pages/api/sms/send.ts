@@ -176,41 +176,57 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const messageId = ghlResponse.messageId || ghlResponse.conversationId || ghlResponse.id;
 
     // Create/update conversation
-    const conversationRecord = {
-      locationId,
-      contactId: new ObjectId(contactId),
-      ghlContactId: contact.ghlContactId,
-      type: 'sms',
-      lastMessageAt: new Date(),
-      lastMessagePreview: message.substring(0, 100),
-      lastMessageDirection: 'outbound',
-      unreadCount: 0,
-      updatedAt: new Date()
-    };
+const conversationRecord = {
+  locationId,
+  contactId: new ObjectId(contactId),
+  ghlContactId: contact.ghlContactId,
+  type: 'sms',
+  lastMessageAt: new Date(),
+  lastMessagePreview: message.substring(0, 100),
+  lastMessageDirection: 'outbound',
+  unreadCount: 0,
+  updatedAt: new Date()
+};
 
-    const conversation = await db.collection('conversations').findOneAndUpdate(
-      { 
-        locationId,
-        contactId: new ObjectId(contactId),
-        type: 'sms'
-      },
-      {
-        $set: conversationRecord,
-        $setOnInsert: {
-          createdAt: new Date(),
-          _id: new ObjectId()
-        }
-      },
-      { 
-        upsert: true,
-        returnDocument: 'after'
-      }
-    );
+const conversationResult = await db.collection('conversations').findOneAndUpdate(
+  { 
+    locationId,
+    contactId: new ObjectId(contactId),
+    type: 'sms'
+  },
+  {
+    $set: conversationRecord,
+    $setOnInsert: {
+      createdAt: new Date(),
+      _id: new ObjectId()
+    }
+  },
+  { 
+    upsert: true,
+    returnDocument: 'after'
+  }
+);
+
+// Handle both update and insert cases
+const conversationId = conversationResult.value?._id || conversationResult.lastErrorObject?.upserted;
+
+if (!conversationId) {
+  throw new Error('Failed to create or update conversation');
+}
+// If we didn't get a conversation back, fetch it
+let conversation = conversationResult.value;
+if (!conversation) {
+  conversation = await db.collection('conversations').findOne({
+    locationId,
+    contactId: new ObjectId(contactId),
+    type: 'sms'
+  });
+}
 
     // Add message to messages collection
     const messageRecord = {
       _id: new ObjectId(),
-      conversationId: conversation.value._id,
+      conversationId: conversationId, // Changed from conversation.value._id
       locationId,
       contactId: new ObjectId(contactId),
       direction: 'outbound',
@@ -314,7 +330,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       success: true,
       messageId,
       smsRecordId: smsRecord._id,
-      conversationId: conversation.value._id,
+      conversationId: conversationId, // Changed from conversation.value._id
       message: 'SMS sent successfully'
     });
 

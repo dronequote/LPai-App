@@ -81,6 +81,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
 
+    // Check for duplicate outbound messages BEFORE queuing
+    if (req.body.type === 'OutboundMessage' && req.body.direction === 'outbound') {
+      // Check if we already have this message logged
+      const existingMessage = await db.collection('messages').findOne({
+        ghlMessageId: req.body.messageId,
+        locationId: req.body.locationId
+      });
+
+      if (existingMessage) {
+        // Message already logged by our SMS send endpoint
+        console.log(`[Native Webhook ${webhookId}] Outbound message already exists`, {
+          messageId: req.body.messageId,
+          webhookId: req.body.webhookId
+        });
+        return res.status(200).json({ 
+          success: true, 
+          message: 'Message already processed',
+          duplicate: true
+        });
+      }
+    }
+
     // Analyze webhook to determine routing
     const routeDecision = analyzeWebhook(req.body);
     
@@ -95,7 +117,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const queueManager = new QueueManager(db);
 
     // Check if we should process directly
-  /*  if (routeDecision.shouldDirectProcess) {
+    /*  if (routeDecision.shouldDirectProcess) {
       const systemHealthy = await isSystemHealthy(db);
       
       if (systemHealthy) {
@@ -110,7 +132,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           });
       }
     }
-  */
+    */
+
     // Always queue (even if direct processing) as backup
     try {
       await queueManager.addToQueue({

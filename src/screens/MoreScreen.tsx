@@ -1,5 +1,5 @@
 // src/screens/MoreScreen.tsx
-// Updated: 2025-06-16
+// Updated: 2025-06-23
 import React from 'react';
 import {
   View,
@@ -71,12 +71,6 @@ export default function MoreScreen() {
   // Static menu items (always shown)
   const accountItems = [
     {
-      id: 'profile',
-      label: 'Profile',
-      icon: 'person-outline',
-      onPress: () => handleNavigate('ProfileScreen'),
-    },
-    {
       id: 'settings',
       label: 'Settings',
       icon: 'settings-outline',
@@ -99,19 +93,19 @@ export default function MoreScreen() {
       requiresRole: ['admin', 'manager'],
     },
     {
-    id: 'locationSettings',
-    label: 'Location Settings',
-    icon: 'business-outline',
-    onPress: () => handleNavigate('LocationSettingsScreen'),
-    requiresRole: ['admin'], // Only admin can see this
-  },
+      id: 'locationSettings',
+      label: 'Location Settings',
+      icon: 'business-outline',
+      onPress: () => handleNavigate('LocationSettingsScreen'),
+      requiresRole: ['admin'], // Only admin can see this
+    },
     {
       id: 'productLibrary',
       label: 'Product Library',
       icon: 'pricetag-outline',
       onPress: () => handleNavigate('ProductLibraryScreen'),
     },
-{
+    {
       id: 'templates',
       label: 'Templates',
       icon: 'copy-outline',
@@ -159,10 +153,10 @@ export default function MoreScreen() {
           <Text style={styles.headerTitle}>More</Text>
         </View>
 
-        {/* User Profile Card */}
+        {/* User Profile Card - Now navigates to Settings */}
         <TouchableOpacity 
           style={styles.profileCard}
-          onPress={() => handleNavigate('ProfileScreen')}
+          onPress={() => handleNavigate('SettingsScreen')}
           activeOpacity={0.7}
         >
           <View style={styles.profileAvatar}>
