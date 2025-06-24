@@ -1,4 +1,4 @@
-// pages/api/conversations/[conversationId]/messages.ts
+// lpai-backend/pages/api/conversations/[conversationId]/messages.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
@@ -34,9 +34,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // Get messages for this conversation
+    // FIXED: conversationId should be ObjectId, not string
     const messages = await db.collection('messages')
       .find({
-        conversationId: conversationId,
+        conversationId: new ObjectId(conversationId), // FIXED: Convert to ObjectId
         locationId: locationId
       })
       .sort({ dateAdded: -1 }) // Most recent first
@@ -46,7 +47,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Get total count for pagination
     const totalCount = await db.collection('messages').countDocuments({
-      conversationId: conversationId,
+      conversationId: new ObjectId(conversationId), // FIXED: Convert to ObjectId
       locationId: locationId
     });
 
@@ -67,7 +68,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         case 1: // SMS
           return {
             ...base,
-            body: msg.body,
+            body: msg.body || msg.message || '', // Check both fields
             status: msg.status
           };
           
@@ -104,7 +105,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         default:
           return {
             ...base,
-            body: msg.body || '',
+            body: msg.body || msg.message || '', // Check both fields
             meta: msg.meta || {}
           };
       }
