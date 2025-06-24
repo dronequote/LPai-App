@@ -371,3 +371,28 @@ Any components that display conversation/message data
 src/screens/ConversationScreen.tsx - Individual conversation view
 src/screens/ContactDetailsScreen.tsx - Shows contact's conversations
 Any other screens showing messages
+1. Services (in src/services/)
+
+✅ conversationService.ts - DONE
+smsService.ts - If it references contactId when creating/sending messages
+emailService.ts - If it exists and references contactId
+
+2. Screens (in src/screens/)
+
+ConversationScreen.tsx - Individual conversation view (likely passes contactId)
+ContactDetailsScreen.tsx - Shows contact's conversations (definitely uses contactId)
+MessagesScreen.tsx - If it exists
+Any other screens that show conversations/messages
+
+3. Components (in src/components/)
+
+ConversationsList.tsx - Displays conversations (likely accesses contactId from conversation objects)
+MessagesList.tsx - Displays messages (if it exists)
+ConversationCard.tsx - Individual conversation item (if it exists)
+MessageBubble.tsx - Individual message display (if it exists)
+Any components that display conversation/message data
+
+4. Types (in packages/types/ or src/types/)
+
+index.ts or types.ts - Update Conversation and Message interfaces
+Any type definition files that include contactId fields
