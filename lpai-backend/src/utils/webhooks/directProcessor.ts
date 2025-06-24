@@ -2,6 +2,26 @@
 // Updated Date 06/24/2025
 
 import { Db, ObjectId } from 'mongodb';
+import { EventEmitter } from 'events';
+
+// Create a simple event emitter for real-time updates
+class MessageEventEmitter extends EventEmitter {
+  private static instance: MessageEventEmitter;
+  
+  private constructor() {
+    super();
+    this.setMaxListeners(1000); // Support many SSE connections
+  }
+  
+  static getInstance(): MessageEventEmitter {
+    if (!MessageEventEmitter.instance) {
+      MessageEventEmitter.instance = new MessageEventEmitter();
+    }
+    return MessageEventEmitter.instance;
+  }
+}
+
+export const messageEvents = MessageEventEmitter.getInstance();
 
 /**
  * Process messages directly without queue for ultra-low latency
@@ -121,7 +141,7 @@ async function processInboundMessageDirect(
   // Find contact - use indexed query
   const contact = await db.collection('contacts').findOne(
     { ghlContactId: contactId, locationId },
-    { projection: { _id: 1, firstName: 1, lastName: 1, email: 1, phone: 1, fullName: 1 } }
+    { projection: { _id: 1, firstName: 1, lastName: 1, email: 1, phone: 1, fullName: 1, assignedTo: 1 } } // Added assignedTo
   );
   
   if (!contact) {
@@ -235,6 +255,35 @@ async function processInboundMessageDirect(
           { session }
         );
       }
+
+      // Emit real-time event AFTER successful insert
+      messageEvents.emit(`message:${locationId}:${contact._id}`, {
+        type: 'new_message',
+        message: messageDoc
+      });
+
+      // If contact is assigned to someone, emit user-specific event
+      if (contact.assignedTo) {
+        messageEvents.emit(`user:${contact.assignedTo}`, {
+          type: 'new_message_assigned',
+          locationId,
+          contactId: contact._id,
+          contactName: contact.fullName,
+          message: messageDoc,
+          timestamp: new Date().toISOString()
+        });
+        
+        console.log(`[Direct Processor] Emitted assigned message event for user: ${contact.assignedTo}`);
+      }
+
+      // Also emit location-wide event for dashboards
+      messageEvents.emit(`location:${locationId}`, {
+        type: 'new_message',
+        contactId: contact._id,
+        contactName: contact.fullName,
+        assignedTo: contact.assignedTo || null,
+        message: messageDoc
+      });
     });
 
     console.log(`[Direct Processor] Successfully processed inbound ${messageType} message`);
@@ -307,7 +356,7 @@ async function processOutboundMessageDirect(
   }
 
   // Quick insert message with ObjectId conversationId
-  await db.collection('messages').insertOne({
+  const messageDoc = {
     _id: new ObjectId(),
     ghlMessageId: messageId || new ObjectId().toString(),
     conversationId: conversationResult.value._id,      // Use ObjectId from conversation
@@ -327,6 +376,14 @@ async function processOutboundMessageDirect(
     createdAt: new Date(),
     processedBy: 'direct',
     webhookId
+  };
+
+  await db.collection('messages').insertOne(messageDoc);
+
+  // Emit real-time event for outbound messages too
+  messageEvents.emit(`message:${locationId}:${contact._id}`, {
+    type: 'new_message',
+    message: messageDoc
   });
 }
 

@@ -215,7 +215,7 @@ export class ContactsProcessor extends BaseProcessor {
       'email', 'firstName', 'lastName', 'phone', 'tags', 'source',
       'dateOfBirth', 'address1', 'city', 'state', 'country', 'postalCode',
       'companyName', 'website', 'timezone', 'dnd', 'dndSettings', 
-      'customFields', 'type', 'contactType'
+      'customFields', 'type', 'contactType' , 'assignedTo'
     ];
     
     fieldsToUpdate.forEach(field => {
