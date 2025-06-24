@@ -1,5 +1,5 @@
 // pages/api/oauth/get-location-tokens.ts
-// Updated: 2025-06-24 - Fixed refresh token storage to use location-specific tokens
+// Updated: 2025-06-24 - Fixed MongoDB update conflict and variable name bug
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
 import axios from 'axios';
@@ -163,17 +163,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 refreshToken: tokenResponse.data.refresh_token, // Use the refresh token from the response!
                 expiresAt: new Date(Date.now() + (tokenResponse.data.expires_in * 1000)),
                 tokenType: tokenResponse.data.token_type || 'Bearer',
-                userType: 'Location',
+                userType: tokenResponse.data.userType || 'Location',
                 scope: tokenResponse.data.scope,
                 derivedFromCompany: true,
-                installedAt: new Date()
+                installedAt: new Date(),
+                needsReauth: false,
+                lastRefreshError: null,
+                refreshCount: 0,
+                lastRefreshed: new Date()
               },
               hasLocationOAuth: true,
               appInstalled: true,
-              updatedAt: new Date(),
-              // Clear any previous auth errors
-              'ghlOAuth.needsReauth': false,
-              'ghlOAuth.lastRefreshError': null
+              updatedAt: new Date()
             },
             $setOnInsert: {
               createdAt: new Date()
@@ -308,7 +309,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                       'https://services.leadconnectorhq.com/oauth/locationToken',
                       new URLSearchParams({
                         companyId: companyId,
-                        locationId: location.id // Fixed: was using undefined locationId variable
+                        locationId: location.id // FIXED: was using undefined locationId variable
                       }).toString(), // Convert to URL encoded string
                       {
                         headers: {
@@ -330,16 +331,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                             refreshToken: tokenResponse.data.refresh_token, // Use the refresh token from the response!
                             expiresAt: new Date(Date.now() + (tokenResponse.data.expires_in * 1000)),
                             tokenType: tokenResponse.data.token_type || 'Bearer',
-                            userType: 'Location',
+                            userType: tokenResponse.data.userType || 'Location',
                             scope: tokenResponse.data.scope,
                             derivedFromCompany: true,
-                            installedAt: new Date()
+                            installedAt: new Date(),
+                            needsReauth: false,
+                            lastRefreshError: null,
+                            refreshCount: 0,
+                            lastRefreshed: new Date()
                           },
                           hasLocationOAuth: true,
-                          appInstalled: true,
-                          // Clear any previous auth errors
-                          'ghlOAuth.needsReauth': false,
-                          'ghlOAuth.lastRefreshError': null
+                          appInstalled: true
                         }
                       }
                     );
