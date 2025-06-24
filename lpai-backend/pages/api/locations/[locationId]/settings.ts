@@ -1,6 +1,6 @@
 // lpai-backend/pages/api/locations/[locationId]/settings.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
-import clientPromise from '../../../../src/lib/mongodb';
+import clientPromise from '../../../../../src/lib/mongodb';
 import { getAuthHeader } from '../../../../src/utils/ghlAuth';
 import { ObjectId } from 'mongodb';
 import jwt from 'jsonwebtoken';
