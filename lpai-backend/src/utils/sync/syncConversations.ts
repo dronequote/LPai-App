@@ -1,4 +1,6 @@
 // src/utils/sync/syncConversations.ts
+// Updated Date 06/24/2025
+
 import axios from 'axios';
 import { Db, ObjectId } from 'mongodb';
 import { getAuthHeader } from '../ghlAuth';
@@ -248,10 +250,12 @@ export async function syncConversations(db: Db, location: any, options: SyncOpti
             }
 
             // Prepare conversation data
+            // FIXED: Use contactObjectId as ObjectId, not string
             const conversationData = {
               ghlConversationId: ghlConv.id,
               locationId: location.locationId,
-              contactId: contact._id.toString(),
+              contactObjectId: contact._id,                  // CHANGED: Use ObjectId directly
+              ghlContactId: ghlConv.contactId,               // ADD: Store GHL contact ID
               type: ghlConv.type,
               unreadCount: ghlConv.unreadCount || 0,
               inbox: ghlConv.inbox || false,
@@ -274,8 +278,9 @@ export async function syncConversations(db: Db, location: any, options: SyncOpti
             };
 
             // Find related project
+            // FIXED: Use contactObjectId to find projects
             const project = await db.collection('projects').findOne({
-              contactId: contact._id.toString(),
+              contactObjectId: contact._id,                 // CHANGED: Use contactObjectId as ObjectId
               locationId: location.locationId,
               status: { $in: ['open', 'quoted', 'won'] }
             });
@@ -293,7 +298,7 @@ export async function syncConversations(db: Db, location: any, options: SyncOpti
                   $setOnInsert: { createdAt: new Date() }
                 }
               );
-              conversationId = existingConversation._id.toString();
+              conversationId = existingConversation._id;  // Keep as ObjectId
               updated++;
             } else {
               const result = await db.collection('conversations').insertOne({
@@ -302,16 +307,17 @@ export async function syncConversations(db: Db, location: any, options: SyncOpti
                 createdAt: new Date(),
                 createdBySync: true
               });
-              conversationId = result.insertedId.toString();
+              conversationId = result.insertedId;  // Keep as ObjectId
               created++;
             }
 
-            // Sync messages (reduced limit for speed)
+            // Sync messages (pass ObjectId directly)
             const messageResult = await syncMessages(db, location, {
-              conversationId: conversationId,
+              conversationId: conversationId,  // Pass ObjectId directly
               ghlConversationId: ghlConv.id,
-              contactId: contact._id.toString(),
-              projectId: project?._id.toString(),
+              contactObjectId: contact._id,   // Pass ObjectId directly
+              ghlContactId: ghlConv.contactId,
+              projectId: project?._id,
               limit: fullSync ? 20 : 10,
               auth: auth
             });

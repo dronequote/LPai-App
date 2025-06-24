@@ -1,4 +1,6 @@
 // src/utils/webhooks/directProcessor.ts
+// Updated Date 06/24/2025
+
 import { Db, ObjectId } from 'mongodb';
 
 /**
@@ -67,7 +69,7 @@ export async function processMessageDirect(
       }
     );
 
-  console.log(`[Direct Processor] Completed ${payload.type} in ${processingTime}ms`);
+    console.log(`[Direct Processor] Completed ${payload.type} in ${processingTime}ms`);
 
   } catch (error: any) {
     console.error(`[Direct Processor] Error processing ${payload.type}:`, error);
@@ -107,7 +109,7 @@ async function processInboundMessageDirect(
   // Find contact - use indexed query
   const contact = await db.collection('contacts').findOne(
     { ghlContactId: contactId, locationId },
-    { projection: { _id: 1, firstName: 1, lastName: 1, email: 1, phone: 1 } }
+    { projection: { _id: 1, firstName: 1, lastName: 1, email: 1, phone: 1, fullName: 1 } }
   );
   
   if (!contact) {
@@ -127,7 +129,7 @@ async function processInboundMessageDirect(
   try {
     await session.withTransaction(async () => {
       // Update or create conversation
-      const conversation = await db.collection('conversations').findOneAndUpdate(
+      const conversationResult = await db.collection('conversations').findOneAndUpdate(
         { 
           ghlConversationId: conversationId,
           locationId 
@@ -136,13 +138,14 @@ async function processInboundMessageDirect(
           $set: {
             ghlConversationId: conversationId,
             locationId,
-            contactId: contact._id.toString(),
+            contactObjectId: contact._id,              // FIXED: Use ObjectId directly
+            ghlContactId: contactId,                    // ADD: Store GHL contact ID
             type: conversationType,
             lastMessageDate: new Date(),
             lastMessageBody: message.body?.substring(0, 200) || '',
-            lastMessageType: payload.type,
+            lastMessageType: getMessageTypeName(message.type),
             lastMessageDirection: 'inbound',
-            contactName: `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
+            contactName: contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
             contactEmail: contact.email,
             contactPhone: contact.phone,
             updatedAt: new Date()
@@ -150,7 +153,12 @@ async function processInboundMessageDirect(
           $inc: { unreadCount: 1 },
           $setOnInsert: {
             _id: new ObjectId(),
-            createdAt: new Date()
+            createdAt: new Date(),
+            inbox: true,
+            starred: false,
+            tags: [],
+            followers: [],
+            scoring: []
           }
         },
         { 
@@ -164,13 +172,15 @@ async function processInboundMessageDirect(
       const messageDoc: any = {
         _id: new ObjectId(),
         ghlMessageId: message.id,
-        conversationId: conversation._id, // FIXED: Remove .toString() to keep as ObjectId
+        conversationId: conversationResult.value._id,  // Use ObjectId directly
         ghlConversationId: conversationId,
         locationId,
-        contactId: contact._id.toString(),
+        contactObjectId: contact._id,                  // FIXED: Use ObjectId directly
+        ghlContactId: contactId,                        // ADD: Store GHL contact ID
         type: message.type,
         messageType: message.messageType || getMessageTypeName(message.type),
         direction: 'inbound',
+        body: message.body || '',                      // Add body field
         dateAdded: new Date(message.dateAdded || Date.now()),
         source: message.source || 'ghl',
         read: false,
@@ -184,7 +194,7 @@ async function processInboundMessageDirect(
       // Check for active project
       const project = await db.collection('projects').findOne(
         {
-          contactId: contact._id.toString(),
+          contactObjectId: contact._id,                 // FIXED: Use contactObjectId
           locationId,
           status: { $in: ['open', 'quoted', 'won', 'in_progress'] }
         },
@@ -224,56 +234,60 @@ async function processOutboundMessageDirect(
   // Similar to inbound but simpler
   const contact = await db.collection('contacts').findOne(
     { ghlContactId: contactId, locationId },
-    { projection: { _id: 1, firstName: 1, lastName: 1, email: 1, phone: 1 } }
+    { projection: { _id: 1, firstName: 1, lastName: 1, email: 1, phone: 1, fullName: 1 } }
   );
   
   if (!contact) return;
 
   // Update conversation (no unread increment for outbound)
-const conversationResult = await db.collection('conversations').findOneAndUpdate(
-  { 
-    ghlConversationId: conversationId,
-    locationId 
-  },
-  {
-    $set: {
-      lastMessageDate: new Date(),
-      lastMessageBody: message.body?.substring(0, 200) || '',
-      lastMessageDirection: 'outbound',
-      lastMessageType: message.messageType || getMessageTypeName(message.type || 1),
-      updatedAt: new Date()
+  const conversationResult = await db.collection('conversations').findOneAndUpdate(
+    { 
+      ghlConversationId: conversationId,
+      locationId 
+    },
+    {
+      $set: {
+        contactObjectId: contact._id,                  // FIXED: Add contactObjectId
+        ghlContactId: contactId,                        // ADD: Store GHL contact ID
+        lastMessageDate: new Date(),
+        lastMessageBody: message.body?.substring(0, 200) || '',
+        lastMessageDirection: 'outbound',
+        lastMessageType: message.messageType || getMessageTypeName(message.type || 1),
+        updatedAt: new Date()
+      }
+    },
+    {
+      returnDocument: 'after'
     }
-  },
-  {
-    returnDocument: 'after'
+  );
+
+  if (!conversationResult.value) {
+    console.warn(`[Direct Processor] Conversation not found for outbound message: ${conversationId}`);
+    return;
   }
-);
 
-if (!conversationResult.value) {
-  console.warn(`[Direct Processor] Conversation not found for outbound message: ${conversationId}`);
-  return;
+  // Quick insert message with ObjectId conversationId
+  await db.collection('messages').insertOne({
+    _id: new ObjectId(),
+    ghlMessageId: message.id || new ObjectId().toString(),
+    conversationId: conversationResult.value._id,      // Use ObjectId from conversation
+    ghlConversationId: conversationId,
+    locationId,
+    contactObjectId: contact._id,                      // FIXED: Use ObjectId directly
+    ghlContactId: contactId,                            // ADD: Store GHL contact ID
+    userId: userId || null,
+    type: message.type || 1,
+    messageType: message.messageType || getMessageTypeName(message.type || 1),
+    direction: 'outbound',
+    body: message.body || '',
+    dateAdded: new Date(message.dateAdded || Date.now()),
+    source: message.source || 'ghl',
+    read: true,
+    createdAt: new Date(),
+    processedBy: 'direct',
+    webhookId
+  });
 }
-
-// Quick insert message with ObjectId conversationId
-await db.collection('messages').insertOne({
-  _id: new ObjectId(),
-  ghlMessageId: message.id || new ObjectId().toString(),
-  conversationId: conversationResult.value._id, // Use ObjectId from conversation
-  ghlConversationId: conversationId,
-  locationId,
-  contactId: contact._id.toString(),
-  userId: userId || null,
-  type: message.type || 1,
-  messageType: message.messageType || getMessageTypeName(message.type || 1),
-  direction: 'outbound',
-  body: message.body || '',
-  dateAdded: new Date(message.dateAdded || Date.now()),
-  source: message.source || 'ghl',
-  read: true,
-  createdAt: new Date(),
-  processedBy: 'direct',
-  webhookId
-});
 
 /**
  * Process payment received directly
@@ -310,4 +324,25 @@ async function processPaymentDirect(
       }
     );
   }
+}
+
+/**
+ * Helper function to get message type name
+ */
+function getMessageTypeName(type: number): string {
+  const typeMap: Record<number, string> = {
+    1: 'TYPE_SMS',
+    3: 'TYPE_EMAIL',
+    4: 'TYPE_WHATSAPP',
+    5: 'TYPE_GMB',
+    6: 'TYPE_FB',
+    7: 'TYPE_IG',
+    24: 'TYPE_LIVE_CHAT',
+    25: 'ACTIVITY_CONTACT',
+    26: 'ACTIVITY_INVOICE',
+    27: 'ACTIVITY_OPPORTUNITY',
+    28: 'ACTIVITY_APPOINTMENT'
+  };
+  
+  return typeMap[type] || 'TYPE_OTHER';
 }

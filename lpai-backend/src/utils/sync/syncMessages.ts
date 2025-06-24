@@ -1,14 +1,17 @@
 // src/utils/sync/syncMessages.ts
+// Updated Date 06/24/2025
+
 import axios from 'axios';
 import { Db, ObjectId } from 'mongodb';
 
 interface SyncMessagesOptions {
-  conversationId: string; // MongoDB conversation ID
-  ghlConversationId: string; // GHL conversation ID
-  contactId: string;
-  projectId?: string;
+  conversationId: ObjectId;         // CHANGED: MongoDB conversation ID as ObjectId
+  ghlConversationId: string;        // GHL conversation ID
+  contactObjectId: ObjectId;        // CHANGED: MongoDB contact ID as ObjectId
+  ghlContactId: string;             // ADD: GHL contact ID
+  projectId?: ObjectId;             // CHANGED: MongoDB project ID as ObjectId
   limit?: number;
-  auth: any; // Auth header passed from parent
+  auth: any;                        // Auth header passed from parent
 }
 
 export async function syncMessages(
@@ -19,7 +22,8 @@ export async function syncMessages(
   const { 
     conversationId, 
     ghlConversationId, 
-    contactId, 
+    contactObjectId,
+    ghlContactId,
     projectId,
     limit = 20,
     auth 
@@ -59,17 +63,18 @@ export async function syncMessages(
         // Check if message exists
         const existingMessage = await db.collection('messages').findOne({
           ghlMessageId: ghlMsg.id,
-          conversationId: conversationId
+          conversationId: conversationId  // Already ObjectId
         });
 
         let messageData: any = {
           // Core fields
           ghlMessageId: ghlMsg.id,
-          conversationId: conversationId,
+          conversationId: conversationId,           // CHANGED: Use ObjectId directly
           ghlConversationId: ghlConversationId,
           locationId: location.locationId,
-          contactId: contactId,
-          projectId: projectId,
+          contactObjectId: contactObjectId,         // CHANGED: Use ObjectId directly
+          ghlContactId: ghlContactId,               // ADD: Store GHL contact ID
+          projectId: projectId || null,             // CHANGED: Use ObjectId or null
           
           // Message info
           type: ghlMsg.type,
@@ -99,12 +104,19 @@ export async function syncMessages(
             if (ghlMsg.meta?.email?.messageIds?.[0]) {
               messageData.emailMessageId = ghlMsg.meta.email.messageIds[0];
               messageData.needsContentFetch = true;
-              // Don't store body/subject yet
+              messageData.subject = ghlMsg.subject || 'No subject';
+              // Don't store body/subject yet - will be fetched later
+            } else {
+              // If no email ID, store what we have
+              messageData.body = ghlMsg.body || '';
+              messageData.subject = ghlMsg.subject || 'No subject';
             }
             break;
             
           case 25: // Activity - Contact
           case 26: // Activity - Invoice
+          case 27: // Activity - Opportunity
+          case 28: // Activity - Appointment
             // Activity messages already have simple body text
             messageData.body = ghlMsg.body || '';
             break;

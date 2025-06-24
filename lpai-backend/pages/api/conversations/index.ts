@@ -1,4 +1,6 @@
 // pages/api/conversations/index.ts
+// Updated Date 06/24/2025
+
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
@@ -44,16 +46,16 @@ async function getConversations(db: any, query: any, res: NextApiResponse) {
     // Build base filter using the filter builder
     const filter = buildConversationFilter(params);
     
-    // Add date range filter (using lastMessageAt for conversations)
+    // Add date range filter (using lastMessageDate for conversations)
     if (params.startDate || params.endDate) {
-      const dateFilter = buildDateRangeFilter('lastMessageAt', params.startDate, params.endDate);
+      const dateFilter = buildDateRangeFilter('lastMessageDate', params.startDate, params.endDate);
       Object.assign(filter, dateFilter);
     }
     
     // Add search filter - search through message preview and contact info
     if (params.search) {
       const searchFilter = buildSearchFilter(params.search, [
-        'lastMessagePreview',
+        'lastMessageBody',
         'contactName',
         'contactEmail',
         'contactPhone'
@@ -75,7 +77,7 @@ async function getConversations(db: any, query: any, res: NextApiResponse) {
       {
         limit: params.limit,
         offset: params.offset,
-        sortBy: params.sortBy === 'createdAt' ? 'lastMessageAt' : params.sortBy, // Default to lastMessageAt
+        sortBy: params.sortBy === 'createdAt' ? 'lastMessageDate' : params.sortBy, // Default to lastMessageDate
         sortOrder: params.sortOrder
       }
     );
@@ -87,9 +89,10 @@ async function getConversations(db: any, query: any, res: NextApiResponse) {
         
         try {
           // Always include contact info since it's essential for conversations
-          if (conversation.contactId) {
+          // FIXED: Use contactObjectId instead of contactId
+          if (conversation.contactObjectId) {
             const contact = await db.collection('contacts').findOne({ 
-              _id: new ObjectId(conversation.contactId) 
+              _id: conversation.contactObjectId // Already ObjectId from DB
             });
             
             if (contact) {
@@ -103,8 +106,9 @@ async function getConversations(db: any, query: any, res: NextApiResponse) {
               };
               
               // Update contact fields if they're missing or outdated
-              if (!conversation.contactName || conversation.contactName !== `${contact.firstName} ${contact.lastName}`) {
-                enriched.contactName = `${contact.firstName} ${contact.lastName}`;
+              const fullName = `${contact.firstName || ''} ${contact.lastName || ''}`.trim();
+              if (!conversation.contactName || conversation.contactName !== fullName) {
+                enriched.contactName = fullName;
               }
               if (!conversation.contactEmail || conversation.contactEmail !== contact.email) {
                 enriched.contactEmail = contact.email;
@@ -133,7 +137,7 @@ async function getConversations(db: any, query: any, res: NextApiResponse) {
           // Get message count if requested
           if (params.includeMessageCount === 'true') {
             const messageCount = await db.collection('messages').countDocuments({
-              conversationId: conversation._id.toString()
+              conversationId: conversation._id // FIXED: Use ObjectId directly, not string
             });
             enriched.totalMessages = messageCount;
           }
@@ -141,7 +145,7 @@ async function getConversations(db: any, query: any, res: NextApiResponse) {
           // Get last few messages preview if requested
           if (params.includeRecentMessages === 'true') {
             const recentMessages = await db.collection('messages')
-              .find({ conversationId: conversation._id.toString() })
+              .find({ conversationId: conversation._id }) // FIXED: Use ObjectId directly
               .sort({ dateAdded: -1 })
               .limit(3)
               .project({ 
