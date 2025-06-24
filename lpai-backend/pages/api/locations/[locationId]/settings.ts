@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { clientPromise } from '../../../../src/lib/mongodb';
+import clientPromise from '@/lib/mongodb';
 import jwt from 'jsonwebtoken';
 import { ObjectId } from 'mongodb';
 
@@ -21,7 +21,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
     
     const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any;
 
     if (!decoded?.userId) {
       return res.status(401).json({ error: 'Invalid token' });
@@ -57,6 +57,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
 
       case 'PATCH':
+        const { settingType, data } = req.body;
+        
+        if (!settingType || !data) {
+          return res.status(400).json({ error: 'Missing settingType or data' });
+        }
+        
         // First check if location exists
         const locationExists = await db.collection('locations').findOne(
           { locationId },
@@ -67,11 +73,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           return res.status(404).json({ error: 'Location not found' });
         }
         
+        // Check if user belongs to this location
+        let userQuery: any = { locationId };
+        
+        // Handle both ObjectId and string userId formats
+        try {
+          userQuery._id = new ObjectId(decoded.userId);
+        } catch (e) {
+          // If userId is not a valid ObjectId, use it as a string
+          userQuery.userId = decoded.userId;
+        }
+        
         const user = await db.collection('users').findOne(userQuery);
         
         if (!user) {
           // For development, let's log what we're looking for
-          if (__DEV__) {
+          if (process.env.NODE_ENV === 'development') {
             console.log('[Location Settings] User not found with query:', userQuery);
             console.log('[Location Settings] Decoded token:', decoded);
           }
