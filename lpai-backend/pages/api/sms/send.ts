@@ -184,22 +184,31 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         { 
           locationId,
           contactId: new ObjectId(contactId),
-          type: 'sms'
+          type: 'TYPE_PHONE' // Use TYPE_PHONE to match existing conversations
         },
         {
           $set: {
             locationId,
             contactId: new ObjectId(contactId),
             ghlContactId: contact.ghlContactId,
-            type: 'sms',
+            type: 'TYPE_PHONE', // Use TYPE_PHONE for SMS conversations
             lastMessageAt: new Date(),
+            lastMessageDate: new Date(), // Add both fields for compatibility
             lastMessagePreview: message.substring(0, 100),
+            lastMessageBody: message.substring(0, 200), // Add lastMessageBody
             lastMessageDirection: 'outbound',
+            lastMessageType: 'TYPE_SMS', // Add message type
             unreadCount: 0,
             updatedAt: new Date()
           },
           $setOnInsert: {
-            createdAt: new Date()
+            createdAt: new Date(),
+            dateAdded: new Date(), // Add dateAdded for compatibility
+            inbox: true,
+            starred: false,
+            tags: [],
+            followers: [],
+            scoring: []
           }
         },
         { 
@@ -245,12 +254,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Add message to messages collection
     const messageRecord = {
       _id: new ObjectId(),
-      conversationId: conversationId,
+      conversationId: conversationId instanceof ObjectId ? conversationId : new ObjectId(conversationId), // Ensure ObjectId
       locationId,
       contactId: new ObjectId(contactId),
       direction: 'outbound',
-      type: 'sms',
-      message: message,
+      type: 1, // Numeric type for SMS (1 = SMS, 3 = Email)
+      messageType: 'TYPE_SMS', // String type for compatibility
+      body: message, // Changed from 'message' to 'body' to match schema
+      message: message, // Keep for backwards compatibility
       fromNumber: finalFromNumber,
       toNumber: finalToNumber,
       status: 'sent',
@@ -258,7 +269,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       templateKey: templateKey || null,
       sentBy: userId,
       sentAt: new Date(),
+      dateAdded: new Date(), // Add dateAdded field
       read: true,
+      source: 'app',
       metadata: {
         appointmentId: appointmentId || null,
         projectId: projectId || null,
