@@ -214,25 +214,35 @@ async function updateUser(db: any, userId: string, body: any, res: NextApiRespon
     updateData.updatedAt = new Date().toISOString();
     
     // Update using the _id we found
-    const result = await db.collection('users').findOneAndUpdate(
+    const result = await db.collection('users').updateOne(
       { _id: currentUser._id },
-      { $set: updateData },
-      { returnDocument: 'after' }
+      { $set: updateData }
     );
-    
-    if (!result?.value) {
-      console.log('[USERS API] Update failed - no result returned');
+
+    if (!result.modifiedCount && !result.matchedCount) {
+      console.log('[USERS API] Update failed - no documents matched');
       return res.status(500).json({ error: 'Failed to update user' });
     }
     
-    console.log(`[USERS API] Successfully updated user: ${result.value.name}`);
-    return res.status(200).json(result.value);
+  console.log(`[USERS API] Successfully updated user with matchedCount: ${result.matchedCount}, modifiedCount: ${result.modifiedCount}`);
+
     
   } catch (error) {
     console.error('[USERS API] Error updating user:', error);
     return res.status(500).json({ error: 'Failed to update user' });
-  }
+  }}
+
+  // Fetch the updated user
+const updatedUser = await db.collection('users').findOne({ _id: currentUser._id });
+
+if (!updatedUser) {
+  console.log('[USERS API] Update succeeded but could not fetch updated user');
+  return res.status(500).json({ error: 'Update succeeded but could not fetch updated user' });
 }
+
+console.log(`[USERS API] Successfully updated user: ${updatedUser.name}`);
+return res.status(200).json(updatedUser);
+
 
 // Helper function to deep merge preferences
 function deepMergePreferences(defaults: any, updates: any): any {

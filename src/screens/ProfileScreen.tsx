@@ -17,6 +17,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { userService } from '../services/userService';
 import api from '../lib/api';
 import { COLORS, FONT, RADIUS, SHADOW } from '../styles/theme';
+import { locationService } from '../services/locationService';
+
 
 export default function ProfileScreen({ navigation }) {
   const { user, updateUser } = useAuth();
@@ -40,28 +42,54 @@ export default function ProfileScreen({ navigation }) {
     loadSmsConfig();
   }, []);
 
-  const loadSmsConfig = async () => {
-    try {
-      const config = await userService.getSmsPreference();
-      setSmsConfig({
-        availableNumbers: config.availableNumbers || [],
-        userPreference: config.userPreference
-      });
-    } catch (error) {
-      console.error('Failed to load SMS config:', error);
-    } finally {
-      setLoadingSmsConfig(false);
-    }
-  };
+// Update loadSmsConfig:
+const loadSmsConfig = async () => {
+  try {
+    const settings = await locationService.getSettings(user.locationId);
+    const smsNumbers = settings.settings?.smsPhoneNumbers || [];
+    
+    // Get user's preference from their profile (stored in user.preferences)
+    const userPreference = user?.preferences?.communication?.smsNumberId;
+    
+    setSmsConfig({
+      availableNumbers: smsNumbers,
+      userPreference: userPreference
+    });
+  } catch (error) {
+    console.error('Failed to load SMS config:', error);
+  } finally {
+    setLoadingSmsConfig(false);
+  }
+};
 
+// Update updateSmsPreference:
 const updateSmsPreference = async (numberId) => {
   try {
-    await userService.updateSmsPreference(numberId);
+    // Update user preferences
+    await userService.updatePreferences(user._id, {
+      communication: {
+        ...user.preferences?.communication,
+        smsNumberId: numberId
+      }
+    });
     
+    // Update local state
     setSmsConfig(prev => ({
       ...prev,
       userPreference: numberId
     }));
+    
+    // Update auth context
+    updateUser({
+      ...user,
+      preferences: {
+        ...user.preferences,
+        communication: {
+          ...user.preferences?.communication,
+          smsNumberId: numberId
+        }
+      }
+    });
     
     setShowSmsPicker(false);
     Alert.alert('Success', 'SMS preference updated');
@@ -206,52 +234,46 @@ const updateSmsPreference = async (numberId) => {
       </ScrollView>
 
       {/* SMS Number Picker Modal */}
-      <Modal
-        visible={showSmsPicker}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowSmsPicker(false)}
-      >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setShowSmsPicker(false)}
-        >
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Select SMS Number</Text>
-              <TouchableOpacity onPress={() => setShowSmsPicker(false)}>
-                <Ionicons name="close" size={24} color={COLORS.textDark} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView style={styles.modalBody}>
-              {smsConfig.availableNumbers.map((number) => (
-                <TouchableOpacity
-                  key={number._id}
-                  style={styles.numberOption}
-                  onPress={() => updateSmsPreference(number._id)}
-                >
-                  <View style={styles.radioContainer}>
-                    <View style={styles.radioButton}>
-                      {smsConfig.userPreference?.toString() === number._id?.toString() && (
-                        <View style={styles.radioSelected} />
-                      )}
-                    </View>
-                    <View style={styles.numberOptionText}>
-                      <Text style={styles.numberOptionLabel}>{number.label}</Text>
-                      <Text style={styles.numberOptionNumber}>{number.number}</Text>
-                      {number.isDefault && (
-                        <Text style={styles.defaultIndicator}>Location default</Text>
-                      )}
-                    </View>
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
+      {/* SMS Number Picker Modal */}
+<Modal
+  visible={showSmsPicker}
+  transparent
+  animationType="slide"
+  onRequestClose={() => setShowSmsPicker(false)}
+>
+  <View style={styles.modalOverlay}>
+    <TouchableOpacity
+      style={styles.modalBackground}
+      activeOpacity={1}
+      onPress={() => setShowSmsPicker(false)}
+    />
+    <View style={styles.modalContent}>
+      <View style={styles.modalHeader}>
+        <Text style={styles.modalTitle}>Select SMS Number</Text>
+        <TouchableOpacity onPress={() => setShowSmsPicker(false)}>
+          <Ionicons name="close" size={24} color={COLORS.textDark} />
         </TouchableOpacity>
-      </Modal>
+      </View>
+      
+      {/* Number options */}
+      {smsConfig.availableNumbers.map((number) => (
+        <TouchableOpacity
+          key={number._id}
+          style={styles.numberOption}
+          onPress={() => updateSmsPreference(number._id)}
+        >
+          <View style={styles.numberOptionContent}>
+            <Text style={styles.numberLabel}>{number.label}</Text>
+            <Text style={styles.numberValue}>{number.number}</Text>
+          </View>
+          {smsConfig.userPreference === number._id && (
+            <Ionicons name="checkmark-circle" size={24} color={COLORS.accent} />
+          )}
+        </TouchableOpacity>
+      ))}
+    </View>
+  </View>
+</Modal>
     </SafeAreaView>
   );
 }
@@ -382,34 +404,44 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     marginTop: 8,
   },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: COLORS.white,
-    borderTopLeftRadius: RADIUS.large,
-    borderTopRightRadius: RADIUS.large,
-    maxHeight: '70%',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontFamily: FONT.semiBold,
-    color: COLORS.textDark,
-  },
-  modalBody: {
-    paddingVertical: 8,
-  },
+modalOverlay: {
+  flex: 1,
+  justifyContent: 'flex-end',
+  backgroundColor: 'rgba(0, 0, 0, 0.5)', // Dark overlay
+},
+
+modalBackground: {
+  position: 'absolute',
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+},
+
+modalContent: {
+  backgroundColor: '#FFFFFF', // Use explicit white
+  borderTopLeftRadius: 20,
+  borderTopRightRadius: 20,
+  paddingTop: 20,
+  paddingBottom: 40,
+  maxHeight: '80%',
+},
+
+modalHeader: {
+  flexDirection: 'row',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  paddingHorizontal: 20,
+  paddingBottom: 20,
+  borderBottomWidth: 1,
+  borderBottomColor: '#EEEEEE',
+},
+
+modalTitle: {
+  fontSize: 18,
+  fontWeight: '600',
+  color: '#000000', // Explicit black
+},
   numberOption: {
     paddingHorizontal: 20,
     paddingVertical: 16,
