@@ -516,9 +516,11 @@ async updateSetting(locationId: string, settingType: string, data: any) {
 async getSmsNumbers(locationId: string): Promise<any[]> {
   try {
     const response = await this.getSettings(locationId);
-    return response.settings?.smsPhoneNumbers || [];
+    // Handle both response structures
+    return response.settings?.smsPhoneNumbers || response.smsPhoneNumbers || [];
   } catch (error) {
     console.error('Failed to get SMS numbers:', error);
+    // Return empty array on error
     return [];
   }
 }

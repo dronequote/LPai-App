@@ -42,18 +42,20 @@ export default function LocationSettingsScreen({ navigation }) {
     }
   };
 
-    const loadSmsNumbers = async () => {
-      try {
-        if (__DEV__) {
-          console.log('Loading SMS numbers for locationId:', user.locationId);
-        }
-        const numbers = await locationService.getSmsNumbers(user.locationId);
-        setSmsNumbers(numbers || []);
-      } catch (error) {
-        console.error('Failed to load SMS numbers:', error);
-        // Don't show alert on initial load
+  const loadSmsNumbers = async () => {
+    try {
+      if (__DEV__) {
+        console.log('Loading SMS numbers for locationId:', user.locationId);
       }
-    };
+      const numbers = await locationService.getSmsNumbers(user.locationId);
+      // This will now return an empty array if no SMS numbers exist
+      setSmsNumbers(numbers || []);
+    } catch (error) {
+      console.error('Failed to load SMS numbers:', error);
+      // Don't show error, just set empty array
+      setSmsNumbers([]);
+    }
+  };
 
   const formatPhoneNumber = (number) => {
     // Remove all non-digits
