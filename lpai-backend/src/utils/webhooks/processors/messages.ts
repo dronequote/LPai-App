@@ -76,8 +76,27 @@ export class MessagesProcessor extends BaseProcessor {
       // NEW: Handle new conversation structure
       conversation = webhookData.conversation;
     } else {
-      // Direct format
-      ({ locationId, contactId, conversationId, message, timestamp, conversation } = payload);
+      // Direct format - handle the actual webhook structure we're receiving
+      locationId = payload.locationId;
+      contactId = payload.contactId;
+      conversationId = payload.conversationId;
+      timestamp = payload.timestamp;
+      conversation = payload.conversation;
+      
+      // Handle message structure - GHL sends body/messageType directly
+      if (payload.body) {
+        message = {
+          id: payload.messageId,
+          body: payload.body,
+          type: payload.messageType === 'SMS' ? 1 : (payload.messageType === 'Email' ? 3 : 1),
+          messageType: payload.messageType,
+          status: payload.status,
+          dateAdded: payload.dateAdded,
+          meta: payload.meta || {}
+        };
+      } else {
+        message = payload.message;
+      }
     }
     
     if (!locationId || !contactId || !message) {
@@ -336,8 +355,28 @@ export class MessagesProcessor extends BaseProcessor {
         };
       }
     } else {
-      // Direct format
-      ({ locationId, contactId, conversationId, message, userId, timestamp, conversation } = payload);
+      // Direct format - handle the actual webhook structure
+      locationId = payload.locationId;
+      contactId = payload.contactId;
+      conversationId = payload.conversationId;
+      userId = payload.userId;
+      timestamp = payload.timestamp;
+      conversation = payload.conversation;
+      
+      // Handle message structure for outbound
+      if (payload.body) {
+        message = {
+          id: payload.messageId,
+          body: payload.body,
+          type: payload.messageType === 'SMS' ? 1 : (payload.messageType === 'Email' ? 3 : 1),
+          messageType: payload.messageType,
+          status: payload.status,
+          dateAdded: payload.dateAdded,
+          meta: payload.meta || {}
+        };
+      } else {
+        message = payload.message;
+      }
     }
     
     // Add validation for required fields
