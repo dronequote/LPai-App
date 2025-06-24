@@ -210,15 +210,30 @@ export class MessagesProcessor extends BaseProcessor {
         } else if (conversationResult && conversationResult.value && conversationResult.value._id) {
           // Standard format from findOneAndUpdate
           conversationObjectId = conversationResult.value._id;
+        } else if (conversationResult && conversationResult._id) {
+          // Sometimes the result comes without .value wrapper
+          conversationObjectId = conversationResult._id;
         } else {
           console.error(`[MessagesProcessor] Could not determine conversation ObjectId`, {
             hasConversation: !!conversation,
             hasConversationValue: !!(conversation && conversation.value),
             hasConversationValueId: !!(conversation && conversation.value && conversation.value._id),
             hasResult: !!conversationResult,
-            hasResultValue: !!(conversationResult && conversationResult.value)
+            hasResultValue: !!(conversationResult && conversationResult.value),
+            conversationResultKeys: conversationResult ? Object.keys(conversationResult) : [],
+            ghlConversationId: conversationId
           });
-          throw new Error('Could not determine conversation ObjectId');
+          // As a last resort, look up the conversation by ghlConversationId
+          const existingConversation = await this.db.collection('conversations').findOne({
+            ghlConversationId: conversationId,
+            locationId
+          });
+          if (existingConversation && existingConversation._id) {
+            conversationObjectId = existingConversation._id;
+            console.log(`[MessagesProcessor] Found conversation by ghlConversationId lookup: ${conversationObjectId}`);
+          } else {
+            throw new Error('Could not determine conversation ObjectId');
+          }
         }
 
         // Build message document
