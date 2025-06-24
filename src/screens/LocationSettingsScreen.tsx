@@ -43,12 +43,16 @@ export default function LocationSettingsScreen({ navigation }) {
   };
 
     const loadSmsNumbers = async () => {
-    try {
+      try {
+        if (__DEV__) {
+          console.log('Loading SMS numbers for locationId:', user.locationId);
+        }
         const numbers = await locationService.getSmsNumbers(user.locationId);
         setSmsNumbers(numbers || []);
-    } catch (error) {
+      } catch (error) {
         console.error('Failed to load SMS numbers:', error);
-    }
+        // Don't show alert on initial load
+      }
     };
 
   const formatPhoneNumber = (number) => {
@@ -86,15 +90,23 @@ export default function LocationSettingsScreen({ navigation }) {
     const saveSmsNumbers = async (numbers) => {
     setSaving(true);
     try {
-        await locationService.updateSmsNumbers(user.locationId, numbers);
-        setSmsNumbers(numbers);
-        Alert.alert('Success', 'SMS numbers updated successfully');
+      if (__DEV__) {
+        console.log('Saving SMS numbers:', numbers);
+      }
+      
+      await locationService.updateSmsNumbers(user.locationId, numbers);
+      setSmsNumbers(numbers);
+      Alert.alert('Success', 'SMS numbers updated successfully');
     } catch (error) {
-        Alert.alert('Error', 'Failed to update SMS numbers');
+      console.error('Failed to update SMS numbers:', error);
+      console.error('Error details:', error.response?.data);
+      
+      const errorMessage = error.response?.data?.error || 'Failed to update SMS numbers';
+      Alert.alert('Error', errorMessage);
     } finally {
-        setSaving(false);
+      setSaving(false);
     }
-    };
+  };
 
   const removeNumber = (index) => {
     Alert.alert(

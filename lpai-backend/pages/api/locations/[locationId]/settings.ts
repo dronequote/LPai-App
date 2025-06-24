@@ -1,34 +1,35 @@
-// lpai-backend/pages/api/locations/[locationId]/settings.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
-import clientPromise from '../../../../../src/lib/mongodb';
-import { getAuthHeader } from '../../../../src/utils/ghlAuth';
-import { ObjectId } from 'mongodb';
+import { clientPromise } from '../../../../src/lib/mongodb';
 import jwt from 'jsonwebtoken';
+import { ObjectId } from 'mongodb';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const { locationId } = req.query;
   
   if (!locationId || typeof locationId !== 'string') {
-    return res.status(400).json({ error: 'Location ID required' });
+    return res.status(400).json({ error: 'Invalid locationId' });
   }
 
   try {
     const client = await clientPromise;
     const db = client.db('lpai');
     
-    // Verify user has access
+    // Verify authentication
     const authHeader = req.headers.authorization;
-    const token = authHeader?.replace('Bearer ', '');
-    
-    if (!token) {
-      return res.status(401).json({ error: 'Unauthorized' });
+    if (!authHeader?.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Authorization required' });
     }
     
-    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any;
-    
+    const token = authHeader.split(' ')[1];
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    if (!decoded?.userId) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+
     switch (req.method) {
       case 'GET':
-        // Get all location settings
+        // Get location with settings
         const location = await db.collection('locations').findOne(
           { locationId },
           { 
@@ -36,83 +37,129 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               smsPhoneNumbers: 1,
               emailSettings: 1,
               businessHours: 1,
-              notificationSettings: 1,
-              // Add other settings fields as needed
+              _id: 0 
             } 
           }
         );
         
+        if (!location) {
+          return res.status(404).json({ error: 'Location not found' });
+        }
+        
         return res.status(200).json({
           success: true,
           settings: {
-            smsPhoneNumbers: location?.smsPhoneNumbers || [],
-            emailSettings: location?.emailSettings || {},
-            businessHours: location?.businessHours || {},
-            notificationSettings: location?.notificationSettings || {},
+            smsPhoneNumbers: location.smsPhoneNumbers || [],
+            emailSettings: location.emailSettings || {},
+            businessHours: location.businessHours || {}
           }
         });
 
       case 'PATCH':
-        // Update specific settings
         const { settingType, data } = req.body;
         
-        // Verify admin for sensitive settings
-        if (['smsPhoneNumbers', 'emailSettings'].includes(settingType)) {
-          const user = await db.collection('users').findOne({ 
-            _id: new ObjectId(decoded.userId),
-            locationId,
-            role: 'admin'
-          });
-          
-          if (!user) {
-            return res.status(403).json({ error: 'Admin access required' });
-          }
+        if (!settingType || !data) {
+          return res.status(400).json({ error: 'Missing settingType or data' });
         }
         
-        let updateData = {};
+        // Check if user belongs to this location
+        let userQuery: any = { locationId };
+        
+        // Handle both ObjectId and string userId formats
+        try {
+          userQuery._id = new ObjectId(decoded.userId);
+        } catch (e) {
+          // If userId is not a valid ObjectId, use it as a string
+          userQuery.userId = decoded.userId;
+        }
+        
+        const user = await db.collection('users').findOne(userQuery);
+        
+        if (!user) {
+          // For development, let's log what we're looking for
+          if (__DEV__) {
+            console.log('[Location Settings] User not found with query:', userQuery);
+            console.log('[Location Settings] Decoded token:', decoded);
+          }
+          return res.status(403).json({ error: 'Access denied' });
+        }
+        
+        let updateData: any = {};
         
         switch (settingType) {
           case 'smsPhoneNumbers':
             // Validate and format SMS numbers
             const formattedNumbers = data.map((item: any, index: number) => {
               let formattedNumber = item.number.trim();
-              if (!formattedNumber.startsWith('+')) {
-                formattedNumber = '+1' + formattedNumber.replace(/\D/g, '');
+              
+              // Remove all non-digits for validation
+              const digitsOnly = formattedNumber.replace(/\D/g, '');
+              
+              // Format based on length
+              if (digitsOnly.length === 10) {
+                formattedNumber = `+1${digitsOnly}`;
+              } else if (digitsOnly.length === 11 && digitsOnly[0] === '1') {
+                formattedNumber = `+${digitsOnly}`;
+              } else if (!formattedNumber.startsWith('+')) {
+                // Keep as is if it's already international format
+                formattedNumber = `+${digitsOnly}`;
               }
               
               return {
-                _id: item._id || new ObjectId(),
+                _id: item._id || new ObjectId().toString(), // Store as string
                 number: formattedNumber,
                 label: item.label || `SMS Line ${index + 1}`,
                 isDefault: item.isDefault || false,
                 addedBy: decoded.userId,
-                addedAt: item.addedAt || new Date()
+                addedAt: item.addedAt || new Date(),
+                updatedAt: new Date()
               };
             });
             
             // Ensure only one default
-            const defaultIndex = formattedNumbers.findIndex((n: any) => n.isDefault);
-            if (defaultIndex === -1 && formattedNumbers.length > 0) {
+            const hasDefault = formattedNumbers.some((n: any) => n.isDefault);
+            if (!hasDefault && formattedNumbers.length > 0) {
               formattedNumbers[0].isDefault = true;
+            } else if (formattedNumbers.filter((n: any) => n.isDefault).length > 1) {
+              // If multiple defaults, keep only the first one
+              let foundFirst = false;
+              formattedNumbers.forEach((n: any) => {
+                if (n.isDefault) {
+                  if (foundFirst) {
+                    n.isDefault = false;
+                  } else {
+                    foundFirst = true;
+                  }
+                }
+              });
             }
             
             updateData = { 
               smsPhoneNumbers: formattedNumbers,
-              smsConfigUpdatedAt: new Date()
+              smsConfigUpdatedAt: new Date(),
+              lastModifiedBy: decoded.userId
             };
             break;
             
           case 'emailSettings':
             updateData = { 
-              emailSettings: data,
-              emailSettingsUpdatedAt: new Date()
+              emailSettings: {
+                ...data,
+                updatedAt: new Date()
+              },
+              emailSettingsUpdatedAt: new Date(),
+              lastModifiedBy: decoded.userId
             };
             break;
             
           case 'businessHours':
             updateData = { 
-              businessHours: data,
-              businessHoursUpdatedAt: new Date()
+              businessHours: {
+                ...data,
+                updatedAt: new Date()
+              },
+              businessHoursUpdatedAt: new Date(),
+              lastModifiedBy: decoded.userId
             };
             break;
             
@@ -120,14 +167,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             return res.status(400).json({ error: 'Invalid setting type' });
         }
         
-        await db.collection('locations').updateOne(
+        const result = await db.collection('locations').updateOne(
           { locationId },
-          { $set: updateData }
+          { 
+            $set: updateData,
+            $currentDate: { lastModified: true }
+          }
         );
+        
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ error: 'Location not found' });
+        }
         
         return res.status(200).json({
           success: true,
-          message: `${settingType} updated successfully`
+          message: `${settingType} updated successfully`,
+          modifiedCount: result.modifiedCount
         });
 
       default:
@@ -137,7 +192,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     console.error('[Location Settings API] Error:', error);
     return res.status(500).json({ 
       error: 'Failed to manage location settings',
-      message: error.message 
+      message: error.message,
+      // Include more details in development
+      ...(process.env.NODE_ENV === 'development' && { 
+        stack: error.stack,
+        details: error 
+      })
     });
   }
 }
