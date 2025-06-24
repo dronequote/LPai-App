@@ -84,15 +84,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           userQuery.userId = decoded.userId;
         }
         
-        const user = await db.collection('users').findOne(userQuery);
-        
+        // Check if user belongs to this location
+        const user = await db.collection('users').findOne({
+          ghlUserId: decoded.userId,
+          locationId: locationId
+        });
+
         if (!user) {
-          // For development, let's log what we're looking for
-          if (process.env.NODE_ENV === 'development') {
-            console.log('[Location Settings] User not found with query:', userQuery);
-            console.log('[Location Settings] Decoded token:', decoded);
-          }
           return res.status(403).json({ error: 'Access denied' });
+        }
+
+        // Optional: Check if user is admin for sensitive settings
+        if (['smsPhoneNumbers', 'emailSettings'].includes(settingType) && user.role !== 'admin') {
+          return res.status(403).json({ error: 'Admin access required' });
         }
         
         let updateData: any = {};
