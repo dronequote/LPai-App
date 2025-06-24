@@ -1,6 +1,6 @@
 // lpai-backend/pages/api/users/[userId].ts
 import type { NextApiRequest, NextApiResponse } from 'next';
-import clientPromise from '../../../src/lib/mongodb';
+import clientPromise from '@/lib/mongodb';
 import { ObjectId } from 'mongodb';
 
 // Default preferences for all users
@@ -224,25 +224,24 @@ async function updateUser(db: any, userId: string, body: any, res: NextApiRespon
       return res.status(500).json({ error: 'Failed to update user' });
     }
     
-  console.log(`[USERS API] Successfully updated user with matchedCount: ${result.matchedCount}, modifiedCount: ${result.modifiedCount}`);
+    console.log(`[USERS API] Successfully updated user with matchedCount: ${result.matchedCount}, modifiedCount: ${result.modifiedCount}`);
 
+    // Fetch the updated user
+    const updatedUser = await db.collection('users').findOne({ _id: currentUser._id });
+
+    if (!updatedUser) {
+      console.log('[USERS API] Update succeeded but could not fetch updated user');
+      return res.status(500).json({ error: 'Update succeeded but could not fetch updated user' });
+    }
+
+    console.log(`[USERS API] Successfully updated user: ${updatedUser.name}`);
+    return res.status(200).json(updatedUser);
     
   } catch (error) {
     console.error('[USERS API] Error updating user:', error);
     return res.status(500).json({ error: 'Failed to update user' });
-  }}
-
-  // Fetch the updated user
-const updatedUser = await db.collection('users').findOne({ _id: currentUser._id });
-
-if (!updatedUser) {
-  console.log('[USERS API] Update succeeded but could not fetch updated user');
-  return res.status(500).json({ error: 'Update succeeded but could not fetch updated user' });
+  }
 }
-
-console.log(`[USERS API] Successfully updated user: ${updatedUser.name}`);
-return res.status(200).json(updatedUser);
-
 
 // Helper function to deep merge preferences
 function deepMergePreferences(defaults: any, updates: any): any {
