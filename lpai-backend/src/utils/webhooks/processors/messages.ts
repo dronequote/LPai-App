@@ -181,15 +181,16 @@ export class MessagesProcessor extends BaseProcessor {
         // Build message document
         const messageDoc: any = {
           _id: new ObjectId(),
-          ghlMessageId: message.id,
-          conversationId: conversation.value._id.toString(),
+          ghlMessageId: message?.id || new ObjectId().toString(),
+          conversationId: conversation.value._id, // FIXED: Remove .toString() to keep as ObjectId
           ghlConversationId: conversationId,
           locationId,
           contactId: contact._id.toString(),
-          type: message.type,
-          messageType: message.messageType || this.getMessageTypeName(message.type),
+          senderId: contact._id.toString(),
+          type: message?.type || 1,
+          messageType: message?.messageType || 'TYPE_PHONE',
           direction: 'inbound',
-          dateAdded: new Date(message.dateAdded || timestamp || Date.now()),
+          dateAdded: new Date(message?.dateAdded || timestamp || Date.now()),
           read: false,
           createdAt: new Date(),
           processedBy: 'queue',
@@ -443,7 +444,7 @@ export class MessagesProcessor extends BaseProcessor {
     const messageDoc: any = {
       _id: new ObjectId(),
       ghlMessageId: message?.id || new ObjectId().toString(),
-      conversationId: conversation.value._id.toString(),
+      conversationId: conversation.value._id, // FIXED: Remove .toString() to keep as ObjectId
       ghlConversationId: conversationId,
       locationId,
       contactId: contact._id.toString(),

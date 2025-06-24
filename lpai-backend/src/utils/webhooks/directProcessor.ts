@@ -161,20 +161,18 @@ async function processInboundMessageDirect(
       );
 
       // Insert message
-      const messageDoc = {
+      const messageDoc: any = {
         _id: new ObjectId(),
         ghlMessageId: message.id,
-        conversationId: conversation.value._id.toString(),
+        conversationId: conversation._id, // FIXED: Remove .toString() to keep as ObjectId
         ghlConversationId: conversationId,
         locationId,
         contactId: contact._id.toString(),
         type: message.type,
-        messageType: message.messageType || payload.type,
+        messageType: message.messageType || getMessageTypeName(message.type),
         direction: 'inbound',
-        body: message.body || '',
-        contentType: message.contentType,
-        source: message.source || 'webhook',
         dateAdded: new Date(message.dateAdded || Date.now()),
+        source: message.source || 'ghl',
         read: false,
         createdAt: new Date(),
         processedBy: 'direct',
@@ -232,40 +230,50 @@ async function processOutboundMessageDirect(
   if (!contact) return;
 
   // Update conversation (no unread increment for outbound)
-  await db.collection('conversations').updateOne(
-    { 
-      ghlConversationId: conversationId,
-      locationId 
-    },
-    {
-      $set: {
-        lastMessageDate: new Date(),
-        lastMessageBody: message.body?.substring(0, 200) || '',
-        lastMessageDirection: 'outbound',
-        updatedAt: new Date()
-      }
-    }
-  );
-
-  // Quick insert message
-  await db.collection('messages').insertOne({
-    _id: new ObjectId(),
-    ghlMessageId: message.id,
-    conversationId: conversationId,
+const conversationResult = await db.collection('conversations').findOneAndUpdate(
+  { 
     ghlConversationId: conversationId,
-    locationId,
-    contactId: contact._id.toString(),
-    userId: userId || null,
-    type: message.type,
-    direction: 'outbound',
-    body: message.body || '',
-    dateAdded: new Date(message.dateAdded || Date.now()),
-    read: true,
-    createdAt: new Date(),
-    processedBy: 'direct',
-    webhookId
-  });
+    locationId 
+  },
+  {
+    $set: {
+      lastMessageDate: new Date(),
+      lastMessageBody: message.body?.substring(0, 200) || '',
+      lastMessageDirection: 'outbound',
+      lastMessageType: message.messageType || getMessageTypeName(message.type || 1),
+      updatedAt: new Date()
+    }
+  },
+  {
+    returnDocument: 'after'
+  }
+);
+
+if (!conversationResult.value) {
+  console.warn(`[Direct Processor] Conversation not found for outbound message: ${conversationId}`);
+  return;
 }
+
+// Quick insert message with ObjectId conversationId
+await db.collection('messages').insertOne({
+  _id: new ObjectId(),
+  ghlMessageId: message.id || new ObjectId().toString(),
+  conversationId: conversationResult.value._id, // Use ObjectId from conversation
+  ghlConversationId: conversationId,
+  locationId,
+  contactId: contact._id.toString(),
+  userId: userId || null,
+  type: message.type || 1,
+  messageType: message.messageType || getMessageTypeName(message.type || 1),
+  direction: 'outbound',
+  body: message.body || '',
+  dateAdded: new Date(message.dateAdded || Date.now()),
+  source: message.source || 'ghl',
+  read: true,
+  createdAt: new Date(),
+  processedBy: 'direct',
+  webhookId
+});
 
 /**
  * Process payment received directly
