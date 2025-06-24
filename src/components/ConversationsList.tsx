@@ -1,6 +1,6 @@
 // src/components/ConversationsList.tsx
 // Updated Date: 06/24/2025
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
  View,
  Text,
@@ -24,6 +24,7 @@ import { COLORS, FONT, SHADOW } from '../styles/theme';
 import api from '../lib/api';
 // NEW: Import EmailViewerModal
 import EmailViewerModal from './EmailViewerModal';
+import { useRealtimeMessages } from '../hooks/useRealtimeMessages';
 
 type MessageFilter = 'all' | 'sms' | 'email' | 'call';
 
@@ -33,6 +34,23 @@ const messageFilters: { id: MessageFilter; label: string; icon: string }[] = [
  { id: 'email', label: 'Email', icon: 'mail' },
  { id: 'call', label: 'Calls', icon: 'call' },
 ];
+
+// NEW: Message status type
+type MessageStatus = 'sending' | 'sent' | 'delivered' | 'failed';
+
+// NEW: Optimistic message interface
+interface OptimisticMessage {
+  id: string;
+  type: number;
+  direction: 'outbound';
+  dateAdded: string;
+  body: string;
+  subject?: string;
+  read: boolean;
+  status: MessageStatus;
+  tempId: string; // For tracking optimistic updates
+  retryCount?: number;
+}
 
 interface ConversationsListProps {
  contactObjectId: string;  // Changed from contactId
@@ -86,6 +104,75 @@ export default function ConversationsList({
  const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
  const [selectedEmailSubject, setSelectedEmailSubject] = useState<string>('');
 
+ // NEW: Track optimistic messages
+ const optimisticMessagesRef = useRef<Map<string, OptimisticMessage>>(new Map());
+
+ // Real-time messages hook - FIXED VERSION
+ const { isConnected } = useRealtimeMessages({
+   locationId,
+   contactObjectId,
+   conversationId: conversations[0]?._id,
+   onNewMessage: useCallback((newMessage) => {
+     if (__DEV__) {
+       console.log('[ConversationsList] New message received:', {
+         id: newMessage.id,
+         _id: newMessage._id,
+         body: newMessage.body?.substring(0, 50),
+         direction: newMessage.direction
+       });
+     }
+     
+     // Force a refresh approach - more reliable
+     if (newMessage.direction === 'inbound') {
+       // Small delay to ensure the message is saved in DB
+       setTimeout(() => {
+         if (__DEV__) {
+           console.log('[ConversationsList] Reloading conversations for inbound message');
+         }
+         loadConversations();
+       }, 500);
+     } else {
+       // For outbound messages, try to merge
+       setMessages(prevMessages => {
+         // Simple duplicate check
+         const messageId = newMessage.id || newMessage._id;
+         const exists = prevMessages.some(msg => 
+           (msg.id === messageId) || (msg._id === messageId)
+         );
+         
+         if (exists) {
+           if (__DEV__) {
+             console.log('[ConversationsList] Message already exists, skipping');
+           }
+           return prevMessages;
+         }
+         
+         if (__DEV__) {
+           console.log('[ConversationsList] Adding new message to list');
+         }
+         
+         // Remove any optimistic message with the same body
+         const filtered = prevMessages.filter(msg => {
+           if (msg.tempId && msg.body === newMessage.body) {
+             optimisticMessagesRef.current.delete(msg.tempId);
+             return false;
+           }
+           return true;
+         });
+         
+         return [newMessage, ...filtered];
+       });
+     }
+   }, []), // Empty deps array since loadConversations is defined below
+   onConnectionChange: useCallback((connected) => {
+     if (__DEV__) {
+       console.log('[ConversationsList] Connection status changed:', connected);
+     }
+   }, []),
+   enabled: true,
+   pollInterval: 2000 // Poll every 2 seconds
+ });
+
  // NEW: Helper function to clear all message caches
  const clearAllMessageCaches = async () => {
    try {
@@ -136,7 +223,8 @@ export default function ConversationsList({
            locationId,
            {
              limit: 20,
-             offset: isLoadMore ? offset : 0
+             offset: isLoadMore ? offset : 0,
+             cache: false // Force fresh fetch
            }
          );
          
@@ -153,7 +241,10 @@ export default function ConversationsList({
            setMessages(prevMessages => [...prevMessages, ...newMessages]);
            setOffset(prevOffset => prevOffset + newMessages.length);
          } else {
-           setMessages(newMessages);
+           // NEW: Merge with optimistic messages that haven't been replaced
+           const optimisticMessages = Array.from(optimisticMessagesRef.current.values());
+           const mergedMessages = [...optimisticMessages, ...newMessages];
+           setMessages(mergedMessages);
            setOffset(newMessages.length);
          }
          
@@ -301,6 +392,9 @@ export default function ConversationsList({
      await conversationService.clearConversationCache(locationId);
      await clearAllMessageCaches();
      
+     // Clear optimistic messages
+     optimisticMessagesRef.current.clear();
+     
      // Now load fresh conversations
      const convs = await conversationService.list(locationId, {
        contactObjectId: contactObjectId  // Changed from contactId
@@ -327,7 +421,7 @@ export default function ConversationsList({
          const messagesResponse = await conversationService.getMessages(
            convs[0]._id,
            locationId,
-           { limit: 20, offset: 0 }
+           { limit: 20, offset: 0, cache: false }
          );
          
          setMessages(messagesResponse.messages || []);
@@ -367,11 +461,104 @@ export default function ConversationsList({
    loadConversations();
  }, [contactObjectId, locationId]);  // Changed from contactId
 
- // UPDATED: handleSendMessage with proper cache clearing
+ // NEW: Retry failed message
+ const retryMessage = async (tempId: string) => {
+   const optimisticMessage = optimisticMessagesRef.current.get(tempId);
+   if (!optimisticMessage) return;
+
+   // Update status to sending
+   optimisticMessage.status = 'sending';
+   optimisticMessage.retryCount = (optimisticMessage.retryCount || 0) + 1;
+   setMessages(prevMessages => 
+     prevMessages.map(msg => 
+       msg.tempId === tempId ? { ...msg, status: 'sending' } : msg
+     )
+   );
+
+   try {
+     if (optimisticMessage.type === 1) {
+       // Retry SMS
+       const fromNumber = user?.preferences?.communication?.defaultPhoneNumber;
+       const formattedFromNumber = fromNumber?.startsWith('+') ? fromNumber : `+1${fromNumber}`;
+       const formattedToNumber = contactPhone.startsWith('+') ? contactPhone : `+1${contactPhone}`;
+
+       await smsService.send({
+         contactObjectId: contactObjectId,
+         locationId: locationId,
+         customMessage: optimisticMessage.body,
+         toNumber: formattedToNumber,
+         userId: userId,
+         fromNumber: formattedFromNumber,
+         templateKey: 'custom',
+       });
+     } else {
+       // Retry Email
+       await emailService.send({
+         contactObjectId: contactObjectId,
+         locationId: locationId,
+         subject: optimisticMessage.subject || 'Message from ' + (userName || 'Team'),
+         plainTextContent: optimisticMessage.body,
+         userId: userId,
+       });
+     }
+
+     // Success - update status
+     optimisticMessage.status = 'sent';
+     setMessages(prevMessages => 
+       prevMessages.map(msg => 
+         msg.tempId === tempId ? { ...msg, status: 'sent' } : msg
+       )
+     );
+
+     // Remove from optimistic after delay
+     setTimeout(() => {
+       optimisticMessagesRef.current.delete(tempId);
+       loadConversations();
+     }, 2000);
+
+   } catch (error) {
+     // Failed again
+     optimisticMessage.status = 'failed';
+     setMessages(prevMessages => 
+       prevMessages.map(msg => 
+         msg.tempId === tempId ? { ...msg, status: 'failed' } : msg
+       )
+     );
+   }
+ };
+
+ // UPDATED: handleSendMessage with optimistic updates
  const handleSendMessage = async () => {
    if (!composeText.trim() || !userId || !locationId) return;
    
    setSendingMessage(true);
+   
+   // Create optimistic message
+   const tempId = `temp_${Date.now()}`;
+   const optimisticMessage: OptimisticMessage = {
+     id: tempId,
+     tempId,
+     type: composeMode === 'sms' ? 1 : 3,
+     direction: 'outbound',
+     dateAdded: new Date().toISOString(),
+     body: composeText,
+     subject: composeMode === 'email' ? (emailSubject || 'Message from ' + (userName || 'Team')) : undefined,
+     read: true,
+     status: 'sending',
+   };
+
+   // Add to optimistic messages map
+   optimisticMessagesRef.current.set(tempId, optimisticMessage);
+
+   // Add to UI immediately
+   setMessages(prevMessages => [optimisticMessage, ...prevMessages]);
+   
+   // Clear inputs immediately for better UX
+   const savedComposeText = composeText;
+   const savedEmailSubject = emailSubject;
+   setComposeText('');
+   setEmailSubject('');
+
    try {
      if (composeMode === 'sms') {
        // Check if SMS is configured by looking at user preferences directly
@@ -384,6 +571,15 @@ export default function ConversationsList({
        }
        
        if (!smsNumberId) {
+         // Restore text and mark as failed
+         setComposeText(savedComposeText);
+         optimisticMessage.status = 'failed';
+         setMessages(prevMessages => 
+           prevMessages.map(msg => 
+             msg.tempId === tempId ? { ...msg, status: 'failed' } : msg
+           )
+         );
+         
          Alert.alert(
            'SMS Setup Required',
            'Please select your SMS number in Settings before sending messages.',
@@ -407,6 +603,13 @@ export default function ConversationsList({
        const fromNumber = user?.preferences?.communication?.defaultPhoneNumber;
        
        if (!fromNumber) {
+         setComposeText(savedComposeText);
+         optimisticMessage.status = 'failed';
+         setMessages(prevMessages => 
+           prevMessages.map(msg => 
+             msg.tempId === tempId ? { ...msg, status: 'failed' } : msg
+           )
+         );
          Alert.alert('Error', 'No phone number configured. Please update your settings.');
          setSendingMessage(false);
          return;
@@ -423,19 +626,28 @@ export default function ConversationsList({
          console.log('ContactObjectId:', contactObjectId);  // Changed from ContactId
          console.log('LocationId:', locationId);
          console.log('UserId:', userId);
-         console.log('Message:', composeText);
+         console.log('Message:', savedComposeText);
        }
        
        try {
          await smsService.send({
            contactObjectId: contactObjectId,  // Changed from contactId
            locationId: locationId,
-           customMessage: composeText,
+           customMessage: savedComposeText,
            toNumber: formattedToNumber,
            userId: userId,
            fromNumber: formattedFromNumber,
            templateKey: 'custom',
          });
+
+         // Success - update status to sent
+         optimisticMessage.status = 'sent';
+         setMessages(prevMessages => 
+           prevMessages.map(msg => 
+             msg.tempId === tempId ? { ...msg, status: 'sent' } : msg
+           )
+         );
+
        } catch (smsError: any) {
          // Check if it's the known issue where SMS sends but returns 500
          if (smsError.response?.status === 500 && 
@@ -443,42 +655,25 @@ export default function ConversationsList({
            if (__DEV__) {
              console.log('SMS sent successfully despite 500 error');
            }
-           // Continue as if successful
+           // Mark as sent
+           optimisticMessage.status = 'sent';
+           setMessages(prevMessages => 
+             prevMessages.map(msg => 
+               msg.tempId === tempId ? { ...msg, status: 'sent' } : msg
+             )
+           );
          } else {
-           // Re-throw for real errors
+           // Real error - mark as failed
            throw smsError;
          }
        }
 
-       // Add the message to local state
-       const newMessage = {
-         id: Date.now().toString(),
-         type: 1, // SMS type
-         direction: 'outbound',
-         dateAdded: new Date().toISOString(),
-         body: composeText,
-         read: true,
-       };
-       setMessages([newMessage, ...messages]);
-
-       setComposeText('');
-       Alert.alert('Success', 'SMS sent successfully');
-
-       // CRITICAL: Clear all message caches
-       await clearAllMessageCaches();
-       
-       // Clear conversation cache
-       await conversationService.clearConversationCache(locationId);
-
-       // Reload conversations after a delay to catch the webhook update
+       // Clear caches and reload after delay
        setTimeout(async () => {
-         try {
-           // Clear caches again before reloading
-           await clearAllMessageCaches();
-           await loadConversations();
-         } catch (e) {
-           console.error('Error reloading after SMS send:', e);
-         }
+         await clearAllMessageCaches();
+         await conversationService.clearConversationCache(locationId);
+         optimisticMessagesRef.current.delete(tempId);
+         await loadConversations();
        }, 2000);
        
      } else {
@@ -486,37 +681,25 @@ export default function ConversationsList({
        await emailService.send({
          contactObjectId: contactObjectId,  // Changed from contactId
          locationId: locationId,
-         subject: emailSubject || 'Message from ' + (userName || 'Team'),
-         plainTextContent: composeText,
+         subject: savedEmailSubject || 'Message from ' + (userName || 'Team'),
+         plainTextContent: savedComposeText,
          userId: userId,
        });
        
-       // Add the email to local state immediately
-       const newMessage = {
-         id: Date.now().toString(),
-         type: 3, // Email type
-         direction: 'outbound',
-         dateAdded: new Date().toISOString(),
-         subject: emailSubject || 'Message from ' + (userName || 'Team'),
-         body: composeText,
-         read: true,
-       };
-       setMessages([newMessage, ...messages]);
-       
-       setComposeText('');
-       setEmailSubject('');
-       Alert.alert('Success', 'Email sent successfully');
+       // Success - update status
+       optimisticMessage.status = 'sent';
+       setMessages(prevMessages => 
+         prevMessages.map(msg => 
+           msg.tempId === tempId ? { ...msg, status: 'sent' } : msg
+         )
+       );
        
        // Clear caches and reload
-       await clearAllMessageCaches();
-       await conversationService.clearConversationCache(locationId);
-       
        setTimeout(async () => {
-         try {
-           await loadConversations();
-         } catch (e) {
-           console.error('Error reloading after email send:', e);
-         }
+         await clearAllMessageCaches();
+         await conversationService.clearConversationCache(locationId);
+         optimisticMessagesRef.current.delete(tempId);
+         await loadConversations();
        }, 2000);
      }
    } catch (error: any) {
@@ -524,6 +707,14 @@ export default function ConversationsList({
        console.error('Send Error:', error);
        console.error('Error details:', error.response?.data);
      }
+     
+     // Mark message as failed
+     optimisticMessage.status = 'failed';
+     setMessages(prevMessages => 
+       prevMessages.map(msg => 
+         msg.tempId === tempId ? { ...msg, status: 'failed' } : msg
+       )
+     );
      
      // Handle specific SMS errors
      if (error.message.includes('No SMS number configured')) {
@@ -564,7 +755,18 @@ export default function ConversationsList({
          'The selected phone number is not configured in GoHighLevel. Please contact your administrator.'
        );
      } else {
-       Alert.alert('Error', `Failed to send ${composeMode}: ${error.message}`);
+       // Generic error - show retry option
+       Alert.alert(
+         'Message Failed',
+         `Failed to send ${composeMode}. Would you like to retry?`,
+         [
+           { text: 'Cancel', style: 'cancel' },
+           { 
+             text: 'Retry', 
+             onPress: () => retryMessage(tempId)
+           }
+         ]
+       );
      }
    } finally {
      setSendingMessage(false);
@@ -596,6 +798,10 @@ export default function ConversationsList({
    const isActivity = item.type >= 25 || item.messageType?.startsWith('TYPE_ACTIVITY');
    const isEmail = item.type === 3 || item.messageType === 'TYPE_EMAIL';
    const isSMS = item.type === 1 || item.messageType === 'TYPE_SMS' || item.messageType === 'TYPE_PHONE';
+   
+   // NEW: Check if this is an optimistic message
+   const isOptimistic = !!item.tempId;
+   const messageStatus = item.status || 'delivered';
    
    // Render activity
    if (isActivity) {
@@ -688,6 +894,18 @@ export default function ConversationsList({
              }
            </Text>
            <Text style={styles.messageTime}>{messageTime}</Text>
+           
+           {/* NEW: Show status for optimistic emails */}
+           {isOptimistic && (
+             <View style={styles.messageStatusContainer}>
+               {messageStatus === 'sending' && <ActivityIndicator size="small" color={COLORS.accent} />}
+               {messageStatus === 'failed' && (
+                 <TouchableOpacity onPress={() => retryMessage(item.tempId)}>
+                   <Text style={styles.retryText}>Failed - Tap to retry</Text>
+                 </TouchableOpacity>
+               )}
+             </View>
+           )}
          </View>
        </TouchableOpacity>
      );
@@ -696,13 +914,49 @@ export default function ConversationsList({
    // Render SMS/regular message
    return (
      <View style={[styles.messageBubbleContainer, isInbound ? styles.inboundContainer : styles.outboundContainer]}>
-       <View style={[styles.messageBubble, isInbound ? styles.inboundBubble : styles.outboundBubble]}>
+       <View style={[
+         styles.messageBubble, 
+         isInbound ? styles.inboundBubble : styles.outboundBubble,
+         isOptimistic && messageStatus === 'failed' && styles.failedBubble
+       ]}>
          <Text style={[styles.messageText, !isInbound && styles.outboundText]}>
            {item.body || item.preview || 'No content'}
          </Text>
-         <Text style={[styles.messageTime, !isInbound && styles.outboundText]}>
-           {messageTime}
-         </Text>
+         
+         <View style={styles.messageFooter}>
+           <Text style={[styles.messageTime, !isInbound && styles.outboundText]}>
+             {messageTime}
+           </Text>
+           
+           {/* NEW: Status indicators for outbound messages */}
+           {!isInbound && isOptimistic && (
+             <View style={styles.messageStatusIcon}>
+               {messageStatus === 'sending' && (
+                 <ActivityIndicator size="small" color={isInbound ? COLORS.textGray : COLORS.white} />
+               )}
+               {messageStatus === 'sent' && (
+                 <Ionicons name="checkmark" size={16} color={isInbound ? COLORS.textGray : COLORS.white} />
+               )}
+               {messageStatus === 'delivered' && (
+                 <Ionicons name="checkmark-done" size={16} color={isInbound ? COLORS.textGray : COLORS.white} />
+               )}
+               {messageStatus === 'failed' && (
+                 <Ionicons name="alert-circle" size={16} color={COLORS.error} />
+               )}
+             </View>
+           )}
+         </View>
+         
+         {/* NEW: Retry button for failed messages */}
+         {isOptimistic && messageStatus === 'failed' && (
+           <TouchableOpacity 
+             style={styles.retryButton}
+             onPress={() => retryMessage(item.tempId)}
+           >
+             <Ionicons name="refresh" size={16} color={COLORS.error} />
+             <Text style={styles.retryButtonText}>Retry</Text>
+           </TouchableOpacity>
+         )}
        </View>
      </View>
    );
@@ -753,11 +1007,19 @@ export default function ConversationsList({
        ))}
      </View>
      
+     {/* Connection indicator */}
+     {isConnected && (
+       <View style={styles.connectionIndicator}>
+         <View style={styles.connectedDot} />
+         <Text style={styles.connectionText}>Live</Text>
+       </View>
+     )}
+     
      {/* Messages list */}
      <FlatList
        data={filteredMessages}
        renderItem={renderMessage}
-       keyExtractor={(item) => item.id}
+       keyExtractor={(item) => item.id || item.tempId || `${item._id}-${item.dateAdded}`}
        contentContainerStyle={styles.messagesList}
        inverted
        showsVerticalScrollIndicator={false}
@@ -923,6 +1185,11 @@ const styles = StyleSheet.create({
    backgroundColor: COLORS.accent,
    borderBottomRightRadius: 4,
  },
+ failedBubble: {
+   backgroundColor: COLORS.errorLight,
+   borderWidth: 1,
+   borderColor: COLORS.error,
+ },
  messageSubject: {
    fontSize: 14,
    fontFamily: FONT.semiBold,
@@ -938,10 +1205,43 @@ const styles = StyleSheet.create({
  outboundText: {
    color: COLORS.white,
  },
+ messageFooter: {
+   flexDirection: 'row',
+   alignItems: 'center',
+   justifyContent: 'space-between',
+ },
  messageTime: {
    fontSize: 12,
    fontFamily: FONT.regular,
    color: COLORS.textGray,
+ },
+ messageStatusIcon: {
+   marginLeft: 8,
+ },
+ messageStatusContainer: {
+   marginTop: 4,
+ },
+ retryText: {
+   fontSize: 12,
+   fontFamily: FONT.medium,
+   color: COLORS.error,
+ },
+ retryButton: {
+   flexDirection: 'row',
+   alignItems: 'center',
+   marginTop: 8,
+   paddingVertical: 4,
+   paddingHorizontal: 8,
+   backgroundColor: COLORS.white,
+   borderRadius: 12,
+   borderWidth: 1,
+   borderColor: COLORS.error,
+ },
+ retryButtonText: {
+   fontSize: 12,
+   fontFamily: FONT.medium,
+   color: COLORS.error,
+   marginLeft: 4,
  },
  composeContainer: {
    backgroundColor: COLORS.white,
@@ -1043,6 +1343,30 @@ const styles = StyleSheet.create({
    fontStyle: 'italic',
    flex: 1,
  },
+ connectionIndicator: {
+   flexDirection: 'row',
+   alignItems: 'center',
+   paddingHorizontal: 8,
+   paddingVertical: 4,
+   backgroundColor: COLORS.success + '20',
+   borderRadius: 12,
+   position: 'absolute',
+   top: 10,
+   right: 16,
+   zIndex: 100,
+ },
+ connectedDot: {
+   width: 6,
+   height: 6,
+   borderRadius: 3,
+   backgroundColor: COLORS.success,
+   marginRight: 6,
+ },
+ connectionText: {
+   fontSize: 11,
+   fontFamily: FONT.medium,
+   color: COLORS.success,
+ },
  activityTime: {
    fontSize: 12,
    fontFamily: FONT.regular,
@@ -1094,4 +1418,8 @@ const styles = StyleSheet.create({
    color: COLORS.textGray,
    marginLeft: 8,
  },
+ // NEW: Error colors
+ error: '#DC2626',
+ errorLight: '#FEE2E2',
+ success: '#10B981',
 });

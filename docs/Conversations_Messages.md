@@ -1,16 +1,73 @@
-# 📨 Conversations & Messages System - Complete Guide
+# 📨 LPai Messaging System - Complete Implementation Guide
 
-## 🎯 Why Two Collections?
+## 🎯 Current Status Summary
 
-Think of it like **WhatsApp or iMessage**:
-- **Conversations** = The chat thread/room itself (like your chat with "Mom")
-- **Messages** = Individual texts within that chat
+### ✅ What's Working
+- **SMS (Type 1)**: Fully functional with real-time updates
+- **Real-time Updates**: Polling every 2 seconds with cache clearing
+- **Optimistic UI**: Messages appear instantly when sent
+- **Retry Logic**: Failed messages can be retried
+- **Message Filtering**: Tabs for All/SMS/Email/Calls
+- **Pagination**: Load more messages on scroll
 
-This separation allows for:
-- Fast loading of conversation lists (without loading all messages)
-- Unread counts per conversation
-- Conversation-level features (starred, archived, muted)
-- Efficient pagination of messages
+### ⏳ What Needs Work
+- **Email (Type 3)**: UI exists but needs content fetching implementation
+- **Calls (Type 2)**: Tab exists but no call log display
+- **Activities (Types 25-31)**: Not displayed properly yet
+- **Social Messages**: Facebook, Live Chat not implemented
+
+## 📊 Complete Message Type Reference
+
+Based on actual MongoDB data + conversations analysis:
+
+| Type | messageType | Description | Status |
+|------|-------------|-------------|---------|
+| 1 | TYPE_CALL | Voice calls/voicemail | ⏳ Needs UI |
+| 2 | TYPE_SMS | Text messages | ✅ Working |
+| 3 | TYPE_EMAIL | Regular emails | ⏳ Partial |
+| 4 | TYPE_WHATSAPP | WhatsApp messages | 🔍 Need discovery |
+| 5 | TYPE_GMB | Google My Business | 🔍 Need discovery |
+| 6 | TYPE_FB | Facebook (possibly old) | 🔍 Need discovery |
+| 7 | TYPE_IG | Instagram DMs | 🔍 Need discovery |
+| 8 | Unknown | - | 🔍 Need discovery |
+| 9 | TYPE_CAMPAIGN_EMAIL | Marketing emails | ⏳ No UI |
+| 10 | Unknown | - | 🔍 Need discovery |
+| 11 | TYPE_FACEBOOK | Facebook Messenger | ⏳ No UI |
+| 12-20 | Unknown | - | 🔍 Need discovery |
+| 21 | TYPE_CUSTOM_EMAIL | Custom email templates | ⏳ No UI |
+| 22-24 | Unknown | - | 🔍 Need discovery |
+| 25 | TYPE_ACTIVITY_CONTACT | Contact activities | ⏳ No UI |
+| 26 | TYPE_ACTIVITY_INVOICE | Invoice activities | ⏳ No UI |
+| 27 | TYPE_ACTIVITY_PAYMENT | Payment activities | ⏳ No UI |
+| 28 | TYPE_ACTIVITY_OPPORTUNITY | Project updates | ⏳ No UI |
+| 29 | TYPE_LIVE_CHAT | Website live chat | ⏳ No UI |
+| 30 | TYPE_LIVE_CHAT_INFO | Chat system messages | ⏳ No UI |
+| 31 | TYPE_ACTIVITY_APPOINTMENT | Appointment activities | ⏳ No UI |
+| 32-40+ | Unknown | Possibly more activities | 🔍 Need discovery |
+| N/A | TYPE_NO_SHOW | No-show appointments | 🆕 Found in convos |
+| N/A | TYPE_PHONE | Generic phone conversation | 🆕 Found in convos |
+
+**Legend:**
+- ✅ Working - Fully implemented
+- ⏳ Partial/No UI - Have data but needs implementation
+- 🔍 Need discovery - Unknown type, needs investigation
+- 🆕 Found in convos - Discovered in conversations collection
+
+**New Discoveries from Conversations:**
+1. **TYPE_NO_SHOW** - Appears in conversations when appointments are missed
+   - Shows empty `lastMessageBody`
+   - Used for tracking no-show appointments
+   
+2. **TYPE_PHONE** - Generic conversation type for all phone-based communications
+   - Most conversations have this as their `type`
+   - Individual messages within have specific types (SMS, CALL, etc.)
+
+**Notes from research:**
+- GHL doesn't publicly document numeric type codes
+- API uses string constants (TYPE_SMS, TYPE_EMAIL, etc.)
+- Types 4-7 likely match their string names based on integration docs
+- Types 8, 10, 12-20, 22-24, 32+ are completely unknown
+- Discovery system needed to identify these as they appear
 
 ## 🏗️ Architecture Overview
 
@@ -32,406 +89,324 @@ GoHighLevel (CRM)                    LPai App (MongoDB)
 └─────────────────┘                 └─────────────────────┘
 ```
 
-## 📊 Database Schema
+## 📋 Implementation Plan
+
+### Phase 1: Complete Core Messaging (Current Sprint)
+
+#### 1.1 Email Implementation ⏳
+- [ ] Fix email content fetching with `emailMessageId`
+- [ ] Handle `needsContentFetch: true` flag
+- [ ] Display HTML emails properly in viewer
+- [ ] Implement email sending through UI
+- [ ] Handle campaign emails (type 9) and custom emails (type 21)
+
+```javascript
+// Email types to handle:
+// Type 3: Regular emails with emailMessageId
+// Type 9: Campaign emails with meta.email.messageIds[0]
+// Type 21: Custom emails with meta.email.messageIds[0]
+```
+
+#### 1.2 Call Log Display ⏳
+- [ ] Display call logs (type 1) in conversation
+- [ ] Show voicemail indicator when `status: "voicemail"`
+- [ ] Add call duration if available
+- [ ] Implement "Call Back" button
+- [ ] Show missed/incoming/outgoing indicators
+
+#### 1.3 Activity Messages ⏳
+- [ ] Create activity message UI (gray background, italic text)
+- [ ] Group consecutive activities
+- [ ] Add appropriate icons for each activity type
+- [ ] Consider filtering activities by default
+
+### Phase 2: Social & Live Chat
+
+#### 2.1 Facebook Messages ⏳
+- [ ] Handle type 11 (Facebook Messenger)
+- [ ] Show Facebook icon/branding
+- [ ] Link to Facebook profile if available
+
+#### 2.2 Live Chat ⏳
+- [ ] Handle type 29 (Live Chat messages)
+- [ ] Handle type 30 (Chat system messages)
+- [ ] Show chat widget indicator
+- [ ] Display chat session start/end
+
+### Phase 3: Real-time Improvements
+
+#### 3.1 Current Real-time (Polling) ✅
+- [x] Polls every 2 seconds
+- [x] Clears AsyncStorage cache
+- [x] Direct API calls bypass service cache
+- [x] Shows connection indicator
+
+#### 3.2 Future Real-time (SSE/WebSocket) ⏳
+- [ ] Implement SSE endpoint for push updates
+- [ ] Add MongoDB change streams
+- [ ] Create WebSocket connection for bidirectional
+- [ ] Add typing indicators
+- [ ] Show read receipts
+
+### Phase 4: Backend Field Migration
+
+#### 4.1 ContactObjectId Migration ⏳
+Current issue: Using `contactId` (string) instead of `contactObjectId` (ObjectId)
+
+**Backend files to update:**
+- [ ] `/api/conversations/index.ts`
+- [ ] `/api/conversations/[conversationId]/messages.ts`
+- [ ] `/api/contacts/[contactId]/conversations.ts`
+- [ ] `/api/sms/send.ts`
+- [ ] `/api/emails/send.ts`
+- [ ] `/utils/webhooks/processors/messages.ts` ⚡ CRITICAL
+- [ ] `/utils/sync/syncConversations.ts`
+- [ ] `/utils/sync/syncMessages.ts`
+
+**Frontend files to update:**
+- [x] `src/services/conversationService.ts` ✅
+- [ ] `src/components/ConversationsList.tsx`
+- [ ] `src/screens/ContactDetailsScreen.tsx`
+- [ ] Update TypeScript types
+
+### Phase 5: Message Type Discovery System
+
+#### 5.1 Backend Discovery Mechanism
+Create a system to capture and analyze unknown message types:
+
+- [ ] Add `unknown_message_types` collection in MongoDB
+- [ ] Update webhook processor to log unknown types:
+  - When type > 31 or not in known list
+  - Store full message payload
+  - Include timestamp and locationId
+  - Flag for manual review
+- [ ] Create discovery endpoint `/api/admin/message-types`
+  - List all unknown types found
+  - Group by type number
+  - Show sample payloads
+  - Allow marking as "identified"
+
+#### 5.2 Frontend Discovery UI
+Add admin tools to review unknown types:
+
+- [ ] Admin section in app (if user is admin)
+- [ ] Show unknown message types dashboard
+- [ ] Display sample messages for each type
+- [ ] Allow naming/documenting new types
+- [ ] Export discoveries as JSON
+
+#### 5.3 Automated Notifications
+Alert when new types discovered:
+
+- [ ] Email notification to admin when new type found
+- [ ] Daily summary of unknown types
+- [ ] Webhook to Slack/Discord for real-time alerts
+- [ ] Include message count and first occurrence
+
+#### 5.4 Discovery Implementation Steps
+
+1. **Modify webhook processor**:
+   ```
+   - Check if message.type is in KNOWN_TYPES array
+   - If unknown, insert into unknown_message_types collection
+   - Include full webhook payload for analysis
+   - Continue processing normally (don't block)
+   ```
+
+2. **Create monitoring dashboard**:
+   ```
+   - Query unknown_message_types collection
+   - Group by type number
+   - Show messageType string if available
+   - Display sample message content
+   - Track frequency and patterns
+   ```
+
+3. **Build type mapping**:
+   ```
+   - As types are identified, update MESSAGE_TYPES constant
+   - Document purpose and structure
+   - Add to main implementation guide
+   - Update UI to handle new types
+   ```
+
+### Phase 6: Additional Features
+
+- [ ] Message search functionality
+- [ ] Conversation archiving
+- [ ] Message reactions
+- [ ] File attachments
+- [ ] Voice messages
+- [ ] Message templates
+- [ ] Bulk messaging
+- [ ] Message scheduling
+
+## 🔍 Key Findings from Data Analysis
+
+### Conversation Types vs Message Types
+From analyzing the conversations collection, we discovered:
+
+1. **Conversation `type` is always generic**:
+   - `TYPE_PHONE` - Used for ALL conversations (SMS, calls, emails, everything)
+   - This is different from individual message types
+
+2. **`lastMessageType` reveals the actual message type**:
+   - `TYPE_SMS` - Text messages
+   - `TYPE_EMAIL` - Email messages
+   - `TYPE_CAMPAIGN_EMAIL` - Marketing campaigns
+   - `TYPE_LIVE_CHAT_INFO_MESSAGE` - Chat system messages
+   - `TYPE_FACEBOOK` - Facebook messages
+   - `TYPE_NO_SHOW` - Appointment no-shows (special case)
+
+3. **Field Naming Inconsistencies**:
+   - Some conversations have `contactObjectId` (correct)
+   - Some only have GHL IDs stored as strings
+   - Mix of `lastMessageDate` and `lastMessageAt`
+   - Some have `ghlContactId`, others don't
+
+4. **Email Content in Conversations**:
+   - Email preview includes tracking pixels and long URLs
+   - Subject line often included in body preview
+   - Marketing emails show template structure
+
+5. **Special Cases**:
+   - TYPE_NO_SHOW appears with empty `lastMessageBody`
+   - Live chat conversations show system messages
+   - Some conversations created by sync vs webhook
+
+### Database Inconsistencies Found
+- Mixed use of `contactId` vs `contactObjectId`
+- Some conversations missing `ghlContactId`
+- Inconsistent timestamp field names
+- Some using old schema, some using new
+
+### Real-time Hook (`useRealtimeMessages.ts`)
+```javascript
+// Currently implemented:
+- Polls every 2 seconds
+- Clears all caches before polling
+- Returns isConnected status
+- Handles new messages callback
+```
+
+### ConversationsList Component
+```javascript
+// Currently implemented:
+- Message filtering (All/SMS/Email/Calls tabs)
+- Optimistic UI updates
+- Retry failed messages
+- Email viewer modal
+- Pagination support
+- Real-time integration
+```
+
+## 🐛 Known Issues
+
+1. **Email Content Not Loading**
+   - `needsContentFetch: true` messages show placeholder
+   - Need to implement `/api/messages/email/[emailMessageId]` call
+
+2. **Activities Showing as Regular Messages**
+   - Types 25-31 need different UI treatment
+   - Should be styled as system messages
+
+3. **No Call Log UI**
+   - Type 1 messages just show empty body
+   - Need to display call information properly
+
+4. **ContactId vs ContactObjectId**
+   - Backend uses mixed field names
+   - Causes query failures in some cases
+
+## 📝 Database Schema (Current)
 
 ### conversations Collection
 ```javascript
 {
-  _id: ObjectId("6856519a479e5bdcc186db5a"),        // MongoDB ID
-  ghlConversationId: "sSEd66uCPfGkM2nqfEjg",        // GHL's ID
-  locationId: "5OuaTrizW5wkZMI1xtvX",              // Tenant ID
-  
-  // Contact reference (NEW NAMING)
-  contactObjectId: ObjectId("6844d07b257a88ebfbd9be9b"), // MongoDB contact._id
-  ghlContactId: "Z66RBjrLBWWqmKP43eBR",            // GHL contact ID
-  
-  // Conversation metadata
-  type: "TYPE_PHONE",                                // TYPE_PHONE, TYPE_EMAIL, etc.
-  inbox: true,                                       // Is in inbox
-  starred: false,                                    // User starred it
-  unreadCount: 0,                                    // Number of unread messages
-  
-  // Last message preview (for list view)
-  lastMessageDate: ISODate("2025-06-24T03:55:21Z"),
-  lastMessageBody: "Test sms",                      // First 200 chars
-  lastMessageDirection: "outbound",                 // inbound/outbound
-  lastMessageType: "TYPE_SMS",
-  
-  // Contact info (denormalized for performance)
-  contactName: "Michael Dean",
-  contactEmail: "michael@example.com",
-  contactPhone: "+17603304890"
+  _id: ObjectId("..."),
+  ghlConversationId: "string",
+  locationId: "string",
+  contactObjectId: ObjectId("..."), // Should be this
+  contactId: "string",              // Sometimes this (WRONG)
+  type: "TYPE_PHONE",
+  unreadCount: 0,
+  lastMessageDate: Date,
+  lastMessageBody: "string",
+  // ... etc
 }
 ```
 
 ### messages Collection
 ```javascript
 {
-  _id: ObjectId("685a237ca3220ee53c1e3b0d"),
-  conversationId: ObjectId("6856519a479e5bdcc186db5a"), // MUST BE OBJECTID!
-  ghlMessageId: "3xHH82Tr2Uy68AP8PLTU",
-  ghlConversationId: "sSEd66uCPfGkM2nqfEjg",
-  locationId: "5OuaTrizW5wkZMI1xtvX",
-  
-  // Contact reference (NEW NAMING)
-  contactObjectId: ObjectId("6844d07b257a88ebfbd9be9b"), // MongoDB contact._id
-  ghlContactId: "Z66RBjrLBWWqmKP43eBR",            // GHL contact ID
-  
-  // Message details
-  type: 1,                                          // 1=SMS, 3=Email, 2=Call, 25+=Activities
-  messageType: "TYPE_SMS",                          // String version
-  direction: "outbound",                            // inbound/outbound
-  body: "Test sms",                                 // Message content
-  status: "sent",                                   // sent/delivered/failed
-  
-  // Metadata
-  dateAdded: ISODate("2025-06-24T03:10:05Z"),
-  read: true,
-  source: "app",                                    // app/ghl/webhook
-  sentBy: "68564ce27eb5e1b3a7f2e149",              // User who sent it
-  
-  // Email specific (type 3)
-  subject: "Your quote is ready",
-  emailMessageId: "abc123",                         // For fetching full content
-  needsContentFetch: true,                          // Email body not loaded yet
-  
-  // SMS specific (type 1)
-  fromNumber: "+17603304890",
-  toNumber: "+19097024889"
+  _id: ObjectId("..."),
+  conversationId: ObjectId("..."),  // MUST be ObjectId
+  ghlMessageId: "string",
+  type: 1,                          // Numeric type
+  messageType: "TYPE_SMS",          // String type
+  body: "content",
+  emailMessageId: "string",         // For email content fetch
+  needsContentFetch: true,          // Email not loaded
+  // ... etc
 }
 ```
 
-## 🔑 Key Field Naming Convention
+## 🚀 Quick Wins
 
-To avoid confusion between MongoDB IDs and GHL IDs:
+1. **Today**
+   - Fix email content loading
+   - Add call log display
+   - Style activity messages differently
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `contactObjectId` | ObjectId | MongoDB contact._id reference |
-| `ghlContactId` | String | GoHighLevel's contact ID |
-| `conversationId` | ObjectId | MongoDB conversation._id reference |
-| `ghlConversationId` | String | GoHighLevel's conversation ID |
+2. **This Week**
+   - Complete email sending
+   - Add social message icons
+   - Implement message search
 
-**Why this matters:**
-- `contactObjectId` as ObjectId = Fast queries and joins
-- Clear distinction between our IDs and GHL's IDs
-- No more confusion about what "contactId" means
+3. **Next Week**
+   - Start SSE implementation
+   - Add typing indicators
+   - Implement read receipts
 
-## 🔢 Message Types Reference
+## 📊 Testing Checklist
+
+- [ ] Send/receive SMS ✅
+- [ ] Send/receive emails
+- [ ] View call logs
+- [ ] See activity messages
+- [ ] Real-time updates work ✅
+- [ ] Pagination works ✅
+- [ ] Search messages
+- [ ] Filter by type ✅
+- [ ] Retry failed messages ✅
+- [ ] Mark as read
+- [ ] Unread counts update
+
+## 🔍 Debugging Commands
 
 ```javascript
-const MESSAGE_TYPES = {
-  1: "SMS",
-  2: "CALL", 
-  3: "EMAIL",
-  4: "WHATSAPP",
-  5: "GMB",           // Google My Business
-  6: "FB",            // Facebook
-  7: "IG",            // Instagram
-  24: "LIVE_CHAT",
-  25: "ACTIVITY_CONTACT",      // Contact was created/updated
-  26: "ACTIVITY_INVOICE",      // Invoice activity
-  27: "ACTIVITY_OPPORTUNITY",  // Project/opportunity activity
-  28: "ACTIVITY_APPOINTMENT"   // Appointment activity
-};
-```
+// Find all message types in system
+db.messages.aggregate([
+  { $group: { _id: "$type", count: { $sum: 1 } }},
+  { $sort: { _id: 1 }}
+])
 
-## 🔄 Data Flow
-
-### 1. **Sending SMS from App**
-```
-User types message → POST /api/sms/send
-                    ↓
-                    → Create/update conversation (type: TYPE_PHONE)
-                    → Insert message (type: 1, conversationId: ObjectId)
-                    → Send to GHL API
-                    → Update conversation lastMessage fields
-```
-
-### 2. **Receiving Message via Webhook**
-```
-GHL sends webhook → POST /api/webhooks/ghl/native
-                   ↓
-                   → Queue in webhook_queue
-                   → MessagesProcessor picks it up
-                   → Find/create conversation
-                   → Insert message with conversationId as ObjectId
-                   → Update conversation metadata
-```
-
-### 3. **Loading Conversations in App**
-```
-App opens contact → GET /api/conversations?contactId=xxx
-                   ↓
-                   → Returns all conversations for contact
-                   → Shows last message preview
-                   → User taps conversation
-                   ↓
-                   GET /api/conversations/{id}/messages
-                   → Returns paginated messages
-                   → Marks messages as read
-                   → Updates unread count
-```
-
-## ⚠️ Critical Rules
-
-### 1. **conversationId MUST be ObjectId**
-```javascript
-// ❌ WRONG - Will break queries
-conversationId: "6856519a479e5bdcc186db5a"  // String
-
-// ✅ CORRECT
-conversationId: ObjectId("6856519a479e5bdcc186db5a")
-```
-
-### 2. **contactObjectId MUST be ObjectId**
-```javascript
-// ❌ WRONG - Old naming
-contactId: "6844d07b257a88ebfbd9be9b"  // String
-
-// ✅ CORRECT - New naming
-contactObjectId: ObjectId("6844d07b257a88ebfbd9be9b")
-```
-
-### 3. **Message type field is numeric**
-```javascript
-// ❌ WRONG
-type: "sms"
-
-// ✅ CORRECT  
-type: 1  // Numeric!
-```
-
-### 4. **Always filter by locationId**
-```javascript
-// Every query must include locationId for multi-tenant isolation
+// Check for email messages needing fetch
 db.messages.find({ 
-  conversationId: ObjectId("..."),
-  locationId: "5OuaTrizW5wkZMI1xtvX"  // REQUIRED
-})
-```
+  type: { $in: [3, 9, 21] },
+  needsContentFetch: true 
+}).limit(5)
 
-## 🐛 Common Issues & Solutions
-
-### "No messages showing"
-1. Check conversationId is ObjectId in messages collection
-2. Verify message has `type: 1` (numeric) not `type: "sms"`
-3. Ensure `body` field exists on message
-4. Check locationId matches
-5. Verify contactObjectId points to correct contact
-
-### "Messages in wrong conversation"
-- Check if contactObjectId in conversation matches the messages
-- Verify conversationId is consistent across messages
-- Ensure GHL webhook processor is using correct field mapping
-
-### "Messages in wrong order"
-- Sort by `dateAdded` not `createdAt`
-- Frontend shows newest first (inverted FlatList)
-
-### "Unread count wrong"
-- Update conversation.unreadCount when marking messages read
-- Webhook processor sets `read: false` for inbound
-- Fetching messages marks them as read
-
-## 📝 Implementation Checklist
-
-When implementing messaging features:
-
-- [ ] Store conversationId as ObjectId, not string
-- [ ] Use contactObjectId (ObjectId) not contactId (string)
-- [ ] Include numeric type field (1 for SMS, 3 for Email)
-- [ ] Update conversation lastMessage fields
-- [ ] Handle unread counts properly
-- [ ] Always filter by locationId
-- [ ] Use proper field names (body not message)
-- [ ] Set read status appropriately
-- [ ] Include dateAdded timestamp
-- [ ] Store both ghlContactId and contactObjectId for reference
-
-## 🔧 Debugging Commands
-
-```javascript
-// Check conversation exists with new field
-db.conversations.findOne({ 
-  contactObjectId: ObjectId("6844d07b257a88ebfbd9be9b"),
-  locationId: "locationId",
-  type: "TYPE_PHONE" 
-})
-
-// Count messages with correct structure  
-db.messages.count({
-  conversationId: { $type: "objectId" },
-  contactObjectId: { $type: "objectId" },
-  type: { $type: "number" }
-})
-
-// Find conversations still using old contactId field
+// Find conversations with wrong contactId type
 db.conversations.find({
-  contactId: { $exists: true },
+  contactId: { $type: "string" },
   contactObjectId: { $exists: false }
 })
-
-// Migration: Convert contactId to contactObjectId
-db.conversations.find({ contactId: { $exists: true } }).forEach(function(doc) {
-  db.conversations.updateOne(
-    { _id: doc._id },
-    {
-      $set: { 
-        contactObjectId: ObjectId(doc.contactId),
-        ghlContactId: doc.ghlContactId || "" 
-      },
-      $unset: { contactId: "" }
-    }
-  );
-});
-
-// Fix messages with string contactId
-db.messages.find({ contactId: { $exists: true } }).forEach(function(doc) {
-  db.messages.updateOne(
-    { _id: doc._id },
-    {
-      $set: { 
-        contactObjectId: ObjectId(doc.contactId)
-      },
-      $unset: { contactId: "" }
-    }
-  );
-});
 ```
 
-## 🚀 Future Improvements
-- Real-time updates via WebSocket
-- Message search functionality  
-- Conversation archiving
-- Message reactions
-- Read receipts
-- Typing indicators
-- Push notifications
+## 📚 Resources
 
-## 📋 Backend Updates Needed
-
-To fully implement the new naming convention:
-
-1. **Update `/api/sms/send`**:
-   - Use `contactObjectId` when creating conversations
-   - Store as ObjectId, not string
-
-2. **Update webhook processors**:
-   - `MessagesProcessor` should use `contactObjectId`
-   - Ensure ObjectId type consistency
-
-3. **Update API endpoints**:
-   - `/api/conversations` queries should use `contactObjectId`
-   - `/api/messages` should include `contactObjectId`
-
-4. **Add database indexes**:
-   ```javascript
-   db.conversations.createIndex({ contactObjectId: 1, locationId: 1 })
-   db.messages.createIndex({ contactObjectId: 1, conversationId: 1 })
-   ```
-
-   Searched project for “api conversations messages contactId endpoint”
-4 results
-
-
-
-
-
-
-
-
-Based on my search, here are all the files that need to be updated for the contactObjectId change:
-
-📝 Backend Files to Update
-1. API Endpoints
-/api/conversations/index.ts - Main conversations endpoint
-/api/conversations/[conversationId]/messages.ts - Messages endpoint
-/api/contacts/[contactId]/conversations.ts - Contact's conversations endpoint
-/api/sms/send.ts - SMS sending (creates conversations/messages)
-/api/emails/send.ts - Email sending (creates conversations/messages)
-2. Webhook Processors
-/utils/webhooks/processors/messages.ts - Processes message webhooks ⚡ CRITICAL
-/utils/webhooks/directProcessor.ts - Direct message processing
-3. Sync Functions
-/utils/sync/syncConversations.ts - Syncs conversations from GHL
-/utils/sync/syncMessages.ts - Syncs messages from GHL
-4. Other Backend Files
-/utils/reports/enhancedDailyReport.ts - May query conversations
-Any other files that query conversations/messages
-📱 Frontend Files to Update
-1. Services
-src/services/conversationService.ts - Main conversation service
-src/services/smsService.ts - SMS service (if it references contactId)
-2. Components
-src/components/ConversationsList.tsx - Displays conversations
-src/components/MessagesList.tsx - Displays messages (if exists)
-Any components that display conversation/message data
-3. Screens
-src/screens/ConversationScreen.tsx - Individual conversation view
-src/screens/ContactDetailsScreen.tsx - Shows contact's conversations
-Any other screens showing messages
-1. Services (in src/services/)
-
-✅ conversationService.ts - DONE
-smsService.ts - If it references contactId when creating/sending messages
-emailService.ts - If it exists and references contactId
-
-2. Screens (in src/screens/)
-
-ConversationScreen.tsx - Individual conversation view (likely passes contactId)
-ContactDetailsScreen.tsx - Shows contact's conversations (definitely uses contactId)
-MessagesScreen.tsx - If it exists
-Any other screens that show conversations/messages
-
-3. Components (in src/components/)
-
-ConversationsList.tsx - Displays conversations (likely accesses contactId from conversation objects)
-MessagesList.tsx - Displays messages (if it exists)
-ConversationCard.tsx - Individual conversation item (if it exists)
-MessageBubble.tsx - Individual message display (if it exists)
-Any components that display conversation/message data
-
-4. Types (in packages/types/ or src/types/)
-
-index.ts or types.ts - Update Conversation and Message interfaces
-Any type definition files that include contactId fields
-
-Implementation Priority
-
-Week 1: Speed Improvements
-
-Enable direct processing for messages
-Increase cron frequency to 1 minute
-Add optimistic UI updates
-
-
-Week 2: Real-time Foundation
-
-Implement SSE endpoint
-Add MongoDB change streams
-Create useRealtimeMessages hook
-
-
-Week 3: Polish & Scale
-
-Add connection retry logic
-Implement heartbeat monitoring
-Add fallback mechanisms
-
-
-
-Future Scaling Options
-
-Redis for Pub/Sub (When you hit 1000+ concurrent users)
-WebSocket Gateway (For bidirectional real-time)
-Edge Functions (For global low latency)
-Dedicated Message Service (Microservice architecture)
-
-This plan gives you:
-
-Immediate speed (direct processing)
-Real-time updates (SSE/Change Streams)
-Reliability (queue backup)
-Scalability (can handle thousands of users)
-Future-proof (easy to add Redis/WebSockets later)
+- **Backend API Docs**: `/lpai-backend/docs/API_REFERENCE.md`
+- **GHL Message Types**: Not officially documented
+- **MongoDB Collections**: `messages`, `conversations`
+- **Test Location**: `5OuaTrizW5wkZMI1xtvX` (LeadProspecting.AI)
