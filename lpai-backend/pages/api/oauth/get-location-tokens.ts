@@ -1,4 +1,5 @@
 // pages/api/oauth/get-location-tokens.ts
+// Updated: 2025-06-24 - Fixed refresh token storage to use location-specific tokens
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
 import axios from 'axios';
@@ -132,21 +133,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       
       try {
         // Get token for this specific location
-          const tokenResponse = await axios.post(
-            'https://services.leadconnectorhq.com/oauth/locationToken',
-            new URLSearchParams({
-              companyId: companyId,
-              locationId: locationId
-            }).toString(), // Convert to URL encoded string
-            {
-              headers: {
-                'Authorization': `Bearer ${companyRecord.ghlOAuth.accessToken}`,
-                'Version': '2021-07-28',
-                'Content-Type': 'application/x-www-form-urlencoded'
-              },
-              timeout: 15000
-            }
-          );
+        const tokenResponse = await axios.post(
+          'https://services.leadconnectorhq.com/oauth/locationToken',
+          new URLSearchParams({
+            companyId: companyId,
+            locationId: locationId
+          }).toString(), // Convert to URL encoded string
+          {
+            headers: {
+              'Authorization': `Bearer ${companyRecord.ghlOAuth.accessToken}`,
+              'Version': '2021-07-28',
+              'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            timeout: 15000
+          }
+        );
 
         console.log(`[Get Location Tokens] Got token response for location ${locationId}`);
 
@@ -159,9 +160,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               companyId: companyId,
               ghlOAuth: {
                 accessToken: tokenResponse.data.access_token,
-                refreshToken: companyRecord.ghlOAuth.refreshToken,
+                refreshToken: tokenResponse.data.refresh_token, // Use the refresh token from the response!
                 expiresAt: new Date(Date.now() + (tokenResponse.data.expires_in * 1000)),
-                tokenType: 'Bearer',
+                tokenType: tokenResponse.data.token_type || 'Bearer',
                 userType: 'Location',
                 scope: tokenResponse.data.scope,
                 derivedFromCompany: true,
@@ -169,7 +170,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               },
               hasLocationOAuth: true,
               appInstalled: true,
-              updatedAt: new Date()
+              updatedAt: new Date(),
+              // Clear any previous auth errors
+              'ghlOAuth.needsReauth': false,
+              'ghlOAuth.lastRefreshError': null
             },
             $setOnInsert: {
               createdAt: new Date()
@@ -300,21 +304,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 // If app is installed for this location, try to get location-specific token
                 if (isInstalled && companyRecord.ghlOAuth) {
                   try {
-                  const tokenResponse = await axios.post(
-                    'https://services.leadconnectorhq.com/oauth/locationToken',
-                    new URLSearchParams({
-                      companyId: companyId,
-                      locationId: locationId
-                    }).toString(), // Convert to URL encoded string
-                    {
-                      headers: {
-                        'Authorization': `Bearer ${companyRecord.ghlOAuth.accessToken}`,
-                        'Version': '2021-07-28',
-                        'Content-Type': 'application/x-www-form-urlencoded'
-                      },
-                      timeout: 15000
-                    }
-                  );
+                    const tokenResponse = await axios.post(
+                      'https://services.leadconnectorhq.com/oauth/locationToken',
+                      new URLSearchParams({
+                        companyId: companyId,
+                        locationId: location.id // Fixed: was using undefined locationId variable
+                      }).toString(), // Convert to URL encoded string
+                      {
+                        headers: {
+                          'Authorization': `Bearer ${companyRecord.ghlOAuth.accessToken}`,
+                          'Version': '2021-07-28',
+                          'Content-Type': 'application/x-www-form-urlencoded'
+                        },
+                        timeout: 15000
+                      }
+                    );
 
                     // Update with OAuth tokens
                     await db.collection('locations').updateOne(
@@ -323,16 +327,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                         $set: {
                           ghlOAuth: {
                             accessToken: tokenResponse.data.access_token,
-                            refreshToken: companyRecord.ghlOAuth.refreshToken,
+                            refreshToken: tokenResponse.data.refresh_token, // Use the refresh token from the response!
                             expiresAt: new Date(Date.now() + (tokenResponse.data.expires_in * 1000)),
-                            tokenType: 'Bearer',
+                            tokenType: tokenResponse.data.token_type || 'Bearer',
                             userType: 'Location',
                             scope: tokenResponse.data.scope,
                             derivedFromCompany: true,
                             installedAt: new Date()
                           },
                           hasLocationOAuth: true,
-                          appInstalled: true
+                          appInstalled: true,
+                          // Clear any previous auth errors
+                          'ghlOAuth.needsReauth': false,
+                          'ghlOAuth.lastRefreshError': null
                         }
                       }
                     );

@@ -1,28 +1,15 @@
 // pages/api/cron/refresh-tokens.ts
+// Updated: 2025-06-24 - Use simplified refresh endpoint
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
-import { refreshOAuthToken, tokenNeedsRefresh } from '../../../src/utils/ghlAuth';
+import { tokenNeedsRefresh } from '../../../src/utils/ghlAuth';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  // Verify cron secret - check multiple methods
-  const authHeader = req.headers.authorization;
-  const cronSecret = process.env.CRON_SECRET;
-  
-  // Check if it's from Vercel Cron (they use a special header)
+  // Verify cron secret
   const isVercelCron = req.headers['x-vercel-cron'] === '1';
+  const hasValidAuth = req.headers.authorization === `Bearer ${process.env.CRON_SECRET}`;
   
-  // Fix: Check if cronSecret exists before comparing
-  const hasValidAuth = cronSecret && authHeader === `Bearer ${cronSecret}`;
-  
-  // Allow if it's from Vercel Cron OR has correct Bearer token
   if (!isVercelCron && !hasValidAuth) {
-    console.log('[Token Refresh Cron] Unauthorized attempt', {
-      hasAuthHeader: !!authHeader,
-      isVercelCron,
-      authHeader: authHeader, // Log what we received
-      expectedAuth: `Bearer ${cronSecret}`, // Log what we expected
-      match: authHeader === `Bearer ${cronSecret}`
-    });
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
@@ -30,35 +17,56 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const client = await clientPromise;
     const db = client.db('lpai');
     
-    // Find all locations with OAuth that need refresh
-    const locations = await db.collection('locations').find({
+    // Find all entities with OAuth that need refresh
+    const entities = await db.collection('locations').find({
       'ghlOAuth.accessToken': { $exists: true },
       'ghlOAuth.refreshToken': { $exists: true },
       appInstalled: true
     }).toArray();
     
-    console.log(`[Token Refresh Cron] Checking ${locations.length} locations`);
+    console.log(`[Token Refresh Cron] Checking ${entities.length} entities`);
     
     const results = {
-      checked: locations.length,
+      checked: entities.length,
       refreshed: 0,
       failed: 0,
       errors: [] as any[]
     };
     
-    // Process each location
-    for (const location of locations) {
+    // Process each entity
+    for (const entity of entities) {
       try {
-        if (tokenNeedsRefresh(location)) {
-          console.log(`[Token Refresh Cron] Refreshing token for ${location.locationId}`);
-          await refreshOAuthToken(location);
-          results.refreshed++;
+        if (tokenNeedsRefresh(entity)) {
+          const entityType = entity.locationId === null ? 'company' : 'location';
+          const entityId = entityType === 'company' ? entity.companyId : entity.locationId;
+          
+          console.log(`[Token Refresh Cron] Refreshing ${entityType}: ${entityId}`);
+          
+          // Call the simplified refresh endpoint
+          const response = await fetch(
+            `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'}/api/oauth/refresh-token`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                entityId,
+                entityType
+              })
+            }
+          );
+          
+          if (response.ok) {
+            results.refreshed++;
+          } else {
+            const error = await response.json();
+            throw new Error(error.details || error.error);
+          }
         }
       } catch (error: any) {
-        console.error(`[Token Refresh Cron] Failed for ${location.locationId}:`, error.message);
         results.failed++;
         results.errors.push({
-          locationId: location.locationId,
+          entityId: entity.locationId || entity.companyId,
+          entityType: entity.locationId === null ? 'company' : 'location',
           error: error.message
         });
       }
