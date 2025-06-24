@@ -140,7 +140,8 @@ async function processInboundMessageDirect(
                           messageTypeNum === 4 ? 'TYPE_WHATSAPP' : 'TYPE_OTHER';
 
   // Start a session for atomic operations
-  const session = db.client.startSession();
+  const client = (db as any).client || db;
+  const session = client.startSession();
   
   try {
     await session.withTransaction(async () => {
@@ -184,11 +185,16 @@ async function processInboundMessageDirect(
         }
       );
 
+      const conversation = conversationResult.value || conversationResult;
+      if (!conversation || !conversation._id) {
+        throw new Error('Failed to create/update conversation');
+      }
+
       // Insert message
       const messageDoc: any = {
         _id: new ObjectId(),
         ghlMessageId: messageId,
-        conversationId: conversationResult.value._id,  // Use ObjectId directly
+        conversationId: conversation._id,              // Use ObjectId from conversation
         ghlConversationId: conversationId,
         locationId,
         contactObjectId: contact._id,                  // FIXED: Use ObjectId directly
