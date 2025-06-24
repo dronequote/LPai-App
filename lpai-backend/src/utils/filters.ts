@@ -205,8 +205,12 @@ export function buildConversationFilter(params: ParsedQueryParams): any {
   
   if (params.locationId) filter.locationId = params.locationId;
   if (params.type) filter.type = params.type;
+  
+  // FIXED: Use contactObjectId and convert to ObjectId
   if (params.contactId) {
-    filter.contactId = params.contactId;
+    filter.contactObjectId = ObjectId.isValid(params.contactId) 
+      ? new ObjectId(params.contactId) 
+      : params.contactId;
   }
   
   // Unread only filter
