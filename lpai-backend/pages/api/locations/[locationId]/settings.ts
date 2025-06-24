@@ -46,6 +46,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           return res.status(404).json({ error: 'Location not found' });
         }
         
+        // Return empty arrays/objects if settings don't exist yet
         return res.status(200).json({
           success: true,
           settings: {
@@ -56,21 +57,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
 
       case 'PATCH':
-        const { settingType, data } = req.body;
+        // First check if location exists
+        const locationExists = await db.collection('locations').findOne(
+          { locationId },
+          { projection: { _id: 1 } }
+        );
         
-        if (!settingType || !data) {
-          return res.status(400).json({ error: 'Missing settingType or data' });
-        }
-        
-        // Check if user belongs to this location
-        let userQuery: any = { locationId };
-        
-        // Handle both ObjectId and string userId formats
-        try {
-          userQuery._id = new ObjectId(decoded.userId);
-        } catch (e) {
-          // If userId is not a valid ObjectId, use it as a string
-          userQuery.userId = decoded.userId;
+        if (!locationExists) {
+          return res.status(404).json({ error: 'Location not found' });
         }
         
         const user = await db.collection('users').findOne(userQuery);
