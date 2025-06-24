@@ -13,6 +13,7 @@ import {
   RefreshControl,
   FlatList,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage'; // ADD THIS IMPORT
 import { Ionicons } from '@expo/vector-icons';
 import { conversationService } from '../services/conversationService';
 import { smsService } from '../services/smsService';
@@ -83,6 +84,25 @@ export default function ConversationsList({
   const [emailViewerVisible, setEmailViewerVisible] = useState(false);
   const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
   const [selectedEmailSubject, setSelectedEmailSubject] = useState<string>('');
+
+  // NEW: Helper function to clear all message caches
+  const clearAllMessageCaches = async () => {
+    try {
+      const keys = await AsyncStorage.getAllKeys();
+      const messageCacheKeys = keys.filter(key => 
+        key.includes('/api/conversations/') && key.includes('/messages')
+      );
+      
+      if (messageCacheKeys.length > 0) {
+        await AsyncStorage.multiRemove(messageCacheKeys);
+        if (__DEV__) {
+          console.log(`Cleared ${messageCacheKeys.length} message cache entries`);
+        }
+      }
+    } catch (error) {
+      console.error('Error clearing message caches:', error);
+    }
+  };
 
   // Load conversations
   const loadConversations = async (isLoadMore = false) => {
@@ -270,14 +290,15 @@ export default function ConversationsList({
     }
   };
 
-  // Refresh handler for conversations
+  // UPDATED: Refresh handler with proper cache clearing
   const onRefreshConversations = useCallback(async () => {
     if (!locationId || !contactId) return;
     
     setRefreshingConversations(true);
     try {
-      // Clear cache first to force fresh data
+      // Clear ALL relevant caches
       await conversationService.clearConversationCache(locationId);
+      await clearAllMessageCaches();
       
       // Now load fresh conversations
       const convs = await conversationService.list(locationId, {
@@ -294,11 +315,20 @@ export default function ConversationsList({
         
         // Load messages from first conversation
         try {
+          // Force fresh fetch by clearing cache first
+          if (convs[0]._id) {
+            const messagesCacheKey = `@lpai_cache_GET_/api/conversations/${convs[0]._id}/messages`;
+            const keys = await AsyncStorage.getAllKeys();
+            const relevantKeys = keys.filter(key => key.startsWith(messagesCacheKey));
+            await AsyncStorage.multiRemove(relevantKeys);
+          }
+          
           const messagesResponse = await conversationService.getMessages(
             convs[0]._id,
             locationId,
             { limit: 20, offset: 0 }
           );
+          
           setMessages(messagesResponse.messages || []);
           setOffset(messagesResponse.messages?.length || 0);
           setHasMore(messagesResponse.pagination?.hasMore || false);
@@ -336,26 +366,169 @@ export default function ConversationsList({
     loadConversations();
   }, [contactId, locationId]);
 
-// Then update the handleSendMessage function:
-const handleSendMessage = async () => {
-  if (!composeText.trim() || !userId || !locationId) return;
-  
-  setSendingMessage(true);
-  try {
-    if (composeMode === 'sms') {
-      // Check if SMS is configured by looking at user preferences directly
-      const smsNumberId = user?.preferences?.communication?.smsNumberId;
-      
+  // UPDATED: handleSendMessage with proper cache clearing
+  const handleSendMessage = async () => {
+    if (!composeText.trim() || !userId || !locationId) return;
+    
+    setSendingMessage(true);
+    try {
+      if (composeMode === 'sms') {
+        // Check if SMS is configured by looking at user preferences directly
+        const smsNumberId = user?.preferences?.communication?.smsNumberId;
+        
+        if (__DEV__) {
+          console.log('SMS Configuration Check:');
+          console.log('User preferences:', user?.preferences?.communication);
+          console.log('SMS Number ID:', smsNumberId);
+        }
+        
+        if (!smsNumberId) {
+          Alert.alert(
+            'SMS Setup Required',
+            'Please select your SMS number in Settings before sending messages.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { 
+                text: 'Go to Settings', 
+                onPress: () => {
+                  if (onNavigateToSettings) {
+                    onNavigateToSettings();
+                  }
+                }
+              }
+            ]
+          );
+          setSendingMessage(false);
+          return;
+        }
+        
+        // Get the phone number from user preferences to avoid the 404 error
+        const fromNumber = user?.preferences?.communication?.defaultPhoneNumber;
+        
+        if (!fromNumber) {
+          Alert.alert('Error', 'No phone number configured. Please update your settings.');
+          setSendingMessage(false);
+          return;
+        }
+        
+        // Format the phone number properly (add +1 if not present)
+        const formattedFromNumber = fromNumber.startsWith('+') ? fromNumber : `+1${fromNumber}`;
+        const formattedToNumber = contactPhone.startsWith('+') ? contactPhone : `+1${contactPhone}`;
+        
+        if (__DEV__) {
+          console.log('SMS Send Request:');
+          console.log('From:', formattedFromNumber);
+          console.log('To:', formattedToNumber);
+          console.log('ContactId:', contactId);
+          console.log('LocationId:', locationId);
+          console.log('UserId:', userId);
+          console.log('Message:', composeText);
+        }
+        
+        try {
+          await smsService.send({
+            contactId: contactId,
+            locationId: locationId,
+            customMessage: composeText,
+            toNumber: formattedToNumber,
+            userId: userId,
+            fromNumber: formattedFromNumber,
+            templateKey: 'custom',
+          });
+        } catch (smsError: any) {
+          // Check if it's the known issue where SMS sends but returns 500
+          if (smsError.response?.status === 500 && 
+              smsError.response?.data?.error === 'Failed to send SMS') {
+            if (__DEV__) {
+              console.log('SMS sent successfully despite 500 error');
+            }
+            // Continue as if successful
+          } else {
+            // Re-throw for real errors
+            throw smsError;
+          }
+        }
+
+        // Add the message to local state
+        const newMessage = {
+          id: Date.now().toString(),
+          type: 1, // SMS type
+          direction: 'outbound',
+          dateAdded: new Date().toISOString(),
+          body: composeText,
+          read: true,
+        };
+        setMessages([newMessage, ...messages]);
+
+        setComposeText('');
+        Alert.alert('Success', 'SMS sent successfully');
+
+        // CRITICAL: Clear all message caches
+        await clearAllMessageCaches();
+        
+        // Clear conversation cache
+        await conversationService.clearConversationCache(locationId);
+
+        // Reload conversations after a delay to catch the webhook update
+        setTimeout(async () => {
+          try {
+            // Clear caches again before reloading
+            await clearAllMessageCaches();
+            await loadConversations();
+          } catch (e) {
+            console.error('Error reloading after SMS send:', e);
+          }
+        }, 2000);
+        
+      } else {
+        // Email sending code
+        await emailService.send({
+          contactId: contactId,
+          locationId: locationId,
+          subject: emailSubject || 'Message from ' + (userName || 'Team'),
+          plainTextContent: composeText,
+          userId: userId,
+        });
+        
+        // Add the email to local state immediately
+        const newMessage = {
+          id: Date.now().toString(),
+          type: 3, // Email type
+          direction: 'outbound',
+          dateAdded: new Date().toISOString(),
+          subject: emailSubject || 'Message from ' + (userName || 'Team'),
+          body: composeText,
+          read: true,
+        };
+        setMessages([newMessage, ...messages]);
+        
+        setComposeText('');
+        setEmailSubject('');
+        Alert.alert('Success', 'Email sent successfully');
+        
+        // Clear caches and reload
+        await clearAllMessageCaches();
+        await conversationService.clearConversationCache(locationId);
+        
+        setTimeout(async () => {
+          try {
+            await loadConversations();
+          } catch (e) {
+            console.error('Error reloading after email send:', e);
+          }
+        }, 2000);
+      }
+    } catch (error: any) {
       if (__DEV__) {
-        console.log('SMS Configuration Check:');
-        console.log('User preferences:', user?.preferences?.communication);
-        console.log('SMS Number ID:', smsNumberId);
+        console.error('Send Error:', error);
+        console.error('Error details:', error.response?.data);
       }
       
-      if (!smsNumberId) {
+      // Handle specific SMS errors
+      if (error.message.includes('No SMS number configured')) {
         Alert.alert(
           'SMS Setup Required',
-          'Please select your SMS number in Settings before sending messages.',
+          'Please select your SMS number in Settings.',
           [
             { text: 'Cancel', style: 'cancel' },
             { 
@@ -368,159 +541,34 @@ const handleSendMessage = async () => {
             }
           ]
         );
-        setSendingMessage(false);
-        return;
-      }
-      
-      // Get the phone number from user preferences to avoid the 404 error
-      const fromNumber = user?.preferences?.communication?.defaultPhoneNumber;
-      
-      if (!fromNumber) {
-        Alert.alert('Error', 'No phone number configured. Please update your settings.');
-        setSendingMessage(false);
-        return;
-      }
-      
-      // Format the phone number properly (add +1 if not present)
-      const formattedFromNumber = fromNumber.startsWith('+') ? fromNumber : `+1${fromNumber}`;
-      const formattedToNumber = contactPhone.startsWith('+') ? contactPhone : `+1${contactPhone}`;
-      
-      if (__DEV__) {
-        console.log('SMS Send Request:');
-        console.log('From:', formattedFromNumber);
-        console.log('To:', formattedToNumber);
-        console.log('ContactId:', contactId);
-        console.log('LocationId:', locationId);
-        console.log('UserId:', userId);
-        console.log('Message:', composeText);
-      }
-      
-      try {
-  await smsService.send({
-    contactId: contactId,
-    locationId: locationId,
-    customMessage: composeText,
-    toNumber: formattedToNumber,
-    userId: userId,
-    fromNumber: formattedFromNumber,
-    templateKey: 'custom', // Add this
-  });
-} catch (smsError: any) {
-  // Check if it's the known issue where SMS sends but returns 500
-  if (smsError.response?.status === 500 && 
-      smsError.response?.data?.error === 'Failed to send SMS') {
-    if (__DEV__) {
-      console.log('SMS sent successfully despite 500 error');
-    }
-    // Continue as if successful
-  } else {
-    // Re-throw for real errors
-    throw smsError;
-  }
-}
-
-// Add the message to local state
-const newMessage = {
-  id: Date.now().toString(),
-  type: 1, // SMS type
-  direction: 'outbound',
-  dateAdded: new Date().toISOString(),
-  body: composeText,
-  read: true,
-};
-setMessages([newMessage, ...messages]);
-
-setComposeText('');
-
-// Reload conversations after a delay to catch the webhook update
-setTimeout(() => {
-  loadConversations().catch(() => {});
-}, 3000);
-      
-    } else {
-      // Email sending code remains the same
-      await emailService.send({
-        contactId: contactId,
-        locationId: locationId,
-        subject: emailSubject || 'Message from ' + (userName || 'Team'),
-        plainTextContent: composeText,
-        userId: userId,
-      });
-      
-      // Add the email to local state immediately
-      const newMessage = {
-        id: Date.now().toString(),
-        type: 3, // Email type
-        direction: 'outbound',
-        dateAdded: new Date().toISOString(),
-        subject: emailSubject || 'Message from ' + (userName || 'Team'),
-        body: composeText,
-        read: true,
-      };
-      setMessages([newMessage, ...messages]);
-      
-      setComposeText('');
-      setEmailSubject('');
-      Alert.alert('Success', 'Email sent successfully');
-      
-      // Try to reload conversations
-      try {
-        await loadConversations();
-      } catch (e) {
-        // Ignore errors when reloading
-      }
-    }
-  } catch (error: any) {
-    if (__DEV__) {
-      console.error('SMS Send Error:', error);
-      console.error('Error details:', error.response?.data);
-    }
-    
-    // Handle specific SMS errors
-    if (error.message.includes('No SMS number configured')) {
-      Alert.alert(
-        'SMS Setup Required',
-        'Please select your SMS number in Settings.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { 
-            text: 'Go to Settings', 
-            onPress: () => {
-              if (onNavigateToSettings) {
-                onNavigateToSettings();
+      } else if (error.message.includes('Selected SMS number is no longer available')) {
+        Alert.alert(
+          'SMS Configuration Error',
+          'Your selected SMS number is no longer available. Please update your settings.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { 
+              text: 'Go to Settings', 
+              onPress: () => {
+                if (onNavigateToSettings) {
+                  onNavigateToSettings();
+                }
               }
             }
-          }
-        ]
-      );
-    } else if (error.message.includes('Selected SMS number is no longer available')) {
-      Alert.alert(
-        'SMS Configuration Error',
-        'Your selected SMS number is no longer available. Please update your settings.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { 
-            text: 'Go to Settings', 
-            onPress: () => {
-              if (onNavigateToSettings) {
-                onNavigateToSettings();
-              }
-            }
-          }
-        ]
-      );
-    } else if (error.message.includes('phone numbers do not include')) {
-      Alert.alert(
-        'Invalid Phone Number',
-        'The selected phone number is not configured in GoHighLevel. Please contact your administrator.'
-      );
-    } else {
-      Alert.alert('Error', `Failed to send ${composeMode}: ${error.message}`);
+          ]
+        );
+      } else if (error.message.includes('phone numbers do not include')) {
+        Alert.alert(
+          'Invalid Phone Number',
+          'The selected phone number is not configured in GoHighLevel. Please contact your administrator.'
+        );
+      } else {
+        Alert.alert('Error', `Failed to send ${composeMode}: ${error.message}`);
+      }
+    } finally {
+      setSendingMessage(false);
     }
-  } finally {
-    setSendingMessage(false);
-  }
-};
+  };
 
   // Filter messages
   const filteredMessages = useMemo(() => {
