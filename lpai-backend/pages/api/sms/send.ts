@@ -1,4 +1,4 @@
-// Update: lpai-backend/pages/api/sms/send.ts
+// lpai-backend/pages/api/sms/send.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
@@ -62,29 +62,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).json({ error: 'No API key found for location' });
     }
 
-      // Get contact
-      const contact = await db.collection('contacts').findOne({ 
-        _id: new ObjectId(contactId),
-        locationId 
+    // Get contact
+    const contact = await db.collection('contacts').findOne({ 
+      _id: new ObjectId(contactId),
+      locationId 
+    });
+
+    if (!contact) {
+      logger.error('SMS_SEND_NO_CONTACT', new Error('Contact not found'), {
+        requestId,
+        contactId,
+        locationId
       });
+      return res.status(404).json({ error: 'Contact not found' });
+    }
 
-      if (!contact) {
-        logger.error('SMS_SEND_NO_CONTACT', new Error('Contact not found'), {
-          requestId,
-          contactId,
-          locationId
-        });
-        return res.status(404).json({ error: 'Contact not found' });
-      }
-
-      if (!contact.ghlContactId) {
-        logger.error('SMS_SEND_NO_GHL_ID', new Error('Contact missing GHL ID'), {
-          requestId,
-          contactId,
-          locationId
-        });
-        return res.status(400).json({ error: 'Contact missing GHL ID' });
-      }
+    if (!contact.ghlContactId) {
+      logger.error('SMS_SEND_NO_GHL_ID', new Error('Contact missing GHL ID'), {
+        requestId,
+        contactId,
+        locationId
+      });
+      return res.status(400).json({ error: 'Contact missing GHL ID' });
+    }
 
     // Get user for phone number and name
     const user = userId ? await db.collection('users').findOne({ 
@@ -175,58 +175,77 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const { data: ghlResponse } = await axios.request(options);
     const messageId = ghlResponse.messageId || ghlResponse.conversationId || ghlResponse.id;
 
-    // Create/update conversation
-const conversationRecord = {
-  locationId,
-  contactId: new ObjectId(contactId),
-  ghlContactId: contact.ghlContactId,
-  type: 'sms',
-  lastMessageAt: new Date(),
-  lastMessagePreview: message.substring(0, 100),
-  lastMessageDirection: 'outbound',
-  unreadCount: 0,
-  updatedAt: new Date()
-};
+    // Create/update conversation with better error handling
+    let conversationId;
+    let conversation;
 
-const conversationResult = await db.collection('conversations').findOneAndUpdate(
-  { 
-    locationId,
-    contactId: new ObjectId(contactId),
-    type: 'sms'
-  },
-  {
-    $set: conversationRecord,
-    $setOnInsert: {
-      createdAt: new Date(),
-      _id: new ObjectId()
+    try {
+      const conversationResult = await db.collection('conversations').findOneAndUpdate(
+        { 
+          locationId,
+          contactId: new ObjectId(contactId),
+          type: 'sms'
+        },
+        {
+          $set: {
+            locationId,
+            contactId: new ObjectId(contactId),
+            ghlContactId: contact.ghlContactId,
+            type: 'sms',
+            lastMessageAt: new Date(),
+            lastMessagePreview: message.substring(0, 100),
+            lastMessageDirection: 'outbound',
+            unreadCount: 0,
+            updatedAt: new Date()
+          },
+          $setOnInsert: {
+            createdAt: new Date()
+          }
+        },
+        { 
+          upsert: true,
+          returnDocument: 'after'
+        }
+      );
+
+      // MongoDB returns the document in the `value` property
+      conversation = conversationResult.value;
+      
+      if (conversation) {
+        conversationId = conversation._id;
+      } else {
+        // For new inserts, the ID might be in ok/value
+        if (conversationResult.ok && conversationResult.lastErrorObject?.upserted) {
+          conversationId = conversationResult.lastErrorObject.upserted;
+        } else {
+          // Fallback: fetch the conversation we just created/updated
+          conversation = await db.collection('conversations').findOne({
+            locationId,
+            contactId: new ObjectId(contactId),
+            type: 'sms'
+          });
+          conversationId = conversation?._id || new ObjectId();
+        }
+      }
+    } catch (convError) {
+      // If conversation creation fails, use a new ID but log the error
+      conversationId = new ObjectId();
+      logger.error('CONVERSATION_CREATE_ERROR', convError, {
+        requestId,
+        locationId,
+        contactId: contactId
+      });
     }
-  },
-  { 
-    upsert: true,
-    returnDocument: 'after'
-  }
-);
 
-// Handle both update and insert cases
-const conversationId = conversationResult.value?._id || conversationResult.lastErrorObject?.upserted;
-
-if (!conversationId) {
-  throw new Error('Failed to create or update conversation');
-}
-// If we didn't get a conversation back, fetch it
-let conversation = conversationResult.value;
-if (!conversation) {
-  conversation = await db.collection('conversations').findOne({
-    locationId,
-    contactId: new ObjectId(contactId),
-    type: 'sms'
-  });
-}
+    // Ensure we have a conversation ID
+    if (!conversationId) {
+      conversationId = new ObjectId();
+    }
 
     // Add message to messages collection
     const messageRecord = {
       _id: new ObjectId(),
-      conversationId: conversationId, // Changed from conversation.value._id
+      conversationId: conversationId,
       locationId,
       contactId: new ObjectId(contactId),
       direction: 'outbound',
@@ -320,7 +339,7 @@ if (!conversation) {
       requestId,
       messageId,
       smsRecordId: smsRecord._id.toString(),
-      conversationId: conversation.value._id.toString(),
+      conversationId: conversationId.toString(),
       locationId,
       contactId: contact._id.toString(),
       templateKey: templateKey || 'custom'
@@ -330,7 +349,7 @@ if (!conversation) {
       success: true,
       messageId,
       smsRecordId: smsRecord._id,
-      conversationId: conversationId, // Changed from conversation.value._id
+      conversationId: conversationId,
       message: 'SMS sent successfully'
     });
 
