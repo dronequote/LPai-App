@@ -453,26 +453,82 @@ async getDetails(
       lastSyncDate: new Date().toISOString(),
     };
   }
-    async getSettings(locationId: string) {
-    return this.request('get', `/locations/${locationId}/settings`);
-  }
+    /**
+ * Get location settings (SMS numbers, email settings, etc.)
+ */
+async getSettings(locationId: string) {
+  const endpoint = `/api/locations/${locationId}/settings`;
   
-  async updateSetting(locationId: string, settingType: string, data: any) {
-    return this.request('patch', `/locations/${locationId}/settings`, {
+  return this.get<{
+    success: boolean;
+    settings: {
+      smsPhoneNumbers: any[];
+      emailSettings: any;
+      businessHours: any;
+    };
+  }>(
+    endpoint,
+    {
+      cache: false, // Don't cache settings
+      showError: true,
+    },
+    {
+      endpoint,
+      method: 'GET',
+      entity: 'location',
+      priority: 'high',
+    }
+  );
+}
+
+/**
+ * Update location setting
+ */
+async updateSetting(locationId: string, settingType: string, data: any) {
+  const endpoint = `/api/locations/${locationId}/settings`;
+  
+  return this.patch<{
+    success: boolean;
+    message: string;
+    modifiedCount: number;
+  }>(
+    endpoint,
+    {
       settingType,
       data
-    });
-  }
-  
-  // Convenience methods
-  async getSmsNumbers(locationId: string) {
+    },
+    {
+      offline: false, // Don't allow offline for settings
+      showError: true,
+    },
+    {
+      endpoint,
+      method: 'PATCH',
+      entity: 'location',
+      priority: 'high',
+    }
+  );
+}
+
+/**
+ * Get SMS numbers for location
+ */
+async getSmsNumbers(locationId: string): Promise<any[]> {
+  try {
     const response = await this.getSettings(locationId);
-    return response.settings.smsPhoneNumbers;
+    return response.settings?.smsPhoneNumbers || [];
+  } catch (error) {
+    console.error('Failed to get SMS numbers:', error);
+    return [];
   }
-  
-  async updateSmsNumbers(locationId: string, numbers: any[]) {
-    return this.updateSetting(locationId, 'smsPhoneNumbers', numbers);
-  }
+}
+
+/**
+ * Update SMS numbers for location
+ */
+async updateSmsNumbers(locationId: string, numbers: any[]) {
+  return this.updateSetting(locationId, 'smsPhoneNumbers', numbers);
+}
 }
 
 export const locationService = new LocationService();
