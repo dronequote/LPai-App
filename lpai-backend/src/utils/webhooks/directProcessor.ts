@@ -99,10 +99,22 @@ async function processInboundMessageDirect(
   payload: any, 
   webhookId: string
 ): Promise<void> {
-  const { locationId, contactId, conversationId, message } = payload;
+  // Extract fields from the actual webhook structure
+  const { 
+    locationId, 
+    contactId, 
+    conversationId, 
+    body,
+    messageType,
+    messageId,
+    direction,
+    status,
+    dateAdded,
+    attachments
+  } = payload;
   
   // Validate required fields
-  if (!locationId || !contactId || !message) {
+  if (!locationId || !contactId || !body) {
     throw new Error('Missing required fields for inbound message');
   }
 
@@ -118,10 +130,14 @@ async function processInboundMessageDirect(
     return;
   }
 
-  // Determine conversation type
-  const conversationType = message.type === 1 ? 'TYPE_PHONE' : 
-                          message.type === 3 ? 'TYPE_EMAIL' : 
-                          'TYPE_OTHER';
+  // Determine conversation type and message type number
+  const messageTypeNum = messageType === 'SMS' ? 1 : 
+                        messageType === 'Email' ? 3 : 
+                        messageType === 'WhatsApp' ? 4 : 1;
+  
+  const conversationType = messageTypeNum === 1 ? 'TYPE_PHONE' : 
+                          messageTypeNum === 3 ? 'TYPE_EMAIL' : 
+                          messageTypeNum === 4 ? 'TYPE_WHATSAPP' : 'TYPE_OTHER';
 
   // Start a session for atomic operations
   const session = db.client.startSession();
@@ -142,8 +158,8 @@ async function processInboundMessageDirect(
             ghlContactId: contactId,                    // ADD: Store GHL contact ID
             type: conversationType,
             lastMessageDate: new Date(),
-            lastMessageBody: message.body?.substring(0, 200) || '',
-            lastMessageType: getMessageTypeName(message.type),
+            lastMessageBody: body.substring(0, 200),
+            lastMessageType: `TYPE_${messageType.toUpperCase()}`,
             lastMessageDirection: 'inbound',
             contactName: contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
             contactEmail: contact.email,
@@ -171,22 +187,24 @@ async function processInboundMessageDirect(
       // Insert message
       const messageDoc: any = {
         _id: new ObjectId(),
-        ghlMessageId: message.id,
+        ghlMessageId: messageId,
         conversationId: conversationResult.value._id,  // Use ObjectId directly
         ghlConversationId: conversationId,
         locationId,
         contactObjectId: contact._id,                  // FIXED: Use ObjectId directly
         ghlContactId: contactId,                        // ADD: Store GHL contact ID
-        type: message.type,
-        messageType: message.messageType || getMessageTypeName(message.type),
+        type: messageTypeNum,
+        messageType: `TYPE_${messageType.toUpperCase()}`,
         direction: 'inbound',
-        body: message.body || '',                      // Add body field
-        dateAdded: new Date(message.dateAdded || Date.now()),
-        source: message.source || 'ghl',
+        body: body,                                     // Add body field
+        status: status || 'delivered',
+        dateAdded: new Date(dateAdded || Date.now()),
+        source: 'webhook',
         read: false,
         createdAt: new Date(),
         processedBy: 'direct',
-        webhookId
+        webhookId,
+        attachments: attachments || []
       };
 
       await db.collection('messages').insertOne(messageDoc, { session });
@@ -213,8 +231,7 @@ async function processInboundMessageDirect(
       }
     });
 
-    // TODO: Send push notification to assigned users (outside transaction)
-    // This would be your push notification service
+    console.log(`[Direct Processor] Successfully processed inbound ${messageType} message`);
     
   } finally {
     await session.endSession();
@@ -229,7 +246,19 @@ async function processOutboundMessageDirect(
   payload: any, 
   webhookId: string
 ): Promise<void> {
-  const { locationId, contactId, conversationId, message, userId } = payload;
+  // Extract fields from the actual webhook structure
+  const { 
+    locationId, 
+    contactId, 
+    conversationId, 
+    body,
+    messageType,
+    messageId,
+    direction,
+    status,
+    dateAdded,
+    userId
+  } = payload;
   
   // Similar to inbound but simpler
   const contact = await db.collection('contacts').findOne(
@@ -238,6 +267,11 @@ async function processOutboundMessageDirect(
   );
   
   if (!contact) return;
+
+  // Determine message type number
+  const messageTypeNum = messageType === 'SMS' ? 1 : 
+                        messageType === 'Email' ? 3 : 
+                        messageType === 'WhatsApp' ? 4 : 1;
 
   // Update conversation (no unread increment for outbound)
   const conversationResult = await db.collection('conversations').findOneAndUpdate(
@@ -250,9 +284,9 @@ async function processOutboundMessageDirect(
         contactObjectId: contact._id,                  // FIXED: Add contactObjectId
         ghlContactId: contactId,                        // ADD: Store GHL contact ID
         lastMessageDate: new Date(),
-        lastMessageBody: message.body?.substring(0, 200) || '',
+        lastMessageBody: body.substring(0, 200),
         lastMessageDirection: 'outbound',
-        lastMessageType: message.messageType || getMessageTypeName(message.type || 1),
+        lastMessageType: `TYPE_${messageType.toUpperCase()}`,
         updatedAt: new Date()
       }
     },
@@ -269,19 +303,20 @@ async function processOutboundMessageDirect(
   // Quick insert message with ObjectId conversationId
   await db.collection('messages').insertOne({
     _id: new ObjectId(),
-    ghlMessageId: message.id || new ObjectId().toString(),
+    ghlMessageId: messageId || new ObjectId().toString(),
     conversationId: conversationResult.value._id,      // Use ObjectId from conversation
     ghlConversationId: conversationId,
     locationId,
     contactObjectId: contact._id,                      // FIXED: Use ObjectId directly
     ghlContactId: contactId,                            // ADD: Store GHL contact ID
     userId: userId || null,
-    type: message.type || 1,
-    messageType: message.messageType || getMessageTypeName(message.type || 1),
+    type: messageTypeNum,
+    messageType: `TYPE_${messageType.toUpperCase()}`,
     direction: 'outbound',
-    body: message.body || '',
-    dateAdded: new Date(message.dateAdded || Date.now()),
-    source: message.source || 'ghl',
+    body: body,
+    status: status || 'sent',
+    dateAdded: new Date(dateAdded || Date.now()),
+    source: 'webhook',
     read: true,
     createdAt: new Date(),
     processedBy: 'direct',
