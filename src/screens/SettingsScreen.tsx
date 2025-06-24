@@ -1,8 +1,8 @@
 // src/screens/SettingsScreen.tsx
-// Updated: June 13, 2025
-// Description: App settings screen with tabbed interface for user preferences
+// Updated: June 23, 2025
+// Description: App settings screen with better distributed tabs
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -24,16 +24,15 @@ import { useAuth } from '../contexts/AuthContext';
 import { userService } from '../services/userService';
 import { COLORS, FONT, RADIUS, SHADOW } from '../styles/theme';
 import type { NativeSyntheticEvent, TextInputChangeEventData } from 'react-native';
+import { locationService } from '../services/locationService';
 
 const { width } = Dimensions.get('window');
 
-// Tab configuration
+// Tab configuration - Better distributed
 const TABS = [
-  { id: 'general', label: 'General', icon: 'settings-outline' },
-  { id: 'communication', label: 'Communication', icon: 'chatbubbles-outline' },
-  { id: 'calendar', label: 'Calendar', icon: 'calendar-outline' },
-  { id: 'business', label: 'Business', icon: 'business-outline' },
-  { id: 'privacy', label: 'Privacy', icon: 'lock-closed-outline' },
+  { id: 'profile', label: 'Profile', icon: 'person-outline' },
+  { id: 'preferences', label: 'Preferences', icon: 'settings-outline' },
+  { id: 'communication', label: 'Comms', icon: 'chatbubbles-outline' }, // Shortened label
 ];
 
 // Option picker modal
@@ -83,11 +82,29 @@ const OptionPicker = ({ visible, options, value, onSelect, onClose, title }) => 
 export default function SettingsScreen({ navigation }) {
   const { user, updateUser } = useAuth();
   const [preferences, setPreferences] = useState(user?.preferences || {});
-  const [activeTab, setActiveTab] = useState('general');
+  const [activeTab, setActiveTab] = useState('profile');
   const [saving, setSaving] = useState(false);
   const [activeModal, setActiveModal] = useState(null);
   const scrollRef = useRef(null);
   const slideAnim = useRef(new Animated.Value(0)).current;
+
+  // Profile state
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [profile, setProfile] = useState({
+    name: user?.name || '',
+    email: user?.email || '',
+    phone: user?.phone || '',
+  });
+
+  // SMS number selection state
+  const [smsNumbers, setSmsNumbers] = useState([]);
+  const [loadingSmsNumbers, setLoadingSmsNumbers] = useState(true);
+  const [showSmsNumberPicker, setShowSmsNumberPicker] = useState(false);
+
+  // Phone number selection state
+  const [phoneNumbers, setPhoneNumbers] = useState([]);
+  const [loadingPhoneNumbers, setLoadingPhoneNumbers] = useState(true);
+  const [showPhoneNumberPicker, setShowPhoneNumberPicker] = useState(false);
 
   // Options for dropdowns
   const OPTIONS = {
@@ -133,6 +150,34 @@ export default function SettingsScreen({ navigation }) {
     ],
   };
 
+  // Load SMS and phone numbers on mount
+  useEffect(() => {
+    loadNumbers();
+  }, []);
+
+  const loadNumbers = async () => {
+    try {
+      const settings = await locationService.getSettings(user.locationId);
+      setSmsNumbers(settings.settings?.smsPhoneNumbers || []);
+      setPhoneNumbers(settings.settings?.phoneNumbers || settings.settings?.smsPhoneNumbers || []); // Use SMS numbers as fallback
+    } catch (error) {
+      console.error('Failed to load numbers:', error);
+    } finally {
+      setLoadingSmsNumbers(false);
+      setLoadingPhoneNumbers(false);
+    }
+  };
+
+  const updateSmsPreference = (numberId) => {
+    updatePreference('communication.smsNumberId', numberId);
+    setShowSmsNumberPicker(false);
+  };
+
+  const updatePhonePreference = (numberId) => {
+    updatePreference('communication.phoneNumberId', numberId);
+    setShowPhoneNumberPicker(false);
+  };
+
   const handleTabChange = (tabId) => {
     const tabIndex = TABS.findIndex(t => t.id === tabId);
     Animated.spring(slideAnim, {
@@ -157,8 +202,18 @@ export default function SettingsScreen({ navigation }) {
     
     setSaving(true);
     try {
+      // Save preferences
       await userService.updatePreferences(user._id, preferences);
-      updateUser({ ...user, preferences });
+      
+      // If we're editing profile, save profile too
+      if (editingProfile) {
+        await userService.updateProfile(profile);
+        updateUser({ ...user, ...profile, preferences });
+        setEditingProfile(false);
+      } else {
+        updateUser({ ...user, preferences });
+      }
+      
       Alert.alert('Success', 'Settings saved successfully');
       
       if (__DEV__) {
@@ -267,11 +322,71 @@ export default function SettingsScreen({ navigation }) {
 
   const renderTabContent = () => {
     switch (activeTab) {
-      case 'general':
+      case 'profile':
         return (
           <View style={styles.tabContent}>
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>APPEARANCE</Text>
+              <Text style={styles.sectionTitle}>PERSONAL INFORMATION</Text>
+              
+              <View style={styles.settingColumn}>
+                <Text style={styles.settingLabel}>Name</Text>
+                {editingProfile ? (
+                  <TextInput
+                    style={styles.textInput}
+                    value={profile.name}
+                    onChangeText={(text) => setProfile({...profile, name: text})}
+                    placeholder="Your name"
+                    placeholderTextColor={COLORS.textLight}
+                  />
+                ) : (
+                  <Text style={styles.profileValue}>{profile.name}</Text>
+                )}
+              </View>
+
+              <View style={styles.settingColumn}>
+                <Text style={styles.settingLabel}>Email</Text>
+                <Text style={styles.profileValue}>{profile.email}</Text>
+                <Text style={styles.settingDescription}>Email cannot be changed</Text>
+              </View>
+
+              <View style={styles.settingColumn}>
+                <Text style={styles.settingLabel}>Phone</Text>
+                {editingProfile ? (
+                  <TextInput
+                    style={styles.textInput}
+                    value={profile.phone}
+                    onChangeText={(text) => setProfile({...profile, phone: text})}
+                    placeholder="+1 (555) 123-4567"
+                    placeholderTextColor={COLORS.textLight}
+                    keyboardType="phone-pad"
+                  />
+                ) : (
+                  <Text style={styles.profileValue}>{profile.phone || 'Not set'}</Text>
+                )}
+              </View>
+            </View>
+
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>ACCOUNT INFORMATION</Text>
+              
+              <View style={styles.settingRow}>
+                <View style={styles.settingInfo}>
+                  <Text style={styles.settingLabel}>Role</Text>
+                </View>
+                <Text style={styles.selectText}>{user?.role || 'User'}</Text>
+              </View>
+              
+              <View style={styles.settingRow}>
+                <View style={styles.settingInfo}>
+                  <Text style={styles.settingLabel}>Location ID</Text>
+                </View>
+                <Text style={styles.selectText}>{user?.locationId}</Text>
+              </View>
+            </View>
+
+            {/* Move some preferences here to reduce scrolling */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>DISPLAY PREFERENCES</Text>
               {renderSetting({
                 type: 'select',
                 path: 'theme',
@@ -279,16 +394,27 @@ export default function SettingsScreen({ navigation }) {
                 options: OPTIONS.theme,
                 description: 'Choose your preferred color theme',
               })}
-            </View>
-
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>LOCALIZATION</Text>
               {renderSetting({
                 type: 'select',
                 path: 'timezone',
                 label: 'Time Zone',
                 options: OPTIONS.timezone,
               })}
+              {renderSetting({
+                type: 'switch',
+                path: 'notifications',
+                label: 'Push Notifications',
+                description: 'Receive alerts on your device',
+              })}
+            </View>
+          </View>
+        );
+
+      case 'preferences':
+        return (
+          <View style={styles.tabContent}>
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>FORMATS</Text>
               {renderSetting({
                 type: 'select',
                 path: 'dateFormat',
@@ -304,12 +430,68 @@ export default function SettingsScreen({ navigation }) {
             </View>
 
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>NOTIFICATIONS</Text>
+              <Text style={styles.sectionTitle}>CALENDAR</Text>
+              {renderSetting({
+                type: 'select',
+                path: 'defaultCalendarView',
+                label: 'Default View',
+                options: OPTIONS.calendarView,
+              })}
               {renderSetting({
                 type: 'switch',
-                path: 'notifications',
-                label: 'Push Notifications',
-                description: 'Receive alerts on your device',
+                path: 'appointmentReminders.enabled',
+                label: 'Appointment Reminders',
+                description: 'Get notified before appointments',
+              })}
+              {renderSetting({
+                type: 'switch',
+                path: 'workingHours.enabled',
+                label: 'Set Working Hours',
+                description: 'Limit scheduling to business hours',
+              })}
+            </View>
+
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>BUSINESS</Text>
+              {renderSetting({
+                type: 'switch',
+                path: 'business.autoSaveQuotes',
+                label: 'Auto-save Quotes',
+                description: 'Save quotes as you work',
+              })}
+              {renderSetting({
+                type: 'text',
+                path: 'business.defaultTaxRate',
+                label: 'Default Tax Rate (%)',
+                placeholder: '8.5',
+              })}
+              {renderSetting({
+                type: 'select',
+                path: 'business.measurementUnit',
+                label: 'Measurement Units',
+                options: OPTIONS.measurementUnit,
+              })}
+            </View>
+
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>PRIVACY</Text>
+              {renderSetting({
+                type: 'switch',
+                path: 'privacy.showPhoneNumber',
+                label: 'Show Phone to Team',
+                description: 'Let team members see your phone',
+              })}
+              {renderSetting({
+                type: 'switch',
+                path: 'privacy.showEmail',
+                label: 'Show Email to Team',
+                description: 'Let team members see your email',
+              })}
+              {renderSetting({
+                type: 'switch',
+                path: 'privacy.activityTracking',
+                label: 'Activity Analytics',
+                description: 'Help improve the app with usage data',
               })}
             </View>
           </View>
@@ -335,12 +517,27 @@ export default function SettingsScreen({ navigation }) {
                   </Text>
                 </View>
               )}
-              {renderSetting({
-                type: 'text',
-                path: 'communication.defaultPhoneNumber',
-                label: 'Business Phone',
-                placeholder: '+1 (555) 123-4567',
-              })}
+              
+              {/* Business Phone Number Selector */}
+              <TouchableOpacity
+                style={styles.settingRow}
+                onPress={() => setShowPhoneNumberPicker(true)}
+                disabled={loadingPhoneNumbers || phoneNumbers.length === 0}
+              >
+                <View style={styles.settingInfo}>
+                  <Text style={styles.settingLabel}>Business Phone</Text>
+                  <Text style={styles.settingDescription}>Your business phone number</Text>
+                </View>
+                <View style={styles.selectValue}>
+                  <Text style={styles.selectText}>
+                    {loadingPhoneNumbers ? 'Loading...' : 
+                     preferences.communication?.phoneNumberId ? 
+                       phoneNumbers.find(n => n._id === preferences.communication.phoneNumberId)?.number || 'Select number' :
+                       'Select number'}
+                  </Text>
+                  <Ionicons name="chevron-forward" size={20} color={COLORS.textLight} />
+                </View>
+              </TouchableOpacity>
             </View>
 
             <View style={styles.section}>
@@ -359,6 +556,27 @@ export default function SettingsScreen({ navigation }) {
                 placeholder: '- John from ABC Company',
                 description: 'Added to the end of your messages',
               })}
+              
+              {/* SMS From Number Selector */}
+              <TouchableOpacity
+                style={styles.settingRow}
+                onPress={() => setShowSmsNumberPicker(true)}
+                disabled={loadingSmsNumbers || smsNumbers.length === 0}
+              >
+                <View style={styles.settingInfo}>
+                  <Text style={styles.settingLabel}>SMS From Number</Text>
+                  <Text style={styles.settingDescription}>Which number to send texts from</Text>
+                </View>
+                <View style={styles.selectValue}>
+                  <Text style={styles.selectText}>
+                    {loadingSmsNumbers ? 'Loading...' : 
+                     preferences.communication?.smsNumberId ? 
+                       smsNumbers.find(n => n._id === preferences.communication.smsNumberId)?.label || 'Select number' :
+                       'Select number'}
+                  </Text>
+                  <Ionicons name="chevron-forward" size={20} color={COLORS.textLight} />
+                </View>
+              </TouchableOpacity>
             </View>
 
             <View style={styles.section}>
@@ -376,92 +594,86 @@ export default function SettingsScreen({ navigation }) {
                 description: 'Save text history to contacts',
               })}
             </View>
-          </View>
-        );
 
-      case 'calendar':
-        return (
-          <View style={styles.tabContent}>
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>CALENDAR PREFERENCES</Text>
-              {renderSetting({
-                type: 'select',
-                path: 'defaultCalendarView',
-                label: 'Default View',
-                options: OPTIONS.calendarView,
-              })}
-              {renderSetting({
-                type: 'switch',
-                path: 'appointmentReminders.enabled',
-                label: 'Appointment Reminders',
-                description: 'Get notified before appointments',
-              })}
-            </View>
+            {/* Phone Number Picker Modal */}
+            <Modal
+              visible={showPhoneNumberPicker}
+              transparent
+              animationType="slide"
+              onRequestClose={() => setShowPhoneNumberPicker(false)}
+            >
+              <View style={styles.modalOverlay}>
+                <TouchableOpacity
+                  style={styles.modalBackground}
+                  activeOpacity={1}
+                  onPress={() => setShowPhoneNumberPicker(false)}
+                />
+                <View style={styles.numberModalContent}>
+                  <View style={styles.modalHeader}>
+                    <Text style={styles.modalTitle}>Select Business Phone</Text>
+                    <TouchableOpacity onPress={() => setShowPhoneNumberPicker(false)}>
+                      <Ionicons name="close" size={24} color={COLORS.textDark} />
+                    </TouchableOpacity>
+                  </View>
+                  
+                  {phoneNumbers.map((number) => (
+                    <TouchableOpacity
+                      key={number._id}
+                      style={styles.numberOption}
+                      onPress={() => updatePhonePreference(number._id)}
+                    >
+                      <View style={styles.numberOptionContent}>
+                        <Text style={styles.numberLabel}>{number.label}</Text>
+                        <Text style={styles.numberValue}>{number.number}</Text>
+                      </View>
+                      {preferences.communication?.phoneNumberId === number._id && (
+                        <Ionicons name="checkmark-circle" size={24} color={COLORS.accent} />
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            </Modal>
 
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>WORKING HOURS</Text>
-              {renderSetting({
-                type: 'switch',
-                path: 'workingHours.enabled',
-                label: 'Set Working Hours',
-                description: 'Limit scheduling to business hours',
-              })}
-              {/* Add time pickers for start/end times here */}
-            </View>
-          </View>
-        );
-
-      case 'business':
-        return (
-          <View style={styles.tabContent}>
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>QUOTES & INVOICES</Text>
-              {renderSetting({
-                type: 'switch',
-                path: 'business.autoSaveQuotes',
-                label: 'Auto-save Quotes',
-                description: 'Save quotes as you work',
-              })}
-              {renderSetting({
-                type: 'text',
-                path: 'business.defaultTaxRate',
-                label: 'Default Tax Rate (%)',
-                placeholder: '8.5',
-              })}
-              {renderSetting({
-                type: 'select',
-                path: 'business.measurementUnit',
-                label: 'Measurement Units',
-                options: OPTIONS.measurementUnit,
-              })}
-            </View>
-          </View>
-        );
-
-      case 'privacy':
-        return (
-          <View style={styles.tabContent}>
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>DATA SHARING</Text>
-              {renderSetting({
-                type: 'switch',
-                path: 'privacy.showPhoneNumber',
-                label: 'Show Phone to Team',
-                description: 'Let team members see your phone',
-              })}
-              {renderSetting({
-                type: 'switch',
-                path: 'privacy.showEmail',
-                label: 'Show Email to Team',
-                description: 'Let team members see your email',
-              })}
-              {renderSetting({
-                type: 'switch',
-                path: 'privacy.activityTracking',
-                label: 'Activity Analytics',
-                description: 'Help improve the app with usage data',
-              })}
-            </View>
+            {/* SMS Number Picker Modal */}
+            <Modal
+              visible={showSmsNumberPicker}
+              transparent
+              animationType="slide"
+              onRequestClose={() => setShowSmsNumberPicker(false)}
+            >
+              <View style={styles.modalOverlay}>
+                <TouchableOpacity
+                  style={styles.modalBackground}
+                  activeOpacity={1}
+                  onPress={() => setShowSmsNumberPicker(false)}
+                />
+                <View style={styles.numberModalContent}>
+                  <View style={styles.modalHeader}>
+                    <Text style={styles.modalTitle}>Select SMS Number</Text>
+                    <TouchableOpacity onPress={() => setShowSmsNumberPicker(false)}>
+                      <Ionicons name="close" size={24} color={COLORS.textDark} />
+                    </TouchableOpacity>
+                  </View>
+                  
+                  {smsNumbers.map((number) => (
+                    <TouchableOpacity
+                      key={number._id}
+                      style={styles.numberOption}
+                      onPress={() => updateSmsPreference(number._id)}
+                    >
+                      <View style={styles.numberOptionContent}>
+                        <Text style={styles.numberLabel}>{number.label}</Text>
+                        <Text style={styles.numberValue}>{number.number}</Text>
+                      </View>
+                      {preferences.communication?.smsNumberId === number._id && (
+                        <Ionicons name="checkmark-circle" size={24} color={COLORS.accent} />
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            </Modal>
           </View>
         );
 
@@ -478,22 +690,24 @@ export default function SettingsScreen({ navigation }) {
           <Ionicons name="arrow-back" size={24} color={COLORS.textDark} />
         </TouchableOpacity>
         <Text style={styles.title}>Settings</Text>
-        <TouchableOpacity onPress={handleSave} disabled={saving}>
-          {saving ? (
-            <ActivityIndicator size="small" color={COLORS.accent} />
-          ) : (
-            <Text style={styles.saveButton}>Save</Text>
-          )}
-        </TouchableOpacity>
+        {activeTab === 'profile' ? (
+          <TouchableOpacity onPress={() => setEditingProfile(!editingProfile)}>
+            <Text style={styles.saveButton}>{editingProfile ? 'Cancel' : 'Edit'}</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity onPress={handleSave} disabled={saving}>
+            {saving ? (
+              <ActivityIndicator size="small" color={COLORS.accent} />
+            ) : (
+              <Text style={styles.saveButton}>Save</Text>
+            )}
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Tabs */}
       <View style={styles.tabContainer}>
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false}
-          style={styles.tabScroll}
-        >
+        <View style={styles.tabWrapper}>
           {TABS.map((tab) => (
             <TouchableOpacity
               key={tab.id}
@@ -518,7 +732,7 @@ export default function SettingsScreen({ navigation }) {
               </Text>
             </TouchableOpacity>
           ))}
-        </ScrollView>
+        </View>
         <Animated.View
           style={[
             styles.tabIndicator,
@@ -533,6 +747,21 @@ export default function SettingsScreen({ navigation }) {
       {/* Content */}
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         {renderTabContent()}
+        
+        {/* Save button for profile editing */}
+        {activeTab === 'profile' && editingProfile && (
+          <View style={styles.section}>
+            <TouchableOpacity
+              style={styles.profileSaveButton}
+              onPress={handleSave}
+              disabled={saving}
+            >
+              <Text style={styles.profileSaveButtonText}>
+                {saving ? 'Saving...' : 'Save Changes'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </ScrollView>
 
       {/* Option Picker Modal */}
@@ -582,15 +811,17 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
   },
-  tabScroll: {
-    flexGrow: 0,
+  tabWrapper: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
   },
   tab: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingVertical: 12,
-    minWidth: width / TABS.length,
+    flex: 1,
+    justifyContent: 'center',
   },
   tabActive: {
     // Active styles handled by text color
@@ -598,7 +829,7 @@ const styles = StyleSheet.create({
   tabText: {
     fontSize: FONT.small,
     color: COLORS.textLight,
-    marginLeft: 6,
+    marginLeft: 4,
     fontWeight: '500',
   },
   tabTextActive: {
@@ -677,6 +908,24 @@ const styles = StyleSheet.create({
     fontSize: FONT.body,
     color: COLORS.textDark,
   },
+  profileValue: {
+    fontSize: FONT.body,
+    color: COLORS.textDark,
+    marginTop: 8,
+  },
+  profileSaveButton: {
+    backgroundColor: COLORS.accent,
+    marginHorizontal: 20,
+    marginTop: 8,
+    paddingVertical: 12,
+    borderRadius: RADIUS.medium,
+    alignItems: 'center',
+  },
+  profileSaveButtonText: {
+    fontSize: FONT.body,
+    fontWeight: '600',
+    color: COLORS.white,
+  },
   warningBox: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -697,12 +946,27 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'flex-end',
   },
+  modalBackground: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
   modalContent: {
     backgroundColor: '#fff',
     borderTopLeftRadius: RADIUS.large,
     borderTopRightRadius: RADIUS.large,
     maxHeight: '70%',
     ...SHADOW.medium,
+  },
+  numberModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 20,
+    paddingBottom: 40,
+    maxHeight: '80%',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -736,5 +1000,27 @@ const styles = StyleSheet.create({
   optionTextSelected: {
     fontWeight: '600',
     color: COLORS.accent,
+  },
+  numberOption: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEEEEE',
+  },
+  numberOptionContent: {
+    flex: 1,
+  },
+  numberLabel: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#000000',
+  },
+  numberValue: {
+    fontSize: 14,
+    color: '#666666',
+    marginTop: 4,
   },
 });

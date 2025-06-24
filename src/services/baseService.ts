@@ -267,6 +267,10 @@ export abstract class BaseService {
           authData
         );
       }
+      if (config.url?.includes('/api/sms/send')) {
+        // Don't retry SMS sends to avoid duplicate messages
+        throw error;
+      }
 
       // Handle token expiry
       if (axiosError.response?.status === 401) {
@@ -276,6 +280,7 @@ export abstract class BaseService {
       this.handleError(axiosError, showError);
       throw error;
     }
+    
   }
 
   /**

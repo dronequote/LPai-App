@@ -686,17 +686,21 @@ export default function ContactDetailScreen() {
   
   // Render conversations tab
   const renderConversationsTab = () => (
-    <ConversationsList
-      contactId={contact._id}
-      contactPhone={contact.phone}
-      contactEmail={contact.email}
-      locationId={user?.locationId || ''}
-      userId={user?._id || ''}
-      userName={user?.name}
-      onNavigateToProject={handleNavigateToProject}
-      onNavigateToAppointment={handleNavigateToAppointment}
-      style={styles.conversationsContainer}
-    />
+<ConversationsList
+  contactId={contact._id}
+  contactPhone={contact.phone}
+  contactEmail={contact.email}
+  locationId={user?.locationId || ''}
+  userId={user?._id || ''}
+  userName={user?.name}
+  user={user} // Add this - passes the full user object with preferences
+  onNavigateToProject={handleNavigateToProject}
+  onNavigateToAppointment={handleNavigateToAppointment}
+  onNavigateToSettings={() => {
+    navigation.navigate('SettingsScreen', { initialTab: 'communication' });
+  }} // Add this - navigates to Settings (Communication tab)
+  style={styles.conversationsContainer}
+/>
   );
   
   // Render notes tab
