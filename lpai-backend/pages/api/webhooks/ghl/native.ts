@@ -1,4 +1,5 @@
 // pages/api/webhooks/ghl/native.ts
+// Updated: 2025-06-24 - Added direct processing for messages
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../../src/lib/mongodb';
 import crypto from 'crypto';
@@ -81,112 +82,157 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
 
-    // Check for duplicate outbound messages BEFORE queuing
-    if (req.body.type === 'OutboundMessage' && req.body.direction === 'outbound') {
-      // Check if we already have this message logged
+    // Check for duplicate outbound messages BEFORE any processing
+    if (eventType === 'OutboundMessage' && req.body.messageId) {
       const existingMessage = await db.collection('messages').findOne({
-        ghlMessageId: req.body.messageId,
-        locationId: req.body.locationId
+        ghlMessageId: req.body.messageId
       });
-
+      
       if (existingMessage) {
-        // Message already logged by our SMS send endpoint
-        console.log(`[Native Webhook ${webhookId}] Outbound message already exists`, {
-          messageId: req.body.messageId,
-          webhookId: req.body.webhookId
-        });
+        console.log(`[Native Webhook ${webhookId}] Duplicate outbound message ${req.body.messageId}, skipping`);
         return res.status(200).json({ 
           success: true, 
-          message: 'Message already processed',
-          duplicate: true
+          skipped: true, 
+          reason: 'Duplicate outbound message' 
         });
       }
     }
 
-    // Analyze webhook to determine routing
-    const routeDecision = analyzeWebhook(req.body);
+    // Parse the webhook data from the body
+    const webhookData = req.body;
     
-    console.log(`[Native Webhook ${webhookId}] Route decision:`, {
-      type: routeDecision.type,
-      queue: routeDecision.queueType,
-      priority: routeDecision.priority,
-      direct: routeDecision.shouldDirectProcess
-    });
-
-    // Initialize queue manager
-    const queueManager = new QueueManager(db);
-
-    // Check if we should process directly
-    /*  if (routeDecision.shouldDirectProcess) {
-      const systemHealthy = await isSystemHealthy(db);
-      
-      if (systemHealthy) {
-        // Process immediately in background
-        processMessageDirect(db, webhookId, req.body)
-          .then(() => {
-            console.log(`[Native Webhook ${webhookId}] Direct processing completed`);
-          })
-          .catch((error) => {
-            console.error(`[Native Webhook ${webhookId}] Direct processing failed:`, error);
-            // Will be picked up by queue processor as backup
-          });
-      }
+    // Handle nested webhook structure for native webhooks
+    let parsedPayload;
+    if (webhookData.webhookPayload) {
+      // Native webhook structure
+      parsedPayload = {
+        ...webhookData.webhookPayload,
+        type: webhookData.type,
+        locationId: webhookData.locationId || webhookData.webhookPayload.locationId,
+        companyId: webhookData.companyId || webhookData.webhookPayload.companyId,
+        timestamp: webhookData.timestamp || webhookData.webhookPayload.timestamp || new Date().toISOString(),
+        webhookId: webhookData.webhookId,
+        // Add the entire webhook payload as nested data in case we need it
+        webhookPayload: webhookData.webhookPayload
+      };
+    } else {
+      // Direct webhook structure
+      parsedPayload = webhookData;
     }
-    */
 
-    // Always queue (even if direct processing) as backup
-    try {
-      await queueManager.addToQueue({
-        webhookId,
-        type: routeDecision.type,
-        queueType: routeDecision.queueType,
-        priority: routeDecision.priority,
-        payload: req.body,
-        receivedAt
-      });
+    // Check system health
+    const systemHealthy = await isSystemHealthy(db);
+    if (!systemHealthy) {
+      console.warn(`[Native Webhook ${webhookId}] System unhealthy, queuing with lower priority`);
+    }
+
+    // NEW: Fast-track message processing
+    const { type, locationId } = parsedPayload;
+    
+    if (type === 'InboundMessage' || type === 'OutboundMessage') {
+      console.log(`[Native Webhook ${webhookId}] Attempting direct processing for ${type}`);
       
-      console.log(`[Native Webhook ${webhookId}] Queued successfully`);
-      
-    } catch (error: any) {
-      if (error.message === 'DUPLICATE_WEBHOOK') {
-        console.log(`[Native Webhook ${webhookId}] Duplicate webhook, ignoring`);
-        return res.status(200).json({ 
-          success: true, 
+      try {
+        // Process directly for instant updates
+        await processMessageDirect(db, webhookId, {
+          type,
+          locationId,
+          timestamp: webhookData.timestamp,
+          ...parsedPayload
+        });
+        
+        console.log(`[Native Webhook ${webhookId}] Direct processing successful for ${type}`);
+        
+        // Still queue as backup but mark as already processed
+        const queueManager = new QueueManager(db);
+        await queueManager.addToQueue({
           webhookId,
-          duplicate: true
+          type,
+          payload: parsedPayload,
+          queueType: 'messages',
+          priority: 2,
+          receivedAt,
+          metadata: { 
+            directProcessed: true,
+            directProcessedAt: new Date()
+          }
         });
+        
+        // Return early - we're done!
+        return res.status(200).json({ 
+          success: true, 
+          processed: 'direct',
+          webhookId 
+        });
+        
+      } catch (directError: any) {
+        console.error(`[Native Webhook ${webhookId}] Direct processing failed for ${type}:`, directError.message);
+        // Fall through to normal queue processing
       }
-      throw error;
     }
 
-    // Log unrecognized types for discovery
-    if (!routeDecision.isRecognized) {
-      await db.collection('webhook_discovery').insertOne({
-        _id: new ObjectId(),
-        type: routeDecision.type,
-        firstSeen: new Date(),
-        lastSeen: new Date(),
-        count: 1,
-        samplePayload: req.body
-      });
-    }
+    // Analyze webhook for routing
+    const routingResult = analyzeWebhook(parsedPayload);
+    console.log(`[Native Webhook ${webhookId}] Routing: queue=${routingResult.queueType}, priority=${routingResult.priority}`);
 
-    // Return 200 immediately (don't block GHL)
-    return res.status(200).json({ 
-      success: true, 
+    // Queue for processing
+    const queueManager = new QueueManager(db);
+    const queueItem = await queueManager.addToQueue({
       webhookId,
-      type: routeDecision.type,
-      queued: true 
+      type: parsedPayload.type,
+      payload: parsedPayload,
+      queueType: routingResult.queueType,
+      priority: routingResult.priority,
+      receivedAt,
+      metadata: {
+        source: 'native',
+        systemHealthy,
+        routerAnalysis: routingResult
+      }
     });
-    
+
+    console.log(`[Native Webhook ${webhookId}] Queued successfully as ${queueItem._id}`);
+
+    // Store webhook for discovery/monitoring
+    await db.collection('webhook_discovery').insertOne({
+      _id: new ObjectId(),
+      webhookId,
+      type: parsedPayload.type,
+      locationId: parsedPayload.locationId,
+      companyId: parsedPayload.companyId,
+      receivedAt,
+      queuedAt: new Date(),
+      queueType: routingResult.queueType,
+      priority: routingResult.priority,
+      structure: {
+        hasWebhookPayload: !!webhookData.webhookPayload,
+        topLevelKeys: Object.keys(webhookData),
+        payloadKeys: webhookData.webhookPayload ? Object.keys(webhookData.webhookPayload) : [],
+        nestedDepth: webhookData.webhookPayload ? 2 : 1
+      },
+      ttl: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days
+    });
+
+    // Always return success to GHL
+    return res.status(200).json({ success: true, webhookId });
+
   } catch (error: any) {
     console.error(`[Native Webhook ${webhookId}] Fatal error:`, error);
     
-    // Still return 200 to prevent GHL from retrying
+    // Still return 200 to prevent GHL retries
     return res.status(200).json({ 
-      success: false,
-      error: 'Internal error',
-      webhookId
+      success: false, 
+      error: error.message,
+      webhookId 
     });
   }
 }
+
+// Vercel configuration
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '10mb'
+    }
+  }
+};
