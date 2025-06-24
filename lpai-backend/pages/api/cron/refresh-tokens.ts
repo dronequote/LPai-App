@@ -1,8 +1,8 @@
 // pages/api/cron/refresh-tokens.ts
-// Updated: 2025-06-24 - Use simplified refresh endpoint
+// Updated: 2025-06-24 - Call refresh logic directly instead of HTTP request
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
-import { tokenNeedsRefresh } from '../../../src/utils/ghlAuth';
+import { refreshOAuthToken, tokenNeedsRefresh } from '../../../src/utils/ghlAuth';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   // Verify cron secret
@@ -17,56 +17,36 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const client = await clientPromise;
     const db = client.db('lpai');
     
-    // Find all entities with OAuth that need refresh
-    const entities = await db.collection('locations').find({
+    // Find all locations with OAuth that need refresh
+    const locations = await db.collection('locations').find({
       'ghlOAuth.accessToken': { $exists: true },
       'ghlOAuth.refreshToken': { $exists: true },
       appInstalled: true
     }).toArray();
     
-    console.log(`[Token Refresh Cron] Checking ${entities.length} entities`);
+    console.log(`[Token Refresh Cron] Checking ${locations.length} locations`);
     
     const results = {
-      checked: entities.length,
+      checked: locations.length,
       refreshed: 0,
       failed: 0,
       errors: [] as any[]
     };
     
-    // Process each entity
-    for (const entity of entities) {
+    // Process each location
+    for (const location of locations) {
       try {
-        if (tokenNeedsRefresh(entity)) {
-          const entityType = entity.locationId === null ? 'company' : 'location';
-          const entityId = entityType === 'company' ? entity.companyId : entity.locationId;
-          
-          console.log(`[Token Refresh Cron] Refreshing ${entityType}: ${entityId}`);
-          
-          // Call the simplified refresh endpoint
-          const response = await fetch(
-            `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'}/api/oauth/refresh-token`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                entityId,
-                entityType
-              })
-            }
-          );
-          
-          if (response.ok) {
-            results.refreshed++;
-          } else {
-            const error = await response.json();
-            throw new Error(error.details || error.error);
-          }
+        if (tokenNeedsRefresh(location)) {
+          console.log(`[Token Refresh Cron] Refreshing token for ${location.locationId || location.companyId}`);
+          await refreshOAuthToken(location);
+          results.refreshed++;
         }
       } catch (error: any) {
+        console.error(`[Token Refresh Cron] Failed for ${location.locationId || location.companyId}:`, error.message);
         results.failed++;
         results.errors.push({
-          entityId: entity.locationId || entity.companyId,
-          entityType: entity.locationId === null ? 'company' : 'location',
+          locationId: location.locationId,
+          companyId: location.companyId,
           error: error.message
         });
       }
