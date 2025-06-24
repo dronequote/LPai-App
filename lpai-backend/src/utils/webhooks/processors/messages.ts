@@ -1,5 +1,7 @@
 // src/utils/webhooks/processors/messages.ts
-//Date 2025/06/19
+// Date: 2025/06/23
+// FIXED: Handle new webhook payload structure where conversation comes as { value: { _id: "..." } }
+// FIXED: Store conversationId as ObjectId, not string
 
 import { BaseProcessor } from './base';
 import { QueueItem } from '../queueManager';
@@ -61,7 +63,7 @@ export class MessagesProcessor extends BaseProcessor {
    */
   private async processInboundMessage(payload: any, webhookId: string): Promise<void> {
     // Handle the nested structure - check if this is a native webhook format
-    let locationId, contactId, conversationId, message, timestamp;
+    let locationId, contactId, conversationId, message, timestamp, conversation;
     
     if (payload.webhookPayload) {
       // Native webhook format - extract from webhookPayload
@@ -71,9 +73,11 @@ export class MessagesProcessor extends BaseProcessor {
       conversationId = webhookData.conversationId;
       message = webhookData.message;
       timestamp = webhookData.timestamp || payload.timestamp;
+      // NEW: Handle new conversation structure
+      conversation = webhookData.conversation;
     } else {
       // Direct format
-      ({ locationId, contactId, conversationId, message, timestamp } = payload);
+      ({ locationId, contactId, conversationId, message, timestamp, conversation } = payload);
     }
     
     if (!locationId || !contactId || !message) {
@@ -134,7 +138,7 @@ export class MessagesProcessor extends BaseProcessor {
     try {
       await session.withTransaction(async () => {
         // Update or create conversation
-        const conversation = await this.db.collection('conversations').findOneAndUpdate(
+        const conversationResult = await this.db.collection('conversations').findOneAndUpdate(
           { 
             ghlConversationId: conversationId,
             locationId 
@@ -178,11 +182,31 @@ export class MessagesProcessor extends BaseProcessor {
           }
         );
 
+        // FIXED: Handle new webhook payload structure
+        let conversationObjectId;
+        if (conversation && conversation.value && conversation.value._id) {
+          // New webhook format: conversation comes as { value: { _id: "..." } }
+          conversationObjectId = new ObjectId(conversation.value._id);
+          console.log(`[MessagesProcessor] Using conversation._id from new webhook format: ${conversation.value._id}`);
+        } else if (conversationResult && conversationResult.value && conversationResult.value._id) {
+          // Standard format from findOneAndUpdate
+          conversationObjectId = conversationResult.value._id;
+        } else {
+          console.error(`[MessagesProcessor] Could not determine conversation ObjectId`, {
+            hasConversation: !!conversation,
+            hasConversationValue: !!(conversation && conversation.value),
+            hasConversationValueId: !!(conversation && conversation.value && conversation.value._id),
+            hasResult: !!conversationResult,
+            hasResultValue: !!(conversationResult && conversationResult.value)
+          });
+          throw new Error('Could not determine conversation ObjectId');
+        }
+
         // Build message document
         const messageDoc: any = {
           _id: new ObjectId(),
           ghlMessageId: message?.id || new ObjectId().toString(),
-          conversationId: conversation.value._id, // FIXED: Remove .toString() to keep as ObjectId
+          conversationId: conversationObjectId, // Use ObjectId directly
           ghlConversationId: conversationId,
           locationId,
           contactId: contact._id.toString(),
@@ -288,7 +312,7 @@ export class MessagesProcessor extends BaseProcessor {
    */
   private async processOutboundMessage(payload: any, webhookId: string): Promise<void> {
     // Handle the nested structure
-    let locationId, contactId, conversationId, message, userId, timestamp;
+    let locationId, contactId, conversationId, message, userId, timestamp, conversation;
     
     if (payload.webhookPayload) {
       // Native webhook format
@@ -299,6 +323,8 @@ export class MessagesProcessor extends BaseProcessor {
       message = webhookData;  // For outbound, the whole webhookPayload is the message
       userId = webhookData.userId;
       timestamp = webhookData.timestamp || payload.timestamp;
+      // NEW: Handle new conversation structure
+      conversation = webhookData.conversation;
       
       // Extract message details from webhookData
       if (!message.body && webhookData.body) {
@@ -311,7 +337,7 @@ export class MessagesProcessor extends BaseProcessor {
       }
     } else {
       // Direct format
-      ({ locationId, contactId, conversationId, message, userId, timestamp } = payload);
+      ({ locationId, contactId, conversationId, message, userId, timestamp, conversation } = payload);
     }
     
     // Add validation for required fields
@@ -397,7 +423,7 @@ export class MessagesProcessor extends BaseProcessor {
     const conversationType = message?.type ? this.getConversationType(message.type) : 'TYPE_PHONE';
 
     // Update or create conversation
-    const conversation = await this.db.collection('conversations').findOneAndUpdate(
+    const conversationResult = await this.db.collection('conversations').findOneAndUpdate(
       { 
         ghlConversationId: conversationId,
         locationId 
@@ -440,11 +466,28 @@ export class MessagesProcessor extends BaseProcessor {
       }
     );
 
+    // FIXED: Handle new webhook payload structure for outbound too
+    let conversationObjectId;
+    if (conversation && conversation.value && conversation.value._id) {
+      // New webhook format: conversation comes as { value: { _id: "..." } }
+      conversationObjectId = new ObjectId(conversation.value._id);
+      console.log(`[MessagesProcessor] Using conversation._id from new webhook format (outbound): ${conversation.value._id}`);
+    } else if (conversationResult && conversationResult.value && conversationResult.value._id) {
+      // Standard format from findOneAndUpdate
+      conversationObjectId = conversationResult.value._id;
+    } else {
+      console.error(`[MessagesProcessor] Could not determine conversation ObjectId for outbound`, {
+        hasConversation: !!conversation,
+        hasResult: !!conversationResult
+      });
+      throw new Error('Could not determine conversation ObjectId for outbound message');
+    }
+
     // Build message document
     const messageDoc: any = {
       _id: new ObjectId(),
       ghlMessageId: message?.id || new ObjectId().toString(),
-      conversationId: conversation.value._id, // FIXED: Remove .toString() to keep as ObjectId
+      conversationId: conversationObjectId, // Use ObjectId directly
       ghlConversationId: conversationId,
       locationId,
       contactId: contact._id.toString(),
