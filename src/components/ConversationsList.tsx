@@ -14,15 +14,13 @@ import {
  RefreshControl,
  FlatList,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage'; // ADD THIS IMPORT
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { conversationService } from '../services/conversationService';
 import { smsService } from '../services/smsService';
 import { emailService } from '../services/emailService';
 import { COLORS, FONT, SHADOW } from '../styles/theme';
-// NEW: Import api for email fetching
 import api from '../lib/api';
-// NEW: Import EmailViewerModal
 import EmailViewerModal from './EmailViewerModal';
 import { useRealtimeMessages } from '../hooks/useRealtimeMessages';
 
@@ -35,10 +33,8 @@ const messageFilters: { id: MessageFilter; label: string; icon: string }[] = [
  { id: 'call', label: 'Calls', icon: 'call' },
 ];
 
-// NEW: Message status type
 type MessageStatus = 'sending' | 'sent' | 'delivered' | 'failed';
 
-// NEW: Optimistic message interface
 interface OptimisticMessage {
   id: string;
   type: number;
@@ -48,18 +44,18 @@ interface OptimisticMessage {
   subject?: string;
   read: boolean;
   status: MessageStatus;
-  tempId: string; // For tracking optimistic updates
+  tempId: string;
   retryCount?: number;
 }
 
 interface ConversationsListProps {
- contactObjectId: string;  // Changed from contactId
+ contactObjectId: string;
  contactPhone: string;
  contactEmail: string;
  locationId: string;
  userId: string;
  userName?: string;
- user?: any; // Add this to get user preferences
+ user?: any;
  onNavigateToProject?: (projectId: string) => void;
  onNavigateToAppointment?: (appointmentId: string) => void;
  onNavigateToSettings?: () => void;
@@ -67,19 +63,19 @@ interface ConversationsListProps {
 }
 
 export default function ConversationsList({
- contactObjectId,  // Changed from contactId
+ contactObjectId,
  contactPhone,
  contactEmail,
  locationId,
  userId,
  userName,
- user, // Add this
+ user,
  onNavigateToProject,
  onNavigateToAppointment,
  onNavigateToSettings,
  style,
 }: ConversationsListProps) {
- // Conversations state
+ // State declarations
  const [messageFilter, setMessageFilter] = useState<MessageFilter>('all');
  const [conversations, setConversations] = useState<any[]>([]);
  const [messages, setMessages] = useState<any[]>([]);
@@ -89,91 +85,20 @@ export default function ConversationsList({
  const [emailSubject, setEmailSubject] = useState('');
  const [sendingMessage, setSendingMessage] = useState(false);
  const [refreshingConversations, setRefreshingConversations] = useState(false);
- 
- // NEW: Pagination state
  const [offset, setOffset] = useState(0);
  const [hasMore, setHasMore] = useState(true);
  const [loadingMore, setLoadingMore] = useState(false);
- 
- // NEW: Email content cache
  const [emailContentCache, setEmailContentCache] = useState<Record<string, any>>({});
  const [fetchingEmails, setFetchingEmails] = useState<Set<string>>(new Set());
- 
- // NEW: Email viewer modal state
  const [emailViewerVisible, setEmailViewerVisible] = useState(false);
  const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
  const [selectedEmailSubject, setSelectedEmailSubject] = useState<string>('');
 
- // NEW: Track optimistic messages
+ // Refs
  const optimisticMessagesRef = useRef<Map<string, OptimisticMessage>>(new Map());
+ const loadConversationsRef = useRef<any>(null);
 
- // Real-time messages hook - FIXED VERSION
- const { isConnected } = useRealtimeMessages({
-   locationId,
-   contactObjectId,
-   conversationId: conversations[0]?._id,
-   onNewMessage: useCallback((newMessage) => {
-     if (__DEV__) {
-       console.log('[ConversationsList] New message received:', {
-         id: newMessage.id,
-         _id: newMessage._id,
-         body: newMessage.body?.substring(0, 50),
-         direction: newMessage.direction
-       });
-     }
-     
-     // Force a refresh approach - more reliable
-     if (newMessage.direction === 'inbound') {
-       // Small delay to ensure the message is saved in DB
-       setTimeout(() => {
-         if (__DEV__) {
-           console.log('[ConversationsList] Reloading conversations for inbound message');
-         }
-         loadConversations();
-       }, 500);
-     } else {
-       // For outbound messages, try to merge
-       setMessages(prevMessages => {
-         // Simple duplicate check
-         const messageId = newMessage.id || newMessage._id;
-         const exists = prevMessages.some(msg => 
-           (msg.id === messageId) || (msg._id === messageId)
-         );
-         
-         if (exists) {
-           if (__DEV__) {
-             console.log('[ConversationsList] Message already exists, skipping');
-           }
-           return prevMessages;
-         }
-         
-         if (__DEV__) {
-           console.log('[ConversationsList] Adding new message to list');
-         }
-         
-         // Remove any optimistic message with the same body
-         const filtered = prevMessages.filter(msg => {
-           if (msg.tempId && msg.body === newMessage.body) {
-             optimisticMessagesRef.current.delete(msg.tempId);
-             return false;
-           }
-           return true;
-         });
-         
-         return [newMessage, ...filtered];
-       });
-     }
-   }, []), // Empty deps array since loadConversations is defined below
-   onConnectionChange: useCallback((connected) => {
-     if (__DEV__) {
-       console.log('[ConversationsList] Connection status changed:', connected);
-     }
-   }, []),
-   enabled: true,
-   pollInterval: 2000 // Poll every 2 seconds
- });
-
- // NEW: Helper function to clear all message caches
+ // Helper function to clear all message caches
  const clearAllMessageCaches = async () => {
    try {
      const keys = await AsyncStorage.getAllKeys();
@@ -192,31 +117,73 @@ export default function ConversationsList({
    }
  };
 
- // Load conversations
+ // Real-time messages hook with SSE
+ const { isConnected } = useRealtimeMessages({
+   locationId,
+   contactObjectId,
+   conversationId: conversations[0]?._id,
+   onNewMessage: useCallback((newMessage) => {
+     if (newMessage.direction === 'inbound') {
+       setTimeout(() => {
+         if (loadConversationsRef.current) {
+           loadConversationsRef.current();
+         }
+       }, 500);
+     } else {
+       setMessages(prevMessages => {
+         const messageId = newMessage.id || newMessage._id;
+         const exists = prevMessages.some(msg => 
+           (msg.id === messageId) || (msg._id === messageId)
+         );
+         
+         if (exists) {
+           return prevMessages;
+         }
+         
+         const filtered = prevMessages.filter(msg => {
+           if (msg.tempId && msg.body === newMessage.body) {
+             optimisticMessagesRef.current.delete(msg.tempId);
+             return false;
+           }
+           return true;
+         });
+         
+         return [newMessage, ...filtered];
+       });
+     }
+   }, []),
+   onConnectionChange: useCallback((connected) => {
+     if (__DEV__) {
+       console.log('[ConversationsList] SSE connection:', connected ? 'Connected' : 'Disconnected');
+     }
+   }, []),
+   enabled: true
+ });
+
+ // Load conversations function
  const loadConversations = async (isLoadMore = false) => {
-   if (!locationId || !contactObjectId) return;  // Changed from contactId
+   if (!locationId || !contactObjectId) return;
    
    if (!isLoadMore) {
      setLoadingMessages(true);
-     setOffset(0); // Reset offset for fresh load
+     setOffset(0);
    } else {
      setLoadingMore(true);
    }
    
    try {
      const convs = await conversationService.list(locationId, {
-       contactObjectId: contactObjectId  // Changed from contactId
+       contactObjectId: contactObjectId
      });
      
      if (__DEV__) {
-       console.log('Loading conversations for contact:', contactObjectId);  // Changed from contactId
+       console.log('Loading conversations for contact:', contactObjectId);
        console.log('Conversations response:', convs);
      }
      
      if (convs && convs.length > 0) {
        setConversations(convs);
        
-       // Load messages from first conversation
        try {
          const messagesResponse = await conversationService.getMessages(
            convs[0]._id,
@@ -224,7 +191,7 @@ export default function ConversationsList({
            {
              limit: 20,
              offset: isLoadMore ? offset : 0,
-             cache: false // Force fresh fetch
+             cache: false
            }
          );
          
@@ -241,17 +208,14 @@ export default function ConversationsList({
            setMessages(prevMessages => [...prevMessages, ...newMessages]);
            setOffset(prevOffset => prevOffset + newMessages.length);
          } else {
-           // NEW: Merge with optimistic messages that haven't been replaced
            const optimisticMessages = Array.from(optimisticMessagesRef.current.values());
            const mergedMessages = [...optimisticMessages, ...newMessages];
            setMessages(mergedMessages);
            setOffset(newMessages.length);
          }
          
-         // Update hasMore based on pagination
          setHasMore(messagesResponse.pagination?.hasMore || false);
          
-         // NEW: Auto-fetch email content for recent emails without content
          const emailsToFetch = newMessages
            .filter(msg => 
              msg.type === 3 && 
@@ -259,7 +223,7 @@ export default function ConversationsList({
              msg.emailMessageId &&
              !emailContentCache[msg.emailMessageId]
            )
-           .slice(0, 5); // Limit to 5 emails at a time
+           .slice(0, 5);
          
          if (emailsToFetch.length > 0) {
            fetchEmailContents(emailsToFetch);
@@ -276,7 +240,7 @@ export default function ConversationsList({
        setMessages([]);
        
        if (__DEV__) {
-         console.log('No conversations found for contact:', contactObjectId);  // Changed from contactId
+         console.log('No conversations found for contact:', contactObjectId);
        }
      }
    } catch (error: any) {
@@ -291,7 +255,10 @@ export default function ConversationsList({
    }
  };
 
- // NEW: Fetch email contents
+ // Assign loadConversations to ref so it can be called from realtime hook
+ loadConversationsRef.current = loadConversations;
+
+ // Fetch email contents
  const fetchEmailContents = async (emails: any[]) => {
    const fetchPromises = emails.map(async (email) => {
      if (fetchingEmails.has(email.emailMessageId)) return;
@@ -299,7 +266,7 @@ export default function ConversationsList({
      setFetchingEmails(prev => new Set(prev).add(email.emailMessageId));
      
      try {
-       const response = await api.get(`/messages/email/${email.emailMessageId}`, {
+       const response = await api.get(`/api/messages/email/${email.emailMessageId}`, {
          params: { locationId }
        });
        
@@ -309,7 +276,6 @@ export default function ConversationsList({
            [email.emailMessageId]: response.data.email
          }));
          
-         // Update the message in state with fetched content
          setMessages(prevMessages => 
            prevMessages.map(msg => 
              msg.emailMessageId === email.emailMessageId
@@ -338,14 +304,14 @@ export default function ConversationsList({
    await Promise.all(fetchPromises);
  };
 
- // NEW: Fetch single email content on tap
+ // Fetch single email content on tap
  const fetchEmailContent = async (emailMessageId: string) => {
    if (fetchingEmails.has(emailMessageId) || emailContentCache[emailMessageId]) return;
    
    setFetchingEmails(prev => new Set(prev).add(emailMessageId));
    
    try {
-     const response = await api.get(`/messages/email/${emailMessageId}`, {
+     const response = await api.get(`/api/messages/email/${emailMessageId}`, {
        params: { locationId }
      });
      
@@ -355,7 +321,6 @@ export default function ConversationsList({
          [emailMessageId]: response.data.email
        }));
        
-       // Update the message in state
        setMessages(prevMessages => 
          prevMessages.map(msg => 
            msg.emailMessageId === emailMessageId
@@ -382,35 +347,30 @@ export default function ConversationsList({
    }
  };
 
- // UPDATED: Refresh handler with proper cache clearing
+ // Refresh handler with proper cache clearing
  const onRefreshConversations = useCallback(async () => {
-   if (!locationId || !contactObjectId) return;  // Changed from contactId
+   if (!locationId || !contactObjectId) return;
    
    setRefreshingConversations(true);
    try {
-     // Clear ALL relevant caches
      await conversationService.clearConversationCache(locationId);
      await clearAllMessageCaches();
      
-     // Clear optimistic messages
      optimisticMessagesRef.current.clear();
      
-     // Now load fresh conversations
      const convs = await conversationService.list(locationId, {
-       contactObjectId: contactObjectId  // Changed from contactId
+       contactObjectId: contactObjectId
      });
      
      if (__DEV__) {
-       console.log('Refreshing conversations for contact:', contactObjectId);  // Changed from contactId
+       console.log('Refreshing conversations for contact:', contactObjectId);
        console.log('Fresh conversations response:', convs);
      }
      
      if (convs && convs.length > 0) {
        setConversations(convs);
        
-       // Load messages from first conversation
        try {
-         // Force fresh fetch by clearing cache first
          if (convs[0]._id) {
            const messagesCacheKey = `@lpai_cache_GET_/api/conversations/${convs[0]._id}/messages`;
            const keys = await AsyncStorage.getAllKeys();
@@ -428,7 +388,6 @@ export default function ConversationsList({
          setOffset(messagesResponse.messages?.length || 0);
          setHasMore(messagesResponse.pagination?.hasMore || false);
          
-         // Auto-fetch recent emails
          const emailsToFetch = (messagesResponse.messages || [])
            .filter(msg => 
              msg.type === 3 && 
@@ -454,19 +413,18 @@ export default function ConversationsList({
    } finally {
      setRefreshingConversations(false);
    }
- }, [locationId, contactObjectId, emailContentCache]);  // Changed from contactId
+ }, [locationId, contactObjectId, emailContentCache]);
 
  // Load conversations on mount
  useEffect(() => {
    loadConversations();
- }, [contactObjectId, locationId]);  // Changed from contactId
+ }, [contactObjectId, locationId]);
 
- // NEW: Retry failed message
+ // Retry failed message
  const retryMessage = async (tempId: string) => {
    const optimisticMessage = optimisticMessagesRef.current.get(tempId);
    if (!optimisticMessage) return;
 
-   // Update status to sending
    optimisticMessage.status = 'sending';
    optimisticMessage.retryCount = (optimisticMessage.retryCount || 0) + 1;
    setMessages(prevMessages => 
@@ -477,7 +435,6 @@ export default function ConversationsList({
 
    try {
      if (optimisticMessage.type === 1) {
-       // Retry SMS
        const fromNumber = user?.preferences?.communication?.defaultPhoneNumber;
        const formattedFromNumber = fromNumber?.startsWith('+') ? fromNumber : `+1${fromNumber}`;
        const formattedToNumber = contactPhone.startsWith('+') ? contactPhone : `+1${contactPhone}`;
@@ -492,7 +449,6 @@ export default function ConversationsList({
          templateKey: 'custom',
        });
      } else {
-       // Retry Email
        await emailService.send({
          contactObjectId: contactObjectId,
          locationId: locationId,
@@ -502,7 +458,6 @@ export default function ConversationsList({
        });
      }
 
-     // Success - update status
      optimisticMessage.status = 'sent';
      setMessages(prevMessages => 
        prevMessages.map(msg => 
@@ -510,14 +465,12 @@ export default function ConversationsList({
        )
      );
 
-     // Remove from optimistic after delay
      setTimeout(() => {
        optimisticMessagesRef.current.delete(tempId);
        loadConversations();
      }, 2000);
 
    } catch (error) {
-     // Failed again
      optimisticMessage.status = 'failed';
      setMessages(prevMessages => 
        prevMessages.map(msg => 
@@ -527,13 +480,12 @@ export default function ConversationsList({
    }
  };
 
- // UPDATED: handleSendMessage with optimistic updates
+ // Handle send message with optimistic updates
  const handleSendMessage = async () => {
    if (!composeText.trim() || !userId || !locationId) return;
    
    setSendingMessage(true);
    
-   // Create optimistic message
    const tempId = `temp_${Date.now()}`;
    const optimisticMessage: OptimisticMessage = {
      id: tempId,
@@ -547,13 +499,9 @@ export default function ConversationsList({
      status: 'sending',
    };
 
-   // Add to optimistic messages map
    optimisticMessagesRef.current.set(tempId, optimisticMessage);
-
-   // Add to UI immediately
    setMessages(prevMessages => [optimisticMessage, ...prevMessages]);
    
-   // Clear inputs immediately for better UX
    const savedComposeText = composeText;
    const savedEmailSubject = emailSubject;
    setComposeText('');
@@ -561,7 +509,6 @@ export default function ConversationsList({
 
    try {
      if (composeMode === 'sms') {
-       // Check if SMS is configured by looking at user preferences directly
        const smsNumberId = user?.preferences?.communication?.smsNumberId;
        
        if (__DEV__) {
@@ -571,7 +518,6 @@ export default function ConversationsList({
        }
        
        if (!smsNumberId) {
-         // Restore text and mark as failed
          setComposeText(savedComposeText);
          optimisticMessage.status = 'failed';
          setMessages(prevMessages => 
@@ -599,7 +545,6 @@ export default function ConversationsList({
          return;
        }
        
-       // Get the phone number from user preferences to avoid the 404 error
        const fromNumber = user?.preferences?.communication?.defaultPhoneNumber;
        
        if (!fromNumber) {
@@ -615,7 +560,6 @@ export default function ConversationsList({
          return;
        }
        
-       // Format the phone number properly (add +1 if not present)
        const formattedFromNumber = fromNumber.startsWith('+') ? fromNumber : `+1${fromNumber}`;
        const formattedToNumber = contactPhone.startsWith('+') ? contactPhone : `+1${contactPhone}`;
        
@@ -623,7 +567,7 @@ export default function ConversationsList({
          console.log('SMS Send Request:');
          console.log('From:', formattedFromNumber);
          console.log('To:', formattedToNumber);
-         console.log('ContactObjectId:', contactObjectId);  // Changed from ContactId
+         console.log('ContactObjectId:', contactObjectId);
          console.log('LocationId:', locationId);
          console.log('UserId:', userId);
          console.log('Message:', savedComposeText);
@@ -631,7 +575,7 @@ export default function ConversationsList({
        
        try {
          await smsService.send({
-           contactObjectId: contactObjectId,  // Changed from contactId
+           contactObjectId: contactObjectId,
            locationId: locationId,
            customMessage: savedComposeText,
            toNumber: formattedToNumber,
@@ -640,7 +584,6 @@ export default function ConversationsList({
            templateKey: 'custom',
          });
 
-         // Success - update status to sent
          optimisticMessage.status = 'sent';
          setMessages(prevMessages => 
            prevMessages.map(msg => 
@@ -649,13 +592,11 @@ export default function ConversationsList({
          );
 
        } catch (smsError: any) {
-         // Check if it's the known issue where SMS sends but returns 500
          if (smsError.response?.status === 500 && 
              smsError.response?.data?.error === 'Failed to send SMS') {
            if (__DEV__) {
              console.log('SMS sent successfully despite 500 error');
            }
-           // Mark as sent
            optimisticMessage.status = 'sent';
            setMessages(prevMessages => 
              prevMessages.map(msg => 
@@ -663,12 +604,10 @@ export default function ConversationsList({
              )
            );
          } else {
-           // Real error - mark as failed
            throw smsError;
          }
        }
 
-       // Clear caches and reload after delay
        setTimeout(async () => {
          await clearAllMessageCaches();
          await conversationService.clearConversationCache(locationId);
@@ -677,16 +616,14 @@ export default function ConversationsList({
        }, 2000);
        
      } else {
-       // Email sending code
        await emailService.send({
-         contactObjectId: contactObjectId,  // Changed from contactId
+         contactObjectId: contactObjectId,
          locationId: locationId,
          subject: savedEmailSubject || 'Message from ' + (userName || 'Team'),
          plainTextContent: savedComposeText,
          userId: userId,
        });
        
-       // Success - update status
        optimisticMessage.status = 'sent';
        setMessages(prevMessages => 
          prevMessages.map(msg => 
@@ -694,7 +631,6 @@ export default function ConversationsList({
          )
        );
        
-       // Clear caches and reload
        setTimeout(async () => {
          await clearAllMessageCaches();
          await conversationService.clearConversationCache(locationId);
@@ -708,7 +644,6 @@ export default function ConversationsList({
        console.error('Error details:', error.response?.data);
      }
      
-     // Mark message as failed
      optimisticMessage.status = 'failed';
      setMessages(prevMessages => 
        prevMessages.map(msg => 
@@ -716,7 +651,6 @@ export default function ConversationsList({
        )
      );
      
-     // Handle specific SMS errors
      if (error.message.includes('No SMS number configured')) {
        Alert.alert(
          'SMS Setup Required',
@@ -755,7 +689,6 @@ export default function ConversationsList({
          'The selected phone number is not configured in GoHighLevel. Please contact your administrator.'
        );
      } else {
-       // Generic error - show retry option
        Alert.alert(
          'Message Failed',
          `Failed to send ${composeMode}. Would you like to retry?`,
@@ -794,18 +727,14 @@ export default function ConversationsList({
      hour12: true
    });
    
-   // Check if it's an activity (type >= 25)
    const isActivity = item.type >= 25 || item.messageType?.startsWith('TYPE_ACTIVITY');
    const isEmail = item.type === 3 || item.messageType === 'TYPE_EMAIL';
    const isSMS = item.type === 1 || item.messageType === 'TYPE_SMS' || item.messageType === 'TYPE_PHONE';
-   
-   // NEW: Check if this is an optimistic message
    const isOptimistic = !!item.tempId;
    const messageStatus = item.status || 'delivered';
    
    // Render activity
    if (isActivity) {
-     // Determine if clickable and where to navigate
      let isClickable = false;
      let onPressHandler = () => {};
      
@@ -834,7 +763,6 @@ export default function ConversationsList({
        );
      }
      
-     // Non-clickable activity
      return (
        <View style={styles.activityContainer}>
          <View style={styles.activityDot} />
@@ -846,30 +774,22 @@ export default function ConversationsList({
    
    // Render email
    if (isEmail) {
-     // NEW: Check if email has content or needs fetching
      const hasContent = item.body && !item.needsContentFetch;
      const isFetching = item.emailMessageId && fetchingEmails.has(item.emailMessageId);
-     
-     // Debug log to check email structure
-     if (__DEV__) {
-       console.log('Email message structure:', {
-         id: item.id,
-         emailMessageId: item.emailMessageId,
-         ghlMessageId: item.ghlMessageId,
-         needsContentFetch: item.needsContentFetch,
-         hasContent
-       });
-     }
      
      return (
        <TouchableOpacity 
          style={[styles.messageBubbleContainer, isInbound ? styles.inboundContainer : styles.outboundContainer]}
          onPress={() => {
-           // NEW: Open email viewer modal
            if (item.emailMessageId) {
              setSelectedEmailId(item.emailMessageId);
-             setSelectedEmailSubject(item.subject || '');
+             setSelectedEmailSubject(item.subject || 'Email');
              setEmailViewerVisible(true);
+           } else {
+             Alert.alert(
+               'Email Content Unavailable', 
+               'This email cannot be loaded. Email ID is missing.'
+             );
            }
          }}
          disabled={!item.emailMessageId}
@@ -895,7 +815,6 @@ export default function ConversationsList({
            </Text>
            <Text style={styles.messageTime}>{messageTime}</Text>
            
-           {/* NEW: Show status for optimistic emails */}
            {isOptimistic && (
              <View style={styles.messageStatusContainer}>
                {messageStatus === 'sending' && <ActivityIndicator size="small" color={COLORS.accent} />}
@@ -928,7 +847,6 @@ export default function ConversationsList({
              {messageTime}
            </Text>
            
-           {/* NEW: Status indicators for outbound messages */}
            {!isInbound && isOptimistic && (
              <View style={styles.messageStatusIcon}>
                {messageStatus === 'sending' && (
@@ -947,7 +865,6 @@ export default function ConversationsList({
            )}
          </View>
          
-         {/* NEW: Retry button for failed messages */}
          {isOptimistic && messageStatus === 'failed' && (
            <TouchableOpacity 
              style={styles.retryButton}
@@ -962,14 +879,14 @@ export default function ConversationsList({
    );
  };
 
- // NEW: Handle load more
+ // Handle load more
  const handleLoadMore = () => {
    if (!loadingMore && hasMore && messages.length > 0) {
      loadConversations(true);
    }
  };
 
- // NEW: Footer component for loading more
+ // Footer component for loading more
  const renderFooter = () => {
    if (!loadingMore) return null;
    
@@ -1008,10 +925,9 @@ export default function ConversationsList({
      </View>
      
      {/* Connection indicator */}
-     {isConnected && (
-       <View style={styles.connectionIndicator}>
-         <View style={styles.connectedDot} />
-         <Text style={styles.connectionText}>Live</Text>
+     {!isConnected && (
+       <View style={styles.connectionStatus}>
+         <Text style={styles.connectionText}>Connecting...</Text>
        </View>
      )}
      
@@ -1037,7 +953,6 @@ export default function ConversationsList({
            <Text style={styles.noMessages}>No messages yet</Text>
          )
        }
-       // NEW: Load more functionality
        onEndReached={handleLoadMore}
        onEndReachedThreshold={0.5}
        ListFooterComponent={renderFooter}
@@ -1343,30 +1258,6 @@ const styles = StyleSheet.create({
    fontStyle: 'italic',
    flex: 1,
  },
- connectionIndicator: {
-   flexDirection: 'row',
-   alignItems: 'center',
-   paddingHorizontal: 8,
-   paddingVertical: 4,
-   backgroundColor: COLORS.success + '20',
-   borderRadius: 12,
-   position: 'absolute',
-   top: 10,
-   right: 16,
-   zIndex: 100,
- },
- connectedDot: {
-   width: 6,
-   height: 6,
-   borderRadius: 3,
-   backgroundColor: COLORS.success,
-   marginRight: 6,
- },
- connectionText: {
-   fontSize: 11,
-   fontFamily: FONT.medium,
-   color: COLORS.success,
- },
  activityTime: {
    fontSize: 12,
    fontFamily: FONT.regular,
@@ -1380,18 +1271,18 @@ const styles = StyleSheet.create({
    backgroundColor: COLORS.white,
    borderWidth: 1,
    borderColor: COLORS.border,
+   minHeight: 80,
  },
  emailHeader: {
    flexDirection: 'row',
    alignItems: 'center',
-   marginBottom: 4,
+   marginBottom: 8,
  },
  emailLabel: {
-   fontSize: 11,
+   fontSize: 12,
    fontFamily: FONT.medium,
    color: COLORS.textGray,
    marginLeft: 4,
-   textTransform: 'uppercase',
  },
  emailSubject: {
    fontSize: 14,
@@ -1403,9 +1294,8 @@ const styles = StyleSheet.create({
    fontSize: 14,
    fontFamily: FONT.regular,
    color: COLORS.textGray,
-   marginBottom: 4,
+   marginBottom: 8,
  },
- // NEW: Load more styles
  loadMoreContainer: {
    flexDirection: 'row',
    alignItems: 'center',
@@ -1418,8 +1308,19 @@ const styles = StyleSheet.create({
    color: COLORS.textGray,
    marginLeft: 8,
  },
- // NEW: Error colors
+ connectionStatus: {
+   backgroundColor: COLORS.warning + '20',
+   paddingHorizontal: 12,
+   paddingVertical: 4,
+   alignItems: 'center',
+ },
+ connectionText: {
+   fontSize: 12,
+   fontFamily: FONT.regular,
+   color: COLORS.warning,
+ },
  error: '#DC2626',
  errorLight: '#FEE2E2',
  success: '#10B981',
+ warning: '#F59E0B',
 });

@@ -39,27 +39,54 @@ export default function EmailViewerModal({
     }
   }, [visible, emailMessageId]);
 
-  const fetchEmailContent = async () => {
-    setLoading(true);
-    setError(false);
+ const fetchEmailContent = async () => {
+  if (__DEV__) {
+    console.log('=== EmailViewerModal Fetching ===');
+    console.log('Email Message ID:', emailMessageId);
+    console.log('Location ID:', locationId);
+  }
+  
+  setLoading(true);
+  setError(false);
+  
+  try {
+    const endpoint = `/api/messages/email/${emailMessageId}`;
+    const params = { locationId };
     
-    try {
-      const response = await api.get(`/messages/email/${emailMessageId}`, {
-        params: { locationId }
-      });
-      
-      if (response.data.success && response.data.email) {
-        setEmailContent(response.data.email);
-      } else {
-        setError(true);
-      }
-    } catch (err) {
-      console.error('Failed to fetch email:', err);
-      setError(true);
-    } finally {
-      setLoading(false);
+    if (__DEV__) {
+      console.log('Fetching from:', endpoint);
+      console.log('With params:', params);
     }
-  };
+    
+    const response = await api.get(endpoint, { params });
+    
+    if (__DEV__) {
+      console.log('Email fetch response:', response.data);
+    }
+    
+    if (response.data.success && response.data.email) {
+      setEmailContent(response.data.email);
+      
+      // Also update the message in the parent component if needed
+      if (onEmailFetched) {
+        onEmailFetched(emailMessageId, response.data.email);
+      }
+    } else {
+      console.error('Invalid email response:', response.data);
+      setError(true);
+    }
+  } catch (err: any) {
+    console.error('Failed to fetch email:', err);
+    console.error('Error details:', {
+      message: err.message,
+      response: err.response?.data,
+      status: err.response?.status
+    });
+    setError(true);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const getHtmlContent = () => {
     if (!emailContent) return '';
