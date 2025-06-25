@@ -53,17 +53,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const client = await clientPromise;
     const db = client.db('lpai');
     
+    // FIX: Use ghlUserId instead of _id since JWT contains GHL user ID
     const user = await db.collection('users').findOne({
-      _id: userId,
+      ghlUserId: userId,  // Changed from _id to ghlUserId
       locationId: locationId
     });
 
     if (!user) {
+      console.log('[SSE] Access denied for:', {
+        ghlUserId: userId,
+        locationId: locationId,
+        message: 'User not found with these credentials'
+      });
+      
       return res.status(403).json({ 
         error: 'Access denied',
         message: 'User does not have access to this location' 
       });
     }
+    
+    console.log('[SSE] User authenticated:', user.email);
   } catch (error) {
     console.error('[SSE] Database error:', error);
     return res.status(500).json({ error: 'Internal server error' });
@@ -121,9 +130,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       res.write(`data: ${JSON.stringify(data)}\n\n`);
       
       // Log for debugging
-      if (__DEV__) {
-        console.log(`[SSE] Sent message to ${connectionId}:`, data.type);
-      }
+      console.log(`[SSE] Sent message to ${connectionId}:`, data.type);
     } catch (error) {
       console.error(`[SSE] Error sending message to ${connectionId}:`, error);
       // Client disconnected, will cleanup in close handler
