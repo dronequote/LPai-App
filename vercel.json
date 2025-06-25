@@ -1,5 +1,5 @@
 {
-  "installCommand": "cd .. && yarn install",
-  "buildCommand": "yarn workspace lpai-backend build",
+  "installCommand": "cd .. && npm install",
+  "buildCommand": "npm run build --workspace=lpai-backend",
   "outputDirectory": ".next"
 }
