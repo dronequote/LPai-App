@@ -6,7 +6,9 @@ import { Db, ObjectId } from 'mongodb';
 import Ably from 'ably';
 
 // Initialize Ably at module level
-const ably = new Ably.Rest(process.env.ABLY_API_KEY!);
+const ably = new Ably.Rest({
+  key: process.env.ABLY_API_KEY
+});
 
 // Keep EventEmitter for backward compatibility but emit to Ably
 import { EventEmitter } from 'events';

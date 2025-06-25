@@ -13,7 +13,9 @@ import { getAuthHeader } from '../../ghlAuth';
 import Ably from 'ably';
 
 // Initialize Ably at module level (FIXED)
-const ably = new Ably.Rest(process.env.ABLY_API_KEY!);
+const ably = new Ably.Rest({
+  key: process.env.ABLY_API_KEY
+});
 
 export class MessagesProcessor extends BaseProcessor {
   constructor(db?: Db) {

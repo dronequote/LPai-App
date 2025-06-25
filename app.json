@@ -13,26 +13,37 @@
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
-        "updates": {
+    "updates": {
       "enabled": false
     },
     "ios": {
       "supportsTablet": true
     },
+    
     "android": {
-        "package": "com.lpai.lpaiapp",
-  "native": {
-    "abiFilters": ["armeabi-v7a", "arm64-v8a"]
-  },
+      "package": "com.lpai.lpaiapp",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      },
+      }
+    },
+    "updates": {
+  "url": "https://u.expo.dev/8d34ef8c-c6a3-45c0-838b-c07f936d5667"
+    },
+    
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#ffffff",
+          "sounds": []
+        }
+      ]
     ],
     "extra": {
       "eas": {
@@ -41,5 +52,4 @@
     },
     "owner": "lpai"
   }
-}
 }
