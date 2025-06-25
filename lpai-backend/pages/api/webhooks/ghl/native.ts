@@ -133,13 +133,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       console.log(`[Native Webhook ${webhookId}] Attempting direct processing for ${type}`);
       
       try {
+        // Extract the actual message data for direct processor
+        let directPayload;
+        
+        if (parsedPayload.webhookPayload) {
+          // Native webhook format - unwrap it
+          directPayload = {
+            type,
+            locationId: parsedPayload.locationId || parsedPayload.webhookPayload.locationId,
+            timestamp: parsedPayload.timestamp || parsedPayload.webhookPayload.timestamp,
+            ...parsedPayload.webhookPayload  // Spread the actual webhook data
+          };
+        } else {
+          // Already in direct format (from req.body)
+          directPayload = webhookData;
+        }
+        
+        // Log the payload structure for debugging
+        console.log(`[Native Webhook ${webhookId}] Direct payload keys:`, Object.keys(directPayload));
+        
         // Process directly for instant updates
-        await processMessageDirect(db, webhookId, {
-          type,
-          locationId,
-          timestamp: webhookData.timestamp,
-          ...parsedPayload
-        });
+        await processMessageDirect(db, webhookId, directPayload);
         
         console.log(`[Native Webhook ${webhookId}] Direct processing successful for ${type}`);
         

@@ -84,7 +84,8 @@ export async function processMessageDirect(
           'metrics.processingTime': processingTime,
           'metrics.totalLatency': processingTime,
           'performance.grade': processingTime < 500 ? 'A+' : processingTime < 1000 ? 'A' : 'B',
-          success: true
+          success: true,
+          processedBy: 'direct'  // ADD THIS to mark as processed
         }
       }
     );
@@ -141,7 +142,7 @@ async function processInboundMessageDirect(
   // Find contact - use indexed query
   const contact = await db.collection('contacts').findOne(
     { ghlContactId: contactId, locationId },
-    { projection: { _id: 1, firstName: 1, lastName: 1, email: 1, phone: 1, fullName: 1, assignedTo: 1 } } // Added assignedTo
+    { projection: { _id: 1, firstName: 1, lastName: 1, email: 1, phone: 1, fullName: 1, assignedTo: 1 } }
   );
   
   if (!contact) {
@@ -175,8 +176,8 @@ async function processInboundMessageDirect(
           $set: {
             ghlConversationId: conversationId,
             locationId,
-            contactObjectId: contact._id,              // FIXED: Use ObjectId directly
-            ghlContactId: contactId,                    // ADD: Store GHL contact ID
+            contactObjectId: contact._id,
+            ghlContactId: contactId,
             type: conversationType,
             lastMessageDate: new Date(),
             lastMessageBody: body.substring(0, 200),
@@ -214,15 +215,15 @@ async function processInboundMessageDirect(
       const messageDoc: any = {
         _id: new ObjectId(),
         ghlMessageId: messageId,
-        conversationId: conversation._id,              // Use ObjectId from conversation
+        conversationId: conversation._id,
         ghlConversationId: conversationId,
         locationId,
-        contactObjectId: contact._id,                  // FIXED: Use ObjectId directly
-        ghlContactId: contactId,                        // ADD: Store GHL contact ID
+        contactObjectId: contact._id,
+        ghlContactId: contactId,
         type: messageTypeNum,
         messageType: `TYPE_${messageType.toUpperCase()}`,
         direction: 'inbound',
-        body: body,                                     // Add body field
+        body: body,
         status: status || 'delivered',
         dateAdded: new Date(dateAdded || Date.now()),
         source: 'webhook',
@@ -238,7 +239,7 @@ async function processInboundMessageDirect(
       // Check for active project
       const project = await db.collection('projects').findOne(
         {
-          contactObjectId: contact._id,                 // FIXED: Use contactObjectId
+          contactObjectId: contact._id,
           locationId,
           status: { $in: ['open', 'quoted', 'won', 'in_progress'] }
         },
@@ -256,10 +257,13 @@ async function processInboundMessageDirect(
         );
       }
 
-      // Emit real-time event AFTER successful insert
-      messageEvents.emit(`message:${locationId}:${contact._id}`, {
+      // Emit real-time event AFTER successful insert - use STRING version of ObjectId
+      const contactIdString = contact._id.toString();
+      messageEvents.emit(`message:${locationId}:${contactIdString}`, {
         type: 'new_message',
-        message: messageDoc
+        message: messageDoc,
+        contactId: contactIdString,
+        contactName: contact.fullName
       });
 
       // If contact is assigned to someone, emit user-specific event
@@ -267,7 +271,7 @@ async function processInboundMessageDirect(
         messageEvents.emit(`user:${contact.assignedTo}`, {
           type: 'new_message_assigned',
           locationId,
-          contactId: contact._id,
+          contactId: contactIdString,
           contactName: contact.fullName,
           message: messageDoc,
           timestamp: new Date().toISOString()
@@ -279,11 +283,13 @@ async function processInboundMessageDirect(
       // Also emit location-wide event for dashboards
       messageEvents.emit(`location:${locationId}`, {
         type: 'new_message',
-        contactId: contact._id,
+        contactId: contactIdString,
         contactName: contact.fullName,
         assignedTo: contact.assignedTo || null,
         message: messageDoc
       });
+
+      console.log(`[Direct Processor] Emitted events for contact: ${contactIdString}`);
     });
 
     console.log(`[Direct Processor] Successfully processed inbound ${messageType} message`);
@@ -336,8 +342,8 @@ async function processOutboundMessageDirect(
     },
     {
       $set: {
-        contactObjectId: contact._id,                  // FIXED: Add contactObjectId
-        ghlContactId: contactId,                        // ADD: Store GHL contact ID
+        contactObjectId: contact._id,
+        ghlContactId: contactId,
         lastMessageDate: new Date(),
         lastMessageBody: body.substring(0, 200),
         lastMessageDirection: 'outbound',
@@ -359,11 +365,11 @@ async function processOutboundMessageDirect(
   const messageDoc = {
     _id: new ObjectId(),
     ghlMessageId: messageId || new ObjectId().toString(),
-    conversationId: conversationResult.value._id,      // Use ObjectId from conversation
+    conversationId: conversationResult.value._id,
     ghlConversationId: conversationId,
     locationId,
-    contactObjectId: contact._id,                      // FIXED: Use ObjectId directly
-    ghlContactId: contactId,                            // ADD: Store GHL contact ID
+    contactObjectId: contact._id,
+    ghlContactId: contactId,
     userId: userId || null,
     type: messageTypeNum,
     messageType: `TYPE_${messageType.toUpperCase()}`,
@@ -380,11 +386,16 @@ async function processOutboundMessageDirect(
 
   await db.collection('messages').insertOne(messageDoc);
 
-  // Emit real-time event for outbound messages too
-  messageEvents.emit(`message:${locationId}:${contact._id}`, {
+  // Emit real-time event for outbound messages too - use STRING version
+  const contactIdString = contact._id.toString();
+  messageEvents.emit(`message:${locationId}:${contactIdString}`, {
     type: 'new_message',
-    message: messageDoc
+    message: messageDoc,
+    contactId: contactIdString,
+    contactName: contact.fullName
   });
+  
+  console.log(`[Direct Processor] Emitted outbound event for contact: ${contactIdString}`);
 }
 
 /**
