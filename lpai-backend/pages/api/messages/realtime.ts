@@ -21,7 +21,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const { locationId, contactObjectId } = req.query;
-  const token = req.headers.authorization?.replace('Bearer ', '');
+  const token = req.headers.authorization?.replace('Bearer ', '') || (req.query.token as string);
 
   // Validate required parameters
   if (!locationId || !contactObjectId || !token) {

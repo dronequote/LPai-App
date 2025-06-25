@@ -1,12 +1,12 @@
 // src/hooks/useRealtimeMessages.ts
-// Real-time message updates - using polling for React Native compatibility
-// Last Updated: 2025-06-24
+// Real-time message updates using react-native-sse
+// Works on both React Native and Web!
 
 import { useEffect, useRef, useCallback, useState } from 'react';
+import { Platform } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
-import { conversationService } from '../services/conversationService';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import api from '../lib/api';
+import EventSource from 'react-native-sse';
+import 'react-native-url-polyfill/auto'; // Required for URL support
 
 interface RealtimeConfig {
   locationId: string;
@@ -16,7 +16,6 @@ interface RealtimeConfig {
   onConversationUpdate?: (update: any) => void;
   onConnectionChange?: (connected: boolean) => void;
   enabled?: boolean;
-  pollInterval?: number; // milliseconds
 }
 
 export function useRealtimeMessages({
@@ -26,18 +25,18 @@ export function useRealtimeMessages({
   onNewMessage,
   onConversationUpdate,
   onConnectionChange,
-  enabled = true,
-  pollInterval = 3000 // 3 seconds default
+  enabled = true
 }: RealtimeConfig) {
   const { user } = useAuth();
-  const pollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const lastMessageIdRef = useRef<string | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
   const [isConnected, setIsConnected] = useState(false);
-  const [isPolling, setIsPolling] = useState(false);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
   
-  // Store callbacks in refs to avoid recreating the polling function
+  // Store callbacks in refs to avoid recreating functions
   const onNewMessageRef = useRef(onNewMessage);
   const onConnectionChangeRef = useRef(onConnectionChange);
+  const onConversationUpdateRef = useRef(onConversationUpdate);
   
   // Update refs when callbacks change
   useEffect(() => {
@@ -47,189 +46,164 @@ export function useRealtimeMessages({
   useEffect(() => {
     onConnectionChangeRef.current = onConnectionChange;
   }, [onConnectionChange]);
-
-  // Create stable polling function that doesn't cause re-renders
-  const pollForMessages = useCallback(async () => {
-    if (!enabled || !user?.token || !locationId || !conversationId) {
-      return;
-    }
-
-    // Prevent concurrent polls using ref instead of state
-    if (pollTimeoutRef.current === null) {
-      pollTimeoutRef.current = setTimeout(() => {
-        pollTimeoutRef.current = null;
-      }, 100);
-    } else {
-      return;
-    }
-    
-    setIsPolling(true);
-    
-    try {
-      // AGGRESSIVE CACHE CLEARING
-      // Clear ALL conversation-related caches before polling
-      try {
-        const keys = await AsyncStorage.getAllKeys();
-        const conversationKeys = keys.filter(key => 
-          key.includes(`/api/conversations/${conversationId}`) ||
-          key.includes('/api/conversations') && key.includes(conversationId)
-        );
-        if (conversationKeys.length > 0) {
-          await AsyncStorage.multiRemove(conversationKeys);
-        }
-      } catch (e) {
-        // Ignore cache errors
-      }
-      
-      // Direct API call to bypass any service-level caching
-      const response = await api.get(`/api/conversations/${conversationId}/messages`, {
-        params: {
-          locationId,
-          limit: 10,
-          offset: 0,
-          _timestamp: Date.now(),
-          _nocache: Math.random()
-        },
-        headers: {
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache',
-          'Expires': '0'
-        }
-      });
-
-      const messagesData = response.data;
-
-      if (messagesData.messages && messagesData.messages.length > 0) {
-        const latestMessage = messagesData.messages[0];
-        
-        // Check if we have a new message
-        if (latestMessage.id !== lastMessageIdRef.current && 
-            latestMessage._id !== lastMessageIdRef.current) {
-          
-          // Check if this is truly new (not just initial load)
-          if (lastMessageIdRef.current !== null) {
-            if (__DEV__) {
-              console.log('[Realtime] New message detected:', latestMessage.body?.substring(0, 50));
-              console.log('[Realtime] Message ID:', latestMessage.id || latestMessage._id);
-              console.log('[Realtime] Previous ID:', lastMessageIdRef.current);
-            }
-            
-            // Find all new messages since last check
-            const lastIndex = messagesData.messages.findIndex(msg => 
-              msg.id === lastMessageIdRef.current || msg._id === lastMessageIdRef.current
-            );
-            
-            const newMessages = lastIndex > 0 
-              ? messagesData.messages.slice(0, lastIndex).reverse() 
-              : [latestMessage];
-            
-            // Notify about each new message
-            newMessages.forEach(msg => {
-              if (__DEV__) {
-                console.log('[Realtime] Processing message:', {
-                  id: msg.id,
-                  direction: msg.direction,
-                  body: msg.body?.substring(0, 30)
-                });
-              }
-              
-              // Notify about ALL messages (both inbound and outbound)
-              onNewMessageRef.current(msg);
-            });
-          }
-          
-          // Update last message ID
-          lastMessageIdRef.current = latestMessage.id || latestMessage._id;
-        }
-      }
-
-      // Mark as connected after first successful poll
-      if (!isConnected) {
-        setIsConnected(true);
-        onConnectionChangeRef.current?.(true);
-      }
-
-    } catch (error) {
-      if (__DEV__) {
-        console.error('[Realtime] Polling error:', error);
-      }
-      
-      if (isConnected) {
-        setIsConnected(false);
-        onConnectionChangeRef.current?.(false);
-      }
-    } finally {
-      setIsPolling(false);
-    }
-  }, [enabled, user?.token, locationId, conversationId, isConnected]);
-
-  // Setup polling interval
+  
   useEffect(() => {
-    if (!enabled || !conversationId || !locationId || !user?.token) {
+    onConversationUpdateRef.current = onConversationUpdate;
+  }, [onConversationUpdate]);
+
+  // SSE Connection
+  const connectSSE = useCallback(() => {
+    if (!enabled || !user?.token || !locationId || !contactObjectId) {
       return;
     }
 
-    if (__DEV__) {
-      console.log('[Realtime] Starting message polling for conversation:', conversationId);
+    // Clean up existing connection
+    if (eventSourceRef.current) {
+      eventSourceRef.current.removeAllEventListeners();
+      eventSourceRef.current.close();
     }
+
+    const baseUrl = process.env.EXPO_PUBLIC_API_URL || 'https://lpai-backend-omega.vercel.app';
     
-    let intervalId: NodeJS.Timer;
-    let mounted = true;
+    // Note: Your backend needs to accept token as query param since react-native-sse
+    // doesn't support Authorization header in the same way
+    const url = new URL(`${baseUrl}/api/messages/realtime`);
+    url.searchParams.append('locationId', locationId);
+    url.searchParams.append('contactObjectId', contactObjectId);
+    url.searchParams.append('token', user.token);
     
-    // Start polling after a short delay to ensure everything is initialized
-    const startPolling = async () => {
-      if (!mounted) return;
-      
-      // Do an immediate poll
-      await pollForMessages();
-      
-      // Start polling interval
-      intervalId = setInterval(async () => {
-        if (mounted) {
-          await pollForMessages();
+    if (__DEV__) {
+      console.log('[Realtime SSE] Connecting to:', url.toString());
+    }
+
+    // Create EventSource
+    const es = new EventSource(url.toString(), {
+      // react-native-sse specific options
+      pollingInterval: 0, // Disable polling, use streaming
+      withCredentials: false,
+    });
+
+    // Handle connection open
+    es.addEventListener('open', (event) => {
+      console.log('[Realtime SSE] Connected!');
+      setIsConnected(true);
+      setRetryCount(0);
+      onConnectionChangeRef.current?.(true);
+    });
+
+    // Handle messages
+    es.addEventListener('message', (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        
+        if (__DEV__ && data.type !== 'heartbeat') {
+          console.log('[Realtime SSE] Received:', data.type);
         }
-      }, pollInterval);
-    };
-    
-    startPolling();
+        
+        switch (data.type) {
+          case 'new_message':
+            if (data.message) {
+              onNewMessageRef.current(data.message);
+            }
+            break;
+            
+          case 'conversation_update':
+            if (data.updates) {
+              onConversationUpdateRef.current?.(data.updates);
+            }
+            break;
+            
+          case 'connected':
+          case 'ready':
+            console.log('[Realtime SSE] Ready to receive messages');
+            break;
+            
+          case 'heartbeat':
+            // Ignore heartbeats
+            break;
+            
+          default:
+            if (__DEV__) {
+              console.log('[Realtime SSE] Unknown event type:', data.type);
+            }
+        }
+      } catch (error) {
+        console.error('[Realtime SSE] Error parsing message:', error);
+      }
+    });
+
+    // Handle errors
+    es.addEventListener('error', (event) => {
+      console.error('[Realtime SSE] Error:', event);
+      setIsConnected(false);
+      onConnectionChangeRef.current?.(false);
+      
+      // Close the connection
+      if (eventSourceRef.current) {
+        eventSourceRef.current.removeAllEventListeners();
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+
+      // Exponential backoff for reconnection
+      const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);
+      setRetryCount(prev => prev + 1);
+      
+      console.log(`[Realtime SSE] Reconnecting in ${delay}ms...`);
+      reconnectTimeoutRef.current = setTimeout(connectSSE, delay);
+    });
+
+    eventSourceRef.current = es;
+  }, [enabled, user?.token, locationId, contactObjectId, retryCount]);
+
+  // Setup connection
+  useEffect(() => {
+    if (!enabled || !locationId || !contactObjectId || !user?.token) {
+      return;
+    }
+
+    connectSSE();
     
     return () => {
-      mounted = false;
-      if (__DEV__) {
-        console.log('[Realtime] Stopping message polling');
+      // Cleanup
+      if (eventSourceRef.current) {
+        console.log('[Realtime SSE] Closing connection');
+        eventSourceRef.current.removeAllEventListeners();
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
       }
-      if (intervalId) {
-        clearInterval(intervalId);
-      }
-      if (pollTimeoutRef.current) {
-        clearTimeout(pollTimeoutRef.current);
-        pollTimeoutRef.current = null;
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
       }
       setIsConnected(false);
-      lastMessageIdRef.current = null;
     };
-  }, [enabled, conversationId, locationId, user?.token, pollInterval]); // NO pollForMessages here!
+  }, [enabled, locationId, contactObjectId, user?.token, connectSSE]);
 
   const disconnect = useCallback(() => {
-    if (pollTimeoutRef.current) {
-      clearTimeout(pollTimeoutRef.current);
-      pollTimeoutRef.current = null;
+    if (eventSourceRef.current) {
+      eventSourceRef.current.removeAllEventListeners();
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
     }
     setIsConnected(false);
     onConnectionChangeRef.current?.(false);
   }, []);
 
   const reconnect = useCallback(() => {
-    pollForMessages();
-  }, [pollForMessages]);
+    disconnect();
+    setRetryCount(0);
+    connectSSE();
+  }, [disconnect, connectSSE]);
 
   return {
     isConnected,
     disconnect,
     reconnect,
-    isPolling
+    mode: 'sse' // Always SSE now!
   };
 }
-
-// Future: SSE implementation for true real-time
-// When ready, we can add EventSource support for web and a React Native compatible version
