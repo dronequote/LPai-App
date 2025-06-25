@@ -1,10 +1,16 @@
 // src/utils/webhooks/directProcessor.ts
 // Updated Date 06/24/2025
+// UPDATED: Replaced EventEmitter with Ably for distributed real-time messaging
 
 import { Db, ObjectId } from 'mongodb';
+import Ably from 'ably';
+
+// Initialize Ably at module level
+const ably = new Ably.Rest(process.env.ABLY_API_KEY!);
+
+// Keep EventEmitter for backward compatibility but emit to Ably
 import { EventEmitter } from 'events';
 
-// Create a simple event emitter for real-time updates
 class MessageEventEmitter extends EventEmitter {
   private static instance: MessageEventEmitter;
   
@@ -160,6 +166,11 @@ async function processInboundMessageDirect(
                           messageTypeNum === 3 ? 'TYPE_EMAIL' : 
                           messageTypeNum === 4 ? 'TYPE_WHATSAPP' : 'TYPE_OTHER';
 
+  // Variables we'll need for Ably
+  let conversationObjectId: ObjectId;
+  let messageDoc: any;
+  let updatedConversation: any;
+
   // Start a session for atomic operations
   const client = (db as any).client || db;
   const session = client.startSession();
@@ -211,11 +222,14 @@ async function processInboundMessageDirect(
         throw new Error('Failed to create/update conversation');
       }
 
+      conversationObjectId = conversation._id;
+      updatedConversation = conversation;
+
       // Insert message
-      const messageDoc: any = {
+      messageDoc = {
         _id: new ObjectId(),
         ghlMessageId: messageId,
-        conversationId: conversation._id,
+        conversationId: conversationObjectId,
         ghlConversationId: conversationId,
         locationId,
         contactObjectId: contact._id,
@@ -250,46 +264,60 @@ async function processInboundMessageDirect(
       );
 
       if (project) {
+        messageDoc.projectId = project._id.toString();
         await db.collection('messages').updateOne(
           { _id: messageDoc._id },
           { $set: { projectId: project._id.toString() } },
           { session }
         );
       }
+    });
 
-      // Emit real-time event AFTER successful insert - use STRING version of ObjectId
-      const contactIdString = contact._id.toString();
-      messageEvents.emit(`message:${locationId}:${contactIdString}`, {
-        type: 'new_message',
-        message: messageDoc,
-        contactId: contactIdString,
-        contactName: contact.fullName
-      });
-
-      // If contact is assigned to someone, emit user-specific event
-      if (contact.assignedTo) {
-        messageEvents.emit(`user:${contact.assignedTo}`, {
-          type: 'new_message_assigned',
-          locationId,
-          contactId: contactIdString,
-          contactName: contact.fullName,
+    // EMIT TO ABLY - Outside transaction
+    if (contact.assignedTo) {
+      try {
+        const channel = ably.channels.get(`user:${contact.assignedTo}`);
+        await channel.publish('new-message', {
           message: messageDoc,
-          timestamp: new Date().toISOString()
+          contact: {
+            id: contact._id,
+            name: contact.fullName,
+            phone: contact.phone
+          },
+          conversation: {
+            id: conversationObjectId,
+            contactObjectId: contact._id,
+            unreadCount: updatedConversation.unreadCount || 0
+          }
         });
-        
-        console.log(`[Direct Processor] Emitted assigned message event for user: ${contact.assignedTo}`);
+        console.log('[Ably Direct] Published inbound message to user:', contact.assignedTo);
+      } catch (error) {
+        console.error('[Ably Direct] Failed to publish message:', error);
       }
+    }
 
-      // Also emit location-wide event for dashboards
-      messageEvents.emit(`location:${locationId}`, {
-        type: 'new_message',
-        contactId: contactIdString,
+    // Also emit location-wide event for dashboards
+    try {
+      const locationChannel = ably.channels.get(`location:${locationId}`);
+      await locationChannel.publish('new-message', {
+        type: 'inbound',
         contactName: contact.fullName,
+        contactId: contact._id.toString(),
         assignedTo: contact.assignedTo || null,
-        message: messageDoc
+        preview: body.substring(0, 50),
+        timestamp: new Date().toISOString()
       });
+    } catch (error) {
+      console.error('[Ably Direct] Failed to publish location event:', error);
+    }
 
-      console.log(`[Direct Processor] Emitted events for contact: ${contactIdString}`);
+    // Keep local EventEmitter for backward compatibility
+    const contactIdString = contact._id.toString();
+    messageEvents.emit(`message:${locationId}:${contactIdString}`, {
+      type: 'new_message',
+      message: messageDoc,
+      contactId: contactIdString,
+      contactName: contact.fullName
     });
 
     console.log(`[Direct Processor] Successfully processed inbound ${messageType} message`);
@@ -324,7 +352,7 @@ async function processOutboundMessageDirect(
   // Similar to inbound but simpler
   const contact = await db.collection('contacts').findOne(
     { ghlContactId: contactId, locationId },
-    { projection: { _id: 1, firstName: 1, lastName: 1, email: 1, phone: 1, fullName: 1 } }
+    { projection: { _id: 1, firstName: 1, lastName: 1, email: 1, phone: 1, fullName: 1, assignedTo: 1 } }
   );
   
   if (!contact) return;
@@ -386,7 +414,30 @@ async function processOutboundMessageDirect(
 
   await db.collection('messages').insertOne(messageDoc);
 
-  // Emit real-time event for outbound messages too - use STRING version
+  // EMIT TO ABLY for outbound messages
+  if (contact.assignedTo || userId) {
+    try {
+      const channel = ably.channels.get(`user:${contact.assignedTo || userId}`);
+      await channel.publish('new-message', {
+        message: messageDoc,
+        contact: {
+          id: contact._id,
+          name: contact.fullName,
+          phone: contact.phone
+        },
+        conversation: {
+          id: conversationResult.value._id,
+          contactObjectId: contact._id,
+          unreadCount: conversationResult.value.unreadCount || 0
+        }
+      });
+      console.log('[Ably Direct] Published outbound message to user:', contact.assignedTo || userId);
+    } catch (error) {
+      console.error('[Ably Direct] Failed to publish outbound message:', error);
+    }
+  }
+
+  // Keep local EventEmitter for backward compatibility
   const contactIdString = contact._id.toString();
   messageEvents.emit(`message:${locationId}:${contactIdString}`, {
     type: 'new_message',
@@ -432,6 +483,38 @@ async function processPaymentDirect(
         } 
       }
     );
+  }
+
+  // EMIT PAYMENT EVENT TO ABLY
+  try {
+    // Find the user who should be notified (invoice owner or location admin)
+    const invoice = await db.collection('invoices').findOne(
+      { ghlInvoiceId: invoiceId, locationId },
+      { projection: { assignedTo: 1, contactName: 1, number: 1 } }
+    );
+
+    if (invoice && invoice.assignedTo) {
+      const channel = ably.channels.get(`user:${invoice.assignedTo}`);
+      await channel.publish('payment-received', {
+        amount: amount / 100, // Convert from cents
+        customerName: invoice.contactName || 'Customer',
+        invoiceNumber: invoice.number || invoiceId,
+        paymentMethod: 'Card',
+        timestamp: new Date().toISOString()
+      });
+      console.log('[Ably Direct] Published payment notification to user:', invoice.assignedTo);
+    }
+
+    // Also emit to location channel for dashboards
+    const locationChannel = ably.channels.get(`location:${locationId}`);
+    await locationChannel.publish('payment-received', {
+      amount: amount / 100,
+      invoiceId,
+      contactId,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('[Ably Direct] Failed to publish payment event:', error);
   }
 }
 

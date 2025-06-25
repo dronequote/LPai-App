@@ -1,5 +1,5 @@
 // src/components/ConversationsList.tsx
-// Updated Date: 06/24/2025
+// Updated Date: 01/20/2025 - Added Ably WebSocket support with Expo Notifications
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
  View,
@@ -13,6 +13,7 @@ import {
  Platform,
  RefreshControl,
  FlatList,
+ Vibration,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,7 +23,18 @@ import { emailService } from '../services/emailService';
 import { COLORS, FONT, SHADOW } from '../styles/theme';
 import api from '../lib/api';
 import EmailViewerModal from './EmailViewerModal';
-import { useRealtimeMessages } from '../hooks/useRealtimeMessages';
+import Ably from 'ably';
+import * as Notifications from 'expo-notifications';
+import * as Haptics from 'expo-haptics';
+
+// Configure notifications
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+});
 
 type MessageFilter = 'all' | 'sms' | 'email' | 'call';
 
@@ -62,6 +74,23 @@ interface ConversationsListProps {
  style?: any;
 }
 
+// Helper function to show notifications
+async function showNotification(title: string, body: string, data?: any) {
+  try {
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title,
+        body,
+        data,
+        sound: 'default',
+      },
+      trigger: null, // Show immediately
+    });
+  } catch (error) {
+    console.error('Error showing notification:', error);
+  }
+}
+
 export default function ConversationsList({
  contactObjectId,
  contactPhone,
@@ -93,10 +122,12 @@ export default function ConversationsList({
  const [emailViewerVisible, setEmailViewerVisible] = useState(false);
  const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
  const [selectedEmailSubject, setSelectedEmailSubject] = useState<string>('');
+ const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
 
  // Refs
  const optimisticMessagesRef = useRef<Map<string, OptimisticMessage>>(new Map());
  const loadConversationsRef = useRef<any>(null);
+ const ablyRef = useRef<Ably.Realtime | null>(null);
 
  // Helper function to clear all message caches
  const clearAllMessageCaches = async () => {
@@ -117,48 +148,109 @@ export default function ConversationsList({
    }
  };
 
- // Real-time messages hook with SSE
- const { isConnected } = useRealtimeMessages({
-   locationId,
-   contactObjectId,
-   conversationId: conversations[0]?._id,
-   onNewMessage: useCallback((newMessage) => {
-     if (newMessage.direction === 'inbound') {
-       setTimeout(() => {
-         if (loadConversationsRef.current) {
-           loadConversationsRef.current();
+ // Ably WebSocket real-time connection
+ useEffect(() => {
+   if (!user?.ghlUserId || !locationId || !contactObjectId) return;
+   
+   console.log('[Ably] Setting up real-time connection...');
+   
+   const ably = new Ably.Realtime({
+     key: process.env.EXPO_PUBLIC_ABLY_API_KEY,
+     clientId: user.ghlUserId
+   });
+
+   ablyRef.current = ably;
+
+   const channel = ably.channels.get(`user:${user.ghlUserId}`);
+   
+   channel.subscribe('new-message', async (message) => {
+     console.log('🎉 [Ably] Real-time message received!', message.data);
+     
+     // Only process if it's for this conversation
+     if (message.data.conversation?.contactObjectId === contactObjectId || 
+         message.data.contact?.id === contactObjectId) {
+       
+       // Add the new message
+       setMessages(prev => {
+         // Check if message already exists
+         const messageData = message.data.message;
+         const exists = prev.some(m => 
+           (m._id === messageData._id) || 
+           (m.id === messageData._id) ||
+           (m.ghlMessageId === messageData.ghlMessageId)
+         );
+         if (exists) return prev;
+         
+         // Remove optimistic message if this is the real version
+         if (messageData.direction === 'outbound') {
+           const filtered = prev.filter(msg => {
+             if (msg.tempId && msg.body === messageData.body) {
+               optimisticMessagesRef.current.delete(msg.tempId);
+               return false;
+             }
+             return true;
+           });
+           return [messageData, ...filtered];
          }
-       }, 500);
-     } else {
-       setMessages(prevMessages => {
-         const messageId = newMessage.id || newMessage._id;
-         const exists = prevMessages.some(msg => 
-           (msg.id === messageId) || (msg._id === messageId)
+         
+         // Add new inbound message to the beginning
+         return [messageData, ...prev];
+       });
+       
+       // Update conversation preview
+       setConversations(prev => prev.map(conv => {
+         if (conv._id === message.data.conversation?.id || 
+             conv.contactObjectId === contactObjectId) {
+           return {
+             ...conv,
+             lastMessageBody: message.data.message.body,
+             lastMessageDate: new Date(),
+             lastMessageDirection: message.data.message.direction,
+             unreadCount: message.data.message.direction === 'inbound' 
+               ? (conv.unreadCount || 0) + 1 
+               : conv.unreadCount
+           };
+         }
+         return conv;
+       }));
+       
+       // Show notification and haptic feedback for inbound messages
+       if (message.data.message.direction === 'inbound') {
+         await showNotification(
+           'New Message',
+           `${message.data.contact?.name || 'Contact'}: ${message.data.message.body}`,
+           { conversationId: conversations[0]?._id }
          );
          
-         if (exists) {
-           return prevMessages;
-         }
-         
-         const filtered = prevMessages.filter(msg => {
-           if (msg.tempId && msg.body === newMessage.body) {
-             optimisticMessagesRef.current.delete(msg.tempId);
-             return false;
-           }
-           return true;
-         });
-         
-         return [newMessage, ...filtered];
-       });
+         // Haptic feedback
+         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+       }
      }
-   }, []),
-   onConnectionChange: useCallback((connected) => {
-     if (__DEV__) {
-       console.log('[ConversationsList] SSE connection:', connected ? 'Connected' : 'Disconnected');
-     }
-   }, []),
-   enabled: true
- });
+   });
+
+   // Connection status logging
+   ably.connection.on('connected', () => {
+     console.log('✅ [Ably] Connected!');
+     setIsRealtimeConnected(true);
+   });
+   
+   ably.connection.on('disconnected', () => {
+     console.log('❌ [Ably] Disconnected');
+     setIsRealtimeConnected(false);
+   });
+
+   ably.connection.on('failed', () => {
+     console.log('❌ [Ably] Connection failed');
+     setIsRealtimeConnected(false);
+   });
+
+   return () => {
+     console.log('[Ably] Cleaning up connection...');
+     channel.unsubscribe();
+     ably.close();
+     ablyRef.current = null;
+   };
+ }, [user, locationId, contactObjectId, conversations]);
 
  // Load conversations function
  const loadConversations = async (isLoadMore = false) => {
@@ -608,12 +700,13 @@ export default function ConversationsList({
          }
        }
 
-       setTimeout(async () => {
-         await clearAllMessageCaches();
-         await conversationService.clearConversationCache(locationId);
-         optimisticMessagesRef.current.delete(tempId);
-         await loadConversations();
-       }, 2000);
+       // No need to refresh - Ably will deliver the real message
+       setTimeout(() => {
+         // Just remove the optimistic message after a delay if Ably hasn't replaced it
+         if (optimisticMessagesRef.current.has(tempId)) {
+           optimisticMessagesRef.current.delete(tempId);
+         }
+       }, 5000);
        
      } else {
        await emailService.send({
@@ -631,12 +724,12 @@ export default function ConversationsList({
          )
        );
        
-       setTimeout(async () => {
-         await clearAllMessageCaches();
-         await conversationService.clearConversationCache(locationId);
-         optimisticMessagesRef.current.delete(tempId);
-         await loadConversations();
-       }, 2000);
+       // No need to refresh - Ably will deliver the real message
+       setTimeout(() => {
+         if (optimisticMessagesRef.current.has(tempId)) {
+           optimisticMessagesRef.current.delete(tempId);
+         }
+       }, 5000);
      }
    } catch (error: any) {
      if (__DEV__) {
@@ -925,9 +1018,9 @@ export default function ConversationsList({
      </View>
      
      {/* Connection indicator */}
-     {!isConnected && (
+     {!isRealtimeConnected && (
        <View style={styles.connectionStatus}>
-         <Text style={styles.connectionText}>Connecting...</Text>
+         <Text style={styles.connectionText}>Connecting to real-time updates...</Text>
        </View>
      )}
      
