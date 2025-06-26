@@ -21,7 +21,6 @@ import { locationService } from '../services/locationService';
 import { signatureService } from '../services/signatureService';
 import { projectService } from '../services/projectService';
 import { paymentService } from '../services/paymentService';
-import emailService from '../services/emailService';
 import SignatureCanvas from '../components/SignatureCanvas';
 import PhotoCaptureModal from '../components/PhotoCaptureModal'; // ADD THIS IMPORT
 import { COLORS, FONT, RADIUS, SHADOW } from '../styles/theme';
@@ -134,178 +133,240 @@ export default function SignatureScreen() {
 
   // ✅ UPDATED: Complete signature process with opportunity integration
   const completeSignatureProcess = async (customerSignature) => {
-    console.log('[SignatureScreen] ===== STARTING COMPLETE SIGNATURE PROCESS =====');
+  console.log('[SignatureScreen] ===== STARTING COMPLETE SIGNATURE PROCESS =====');
+  
+  if (!user?.locationId || !quote?._id) {
+    Alert.alert('Error', 'Missing required information');
+    return;
+  }
+
+  try {
+    setLoading(true);
+    setCurrentStep(4);
+
+    // Step 1: Save both signatures to MongoDB
+    console.log('[SignatureScreen] Saving signatures to MongoDB...');
     
-    if (!user?.locationId || !quote?._id) {
-      Alert.alert('Error', 'Missing required information');
-      return;
+    // Save consultant signature first
+    const consultantResponse = await signatureService.submitSignature(
+      quote._id,
+      user.locationId,
+      'consultant',
+      {
+        signature: signatures.consultant.signature,
+        signedBy: user.name || 'Consultant',
+        deviceInfo: 'iPad App'
+      }
+    );
+
+    if (!consultantResponse.success) {
+      throw new Error('Failed to save consultant signature');
     }
 
+    // Save customer signature
+    const customerResponse = await signatureService.submitSignature(
+      quote._id,
+      user.locationId,
+      'customer',
+      {
+        signature: customerSignature.signature,
+        signedBy: quote.customerName || 'Customer',
+        deviceInfo: 'iPad App'
+      }
+    );
+
+    if (!customerResponse.success) {
+      throw new Error('Failed to save customer signature');
+    }
+
+    console.log('[SignatureScreen] Signatures saved successfully');
+
+    // Step 2: Generate PDF with embedded signatures
+    console.log('[SignatureScreen] Generating signed PDF...');
+    const pdfResponse = await signatureService.generateSignedPDF(quote._id, user.locationId);
+
+    if (!pdfResponse.success) {
+      throw new Error('Failed to generate PDF');
+    }
+
+    const pdfFileId = pdfResponse.pdf?.fileId || pdfResponse.pdfUrl || pdfResponse.fileId;
+    console.log('[SignatureScreen] PDF generated successfully:', pdfFileId);
+
+    if (!pdfFileId) {
+      console.error('[SignatureScreen] PDF fileId not found in response:', pdfResponse);
+      throw new Error('PDF generated but fileId not returned');
+    }
+
+    // Step 3: Update GHL Opportunity with signed date
+    console.log('[SignatureScreen] Updating GHL opportunity...');
+    await updateOpportunityFields();
+
+    // Step 4: Send contract email automatically
+    console.log('[SignatureScreen] Starting email automation...');
+    setEmailSending(true);
+    
     try {
-      setLoading(true);
-      setCurrentStep(4);
-
-      // Step 1: Save both signatures to MongoDB
-      console.log('[SignatureScreen] Saving signatures to MongoDB...');
-      
-      // Save consultant signature first
-      const consultantResponse = await signatureService.submitSignatures(
-        quote._id,
-        user.locationId,
+      // Use the send-contract endpoint that uses templates
+      const emailResponse = await signatureService.post(
+        '/api/emails/send-contract',
         {
-          consultant: {
-            type: 'consultant',
-            signature: signatures.consultant.signature,
-            signedAt: new Date().toISOString(),
-            name: user.name,
-          }
+          quoteId: quote._id,
+          locationId: user.locationId,
+          contactId: quote.contact?._id || quote.contactId,
+          pdfFileId: pdfFileId,
+          quoteData: {
+            quoteNumber: quote.quoteNumber,
+            customerName: quote.customerName,
+            total: quote.total,
+            projectTitle: quote.projectTitle
+          },
+          companyData: companyData
+        },
+        {
+          offline: false,
+          showError: true,
+        },
+        {
+          endpoint: '/api/emails/send-contract',
+          method: 'POST',
+          entity: 'quote',
         }
       );
 
-      if (!consultantResponse.success) {
-        throw new Error('Failed to save consultant signature');
-      }
-
-      // Save customer signature
-      const customerResponse = await signatureService.submitSignatures(
-        quote._id,
-        user.locationId,
-        {
-          customer: {
-            type: 'customer',
-            signature: customerSignature.signature,
-            signedAt: new Date().toISOString(),
-            name: quote.customerName,
-          }
-        }
-      );
-
-      if (!customerResponse.success) {
-        throw new Error('Failed to save customer signature');
-      }
-
-      console.log('[SignatureScreen] Signatures saved successfully');
-
-      // Step 2: Generate PDF with embedded signatures
-      console.log('[SignatureScreen] Generating signed PDF...');
-      const pdfResponse = await signatureService.generateSignedPDF(quote._id, user.locationId);
-
-      if (!pdfResponse.success) {
-        throw new Error('Failed to generate PDF');
-      }
-
-      // ✅ FIX: Get the fileId from the correct path in the response
-      const pdfFileId = pdfResponse.pdfUrl || pdfResponse.fileId;
-      console.log('[SignatureScreen] PDF generated successfully:', pdfFileId);
-
-      if (!pdfFileId) {
-        console.error('[SignatureScreen] PDF fileId not found in response:', pdfResponse);
-        throw new Error('PDF generated but fileId not returned');
-      }
-
-      // ✅ Step 3: NEW - Update GHL Opportunity with signed date
-      console.log('[SignatureScreen] Updating GHL opportunity...');
-      await updateOpportunityFields();
-
-      // Step 4: Send contract email automatically
-      console.log('[SignatureScreen] Starting email automation...');
-      setEmailSending(true);
-      
-      try {
-        // Call the email service to send contract
-        const emailResponse = await emailService.sendSignedQuote(
-          quote._id,
-          user.locationId,
-          {
-            recipientEmail: quote.contact?.email || quote.customerEmail,
-            includePDF: true,
-          }
-        );
-
-        setEmailSending(false);
-
-        if (emailResponse.success) {
-          setEmailSent(true);
-          console.log('[SignatureScreen] Email sent successfully:', {
-            messageId: emailResponse.messageId,
-          });
-        } else {
-          setEmailError('Email failed to send');
-          console.warn('[SignatureScreen] Email failed:', emailResponse);
-        }
-      } catch (emailError) {
-        setEmailSending(false);
-        setEmailError(emailError.message);
-        console.error('[SignatureScreen] Email service error:', emailError);
-      }
-
-      console.log('[SignatureScreen] ===== SIGNATURE PROCESS COMPLETE =====');
-
-    } catch (error) {
-      console.error('[SignatureScreen] Failed to complete signature process:', error);
-      Alert.alert('Error', 'Failed to complete signature process. Please try again.');
-      setCurrentStep(3); // Go back to customer signature step
       setEmailSending(false);
-      setEmailError(error.message);
-      setOpportunityUpdating(false);
-      setOpportunityError(error.message);
-    } finally {
-      setLoading(false);
+
+      if (emailResponse.success) {
+        setEmailSent(true);
+        console.log('[SignatureScreen] Email sent successfully:', {
+          messageId: emailResponse.emailId,
+          templateUsed: emailResponse.templateUsed
+        });
+      } else {
+        setEmailError('Email failed to send');
+        console.warn('[SignatureScreen] Email failed:', emailResponse);
+      }
+    } catch (emailError) {
+      setEmailSending(false);
+      setEmailError(emailError.message);
+      console.error('[SignatureScreen] Email service error:', emailError);
     }
-  };
+
+    console.log('[SignatureScreen] ===== SIGNATURE PROCESS COMPLETE =====');
+
+  } catch (error) {
+    console.error('[SignatureScreen] Failed to complete signature process:', error);
+    Alert.alert('Error', 'Failed to complete signature process. Please try again.');
+    setCurrentStep(3); // Go back to customer signature step
+    setEmailSending(false);
+    setEmailError(error.message);
+    setOpportunityUpdating(false);
+    setOpportunityError(error.message);
+  } finally {
+    setLoading(false);
+  }
+};
 
   // ✅ NEW: Update GHL opportunity with contract signed data
   const updateOpportunityFields = async () => {
-    if (!quote?.projectId) {
-      console.warn('[SignatureScreen] No project ID found for opportunity update');
-      return;
-    }
+  if (!quote?.projectId) {
+    console.warn('[SignatureScreen] No project ID found for opportunity update');
+    return;
+  }
 
-    try {
-      setOpportunityUpdating(true);
-      setOpportunityError(null);
+  try {
+    setOpportunityUpdating(true);
+    setOpportunityError(null);
 
-      const signedDate = new Date().toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: '2-digit', 
-        day: '2-digit'
-      });
+    const signedDate = new Date().toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: '2-digit', 
+      day: '2-digit'
+    });
 
-      console.log('[SignatureScreen] Making project update request');
-      
-      // Update project with signed date using signatureService
-      const updateResponse = await signatureService.updateProjectAfterSigning(
-        quote.projectId,
-        user.locationId,
-        {
-          signedDate: signedDate,
-          status: 'won',
-        }
-      );
-
-      console.log('[SignatureScreen] Project update response:', updateResponse);
-
-      if (updateResponse) {
-        setOpportunityUpdated(true);
-        console.log('[SignatureScreen] Opportunity updated successfully');
-        
-        // Add note to project about the update
-        await addProjectNote(
-          `GHL opportunity updated: Contract signed on ${signedDate}. Custom fields synchronized with opportunity data.`
-        );
-      } else {
-        throw new Error('Failed to update opportunity fields');
+    console.log('[SignatureScreen] Making project update request');
+    
+    // Update project with signed date using signatureService
+    const updateResponse = await signatureService.updateProjectAfterSigning(
+      quote.projectId,
+      user.locationId,
+      {
+        signedDate: signedDate,
+        status: 'won',
       }
+    );
 
-    } catch (error) {
-      console.error('[SignatureScreen] Failed to update opportunity:', error);
-      console.error('[SignatureScreen] Error response:', error.response?.data);
-      setOpportunityError(error.message);
-      // Don't throw - email can still work even if opportunity update fails
-    } finally {
-      setOpportunityUpdating(false);
+    console.log('[SignatureScreen] Project update response:', updateResponse);
+
+    if (updateResponse) {
+      setOpportunityUpdated(true);
+      console.log('[SignatureScreen] Opportunity updated successfully');
+      
+      // Add note to project about the update
+      await addProjectNote(
+        `GHL opportunity updated: Contract signed on ${signedDate}. Custom fields synchronized with opportunity data.`
+      );
+    } else {
+      throw new Error('Failed to update opportunity fields');
     }
-  };
+
+  } catch (error) {
+    console.error('[SignatureScreen] Failed to update opportunity:', error);
+    
+    // HERE'S WHERE THE ERROR HANDLING GOES:
+    if (error.response?.data?.error === 'No API key found for location') {
+      console.warn('[SignatureScreen] GHL sync skipped - OAuth location, not API key based');
+      
+      // Update the project timeline using existing method
+      try {
+        // Fix: Pass locationId as query parameter
+        await projectService.patch(
+          `/api/projects/${quote.projectId}?locationId=${user.locationId}`,
+          {
+            timeline: [{
+              id: `timeline_${Date.now()}`,
+              event: 'contract_signed',
+              description: `Contract signed on ${new Date().toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: '2-digit', 
+                day: '2-digit'
+              })}. GHL sync pending - OAuth authentication required.`,
+              timestamp: new Date().toISOString(),
+              userId: user._id || 'system',
+              metadata: {
+                signedDate: new Date().toLocaleDateString('en-US', {
+                  year: 'numeric',
+                  month: '2-digit', 
+                  day: '2-digit'
+                }),
+                ghlSyncSkipped: true,
+                reason: 'OAuth location - API key not applicable'
+              }
+            }]
+          },
+          {
+            offline: false,
+            showError: false,
+          },
+          {
+            endpoint: `/api/projects/${quote.projectId}`,
+            method: 'PATCH',
+            entity: 'project',
+          }
+        );
+        
+        setOpportunityUpdated(true);
+        setOpportunityError('Local update only - GHL sync requires backend fix');
+      } catch (noteError) {
+        console.error('[SignatureScreen] Failed to add timeline event:', noteError);
+        setOpportunityError('Update partially completed');
+      }
+    } else {
+      setOpportunityError(error.message);
+    }
+  } finally {
+    setOpportunityUpdating(false);
+  }
+};
 
   // ✅ NEW: Add audit trail note to project
   const addProjectNote = async (noteText) => {

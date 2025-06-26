@@ -118,27 +118,28 @@ export default function TemplateSelectionModal({
     });
   };
 
-  const loadTemplates = async () => {
-    if (!user?.locationId) return;
+const loadTemplates = async () => {
+  if (!user?.locationId) return;
+  
+  setLoading(true);
+  try {
+    // Use getQuoteTemplates instead of getTemplates
+    const response = await templateService.getQuoteTemplates(user.locationId);
     
-    setLoading(true);
-    try {
-      const response = await templateService.getTemplates(user.locationId);
-      
-      if (response) {
-        setLocationTemplates(response.locationTemplates || []);
-        setGlobalTemplates(response.globalTemplates || []);
-      }
-    } catch (error) {
-      console.error('Failed to load templates:', error);
-      Alert.alert(
-        'Error', 
-        'Failed to load templates. Please check your connection and try again.'
-      );
-    } finally {
-      setLoading(false);
+    if (response) {
+      setLocationTemplates(response.locationTemplates || []);
+      setGlobalTemplates(response.globalTemplates || []);
     }
-  };
+  } catch (error) {
+    console.error('Failed to load templates:', error);
+    Alert.alert(
+      'Error', 
+      'Failed to load templates. Please check your connection and try again.'
+    );
+  } finally {
+    setLoading(false);
+  }
+};
 
   const saveGlobalTemplatePreference = async (value: boolean) => {
     if (!user?._id) return;

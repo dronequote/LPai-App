@@ -13,13 +13,16 @@
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
+    "runtimeVersion": "1.0.0",
     "updates": {
-      "enabled": false
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 5000,
+      "url": "https://u.expo.dev/8d34ef8c-c6a3-45c0-838b-c07f936d5667"
     },
     "ios": {
       "supportsTablet": true
     },
-    
     "android": {
       "package": "com.lpai.lpaiapp",
       "adaptiveIcon": {
@@ -27,10 +30,6 @@
         "backgroundColor": "#ffffff"
       }
     },
-    "updates": {
-  "url": "https://u.expo.dev/8d34ef8c-c6a3-45c0-838b-c07f936d5667"
-    },
-    
     "web": {
       "favicon": "./assets/favicon.png"
     },
@@ -39,7 +38,6 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/notification-icon.png",
           "color": "#ffffff",
           "sounds": []
         }

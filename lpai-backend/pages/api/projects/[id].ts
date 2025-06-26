@@ -1,8 +1,9 @@
-// pages/api/projects/[id].ts - UPDATED to use location-specific custom field IDs
+// pages/api/projects/[id].ts - UPDATED to use OAuth authentication
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
 import axios from 'axios';
+import { getAuthHeader } from '../../../src/utils/ghlAuth';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const { id, locationId } = req.query;
@@ -217,19 +218,24 @@ async function updateProjectWithSmartSync(db: any, id: string, locationId: strin
     if (existingProject.ghlOpportunityId && existingProject.locationId) {
       console.log('🔄 [API] Project has GHL opportunity ID, attempting GHL update...');
       
-      // Get API key
+      // Get authentication (OAuth)
       const locationDoc = await db.collection('locations').findOne({ locationId: existingProject.locationId });
-      const apiKey = locationDoc?.apiKey;
       
       console.log('🔐 [API] Location document:', {
-        hasApiKey: !!apiKey,
+        hasOAuth: !!locationDoc?.ghlOAuth?.accessToken,
         hasGhlCustomFields: !!locationDoc?.ghlCustomFields,
         ghlCustomFields: locationDoc?.ghlCustomFields
       });
       
-      if (!apiKey) {
-        console.error('❌ No API key found for location');
-        return res.status(400).json({ error: 'No API key found for location' });
+      // Get OAuth authentication
+      let authHeader;
+      try {
+        const auth = await getAuthHeader(locationDoc);
+        authHeader = auth.header;
+        console.log('🔐 [API] Using authentication type:', auth.type);
+      } catch (authError) {
+        console.error('❌ No OAuth authentication found for location');
+        return res.status(400).json({ error: 'No OAuth authentication found for location' });
       }
 
       // ✅ NEW: Get related quote data for custom fields
@@ -291,7 +297,7 @@ async function updateProjectWithSmartSync(db: any, id: string, locationId: strin
         method: 'PUT',
         url: `https://services.leadconnectorhq.com/opportunities/${existingProject.ghlOpportunityId}`,
         headers: {
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: authHeader,  // Use OAuth header
           Version: '2021-07-28',
           'Content-Type': 'application/json',
           Accept: 'application/json'
@@ -350,36 +356,35 @@ async function updateProjectWithSmartSync(db: any, id: string, locationId: strin
     };
 
     console.log('💾 [API] About to update MongoDB with:', JSON.stringify(finalUpdateData, null, 2));
-console.log('💾 [API] Updating document with _id:', id);
+    console.log('💾 [API] Updating document with _id:', id);
 
-const updateResult = await db.collection('projects').updateOne(
-  { 
-    _id: new ObjectId(id)
-  },
-  { $set: finalUpdateData }
-);
+    const updateResult = await db.collection('projects').updateOne(
+      { 
+        _id: new ObjectId(id)
+      },
+      { $set: finalUpdateData }
+    );
 
-console.log('💾 [API] Update result:', updateResult);
+    console.log('💾 [API] Update result:', updateResult);
 
-if (updateResult.matchedCount === 0) {
-  console.error('❌ Project not found during MongoDB update');
-  return res.status(404).json({ error: 'Project not found during update' });
-}
+    if (updateResult.matchedCount === 0) {
+      console.error('❌ Project not found during MongoDB update');
+      return res.status(404).json({ error: 'Project not found during update' });
+    }
 
-// If we need the updated document, fetch it separately
-const updatedProject = await db.collection('projects').findOne({
-  _id: new ObjectId(id)
-});
+    // If we need the updated document, fetch it separately
+    const updatedProject = await db.collection('projects').findOne({
+      _id: new ObjectId(id)
+    });
 
-console.log('✅ MongoDB update successful');
+    console.log('✅ MongoDB update successful');
 
-return res.status(200).json({
-  success: true,
-  project: updatedProject,
-  ghlSynced: !!existingProject.ghlOpportunityId,
-  customFieldsUpdated: !!existingProject.ghlOpportunityId
-});
-    
+    return res.status(200).json({
+      success: true,
+      project: updatedProject,
+      ghlSynced: !!existingProject.ghlOpportunityId,
+      customFieldsUpdated: !!existingProject.ghlOpportunityId
+    });
 
   } catch (error) {
     console.error('❌ [API] Error updating project:', error);
@@ -446,7 +451,7 @@ async function buildCustomFields(
   return customFields;
 }
 
-// ✅ Helper function to use location-specific field IDs
+// ✅ Helper function to use location-specific field IDs (Updated to use OAuth)
 export async function updateOpportunityCustomFields(
   db: any, 
   projectId: string, 
@@ -468,14 +473,19 @@ export async function updateOpportunityCustomFields(
       return { success: false, reason: 'No GHL opportunity ID' };
     }
 
-    // Get API key AND custom field IDs from location
+    // Get location and custom field IDs
     const locationDoc = await db.collection('locations').findOne({ locationId });
-    const apiKey = locationDoc?.apiKey;
     const customFieldIds = locationDoc?.ghlCustomFields;
     
-    if (!apiKey) {
-      console.error('❌ [Opportunity Update] No API key found');
-      return { success: false, reason: 'No API key' };
+    // Get OAuth authentication
+    let authHeader;
+    try {
+      const auth = await getAuthHeader(locationDoc);
+      authHeader = auth.header;
+      console.log('🔐 [Opportunity Update] Using authentication type:', auth.type);
+    } catch (authError) {
+      console.error('❌ [Opportunity Update] No OAuth authentication found');
+      return { success: false, reason: 'No OAuth authentication' };
     }
     
     if (!customFieldIds) {
@@ -506,7 +516,7 @@ export async function updateOpportunityCustomFields(
       },
       {
         headers: {
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: authHeader,  // Use OAuth header
           Version: '2021-07-28',
           'Content-Type': 'application/json'
         }
@@ -520,7 +530,7 @@ export async function updateOpportunityCustomFields(
       fieldsUpdated: customFields.length
     };
 
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ [Opportunity Update] Failed to update custom fields:', error);
     return { 
       success: false, 

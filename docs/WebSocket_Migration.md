@@ -645,3 +645,8 @@ Please help me:
 1. Clean up the old SSE code
 2. Debug why Ably isn't connecting on the frontend
 3. Get real-time messages working instantly
+
+
+******Errors to Fix***********
+-When contact is unnasigned
+-can we assign a project?

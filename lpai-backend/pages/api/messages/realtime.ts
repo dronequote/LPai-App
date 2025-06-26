@@ -1,5 +1,6 @@
 // lpai-backend/pages/api/messages/realtime.ts
 // Real-time message streaming via Server-Sent Events (SSE)
+// Updated: 2025-01-20 - Fixed user event subscription to use ghlUserId
 
 import type { NextApiRequest, NextApiResponse } from 'next';
 import jwt from 'jsonwebtoken';
@@ -49,12 +50,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   // Verify user has access to this location
+  let user: any;
   try {
     const client = await clientPromise;
     const db = client.db('lpai');
     
     // FIX: Use ghlUserId instead of _id since JWT contains GHL user ID
-    const user = await db.collection('users').findOne({
+    user = await db.collection('users').findOne({
       ghlUserId: userId,  // Changed from _id to ghlUserId
       locationId: locationId
     });
@@ -169,7 +171,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // Subscribe to events
   const conversationEvent = `message:${locationId}:${contactObjectId}`;
-  const userEvent = `user:${userId}`;
+  const userEvent = `user:${user.ghlUserId}`; // FIXED: Use user.ghlUserId from DB lookup
   const locationEvent = `location:${locationId}`;
   
   messageEvents.on(conversationEvent, conversationMessageHandler);
