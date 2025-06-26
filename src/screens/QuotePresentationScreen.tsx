@@ -24,6 +24,7 @@ import { quoteService } from '../services/quoteService';
 import { locationService } from '../services/locationService';
 import BlockRenderer from '../components/BlockRenderer';
 import PublishModal from '../components/PublishModal'; // NEW IMPORT
+import api from '../lib/api';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -129,98 +130,120 @@ const QuotePresentationScreen = () => {
     loadPresentationData();
   }, []);
 
-  const loadPresentationData = async () => {
-    console.log('[QuotePresentation] Loading presentation data...');
-    
-    if (!user?.locationId) {
-      setError('Missing location information');
-      setLoading(false);
-      return;
-    }
+  // Fix for QuotePresentationScreen.tsx
+// In the loadPresentationData function, update the quote fetching part:
 
-    try {
-      setLoading(true);
-      setError(null);
+const loadPresentationData = async () => {
+  console.log('[QuotePresentation] Loading presentation data...');
+  
+  if (!user?.locationId) {
+    setError('Missing location information');
+    setLoading(false);
+    return;
+  }
 
-      const dataPromises = [];
+  try {
+    setLoading(true);
+    setError(null);
 
-      if (quoteId) {
-        console.log('[QuotePresentation] Fetching fresh quote data for ID:', quoteId);
-        dataPromises.push(
-          quoteService.getDetails(quoteId, user.locationId)
-            .then(data => ({ type: 'quote', data }))
-        );
-      } else if (fallbackQuote) {
-        console.log('[QuotePresentation] Using fallback quote data');
-        dataPromises.push(
-          Promise.resolve({ type: 'quote', data: fallbackQuote })
-        );
-      } else {
-        throw new Error('No quote data available (no quoteId or fallback quote)');
-      }
+    const dataPromises = [];
 
+    if (quoteId) {
+      console.log('[QuotePresentation] Fetching fresh quote data for ID:', quoteId);
+      
+      // Use API directly instead of quoteService to avoid service issues
       dataPromises.push(
-        locationService.getDetails(user.locationId)
-          .then(data => ({ type: 'company', data }))
+        api.get(`/api/quotes/${quoteId}?locationId=${user.locationId}`)
+          .then(response => ({ type: 'quote', data: response.data }))
           .catch(error => {
-            console.warn('[QuotePresentation] Company data fetch failed, using defaults:', error);
-            return { type: 'company', data: {} };
+            console.error('[QuotePresentation] Quote fetch error:', error);
+            console.error('[QuotePresentation] Error response:', error.response?.data);
+            console.error('[QuotePresentation] Error status:', error.response?.status);
+            
+            // If 404, provide more specific error
+            if (error.response?.status === 404) {
+              throw new Error('Quote not found. It may have been deleted or you may not have permission to view it.');
+            }
+            throw error;
           })
       );
-
-      const results = await Promise.allSettled(dataPromises);
-      
-      let quoteData = null;
-      let companyInfo = {};
-
-      results.forEach(result => {
-        if (result.status === 'fulfilled') {
-          if (result.value.type === 'quote') {
-            quoteData = result.value.data;
-          } else if (result.value.type === 'company') {
-            companyInfo = result.value.data.companyInfo || result.value.data || {};
-          }
-        }
-      });
-
-      if (!quoteData) {
-        throw new Error('Failed to load quote data');
-      }
-
-      const sectionsArray = Array.isArray(quoteData.sections) 
-        ? JSON.parse(JSON.stringify(quoteData.sections))
-        : [];
-
-      const processedQuote = {
-        ...quoteData,
-        sections: sectionsArray,
-        customerName: quoteData.contactName || quoteData.customerName || 'Customer',
-        projectTitle: quoteData.projectTitle || quoteData.title || 'Project',
-        termsAndConditions: quoteData.termsAndConditions || 'Standard terms and conditions apply.',
-        paymentTerms: quoteData.paymentTerms || 'Payment due upon completion.',
-        notes: quoteData.notes || '',
-      };
-
-      console.log('[QuotePresentation] Data loaded successfully:', {
-        quoteId: processedQuote._id,
-        quoteNumber: processedQuote.quoteNumber,
-        sectionsCount: processedQuote.sections.length,
-        hasCompanyData: Object.keys(companyInfo).length > 0,
-        customerName: processedQuote.customerName,
-        total: processedQuote.total,
-        status: processedQuote.status // NEW: Log current status
-      });
-
-      setQuote(processedQuote);
-      setCompanyData(companyInfo);
-
-    } catch (error) {
-      console.error('[QuotePresentation] Failed to load presentation data:', error);
-      setError(error.message || 'Failed to load quote data');
-    } finally {
-      setLoading(false);
+    } else if (fallbackQuote) {
+      console.log('[QuotePresentation] Using fallback quote data');
+      dataPromises.push(
+        Promise.resolve({ type: 'quote', data: fallbackQuote })
+      );
+    } else {
+      throw new Error('No quote data available (no quoteId or fallback quote)');
     }
-  };
+
+    dataPromises.push(
+      locationService.getDetails(user.locationId)
+        .then(data => ({ type: 'company', data }))
+        .catch(error => {
+          console.warn('[QuotePresentation] Company data fetch failed, using defaults:', error);
+          return { type: 'company', data: {} };
+        })
+    );
+
+    const results = await Promise.allSettled(dataPromises);
+    
+    let quoteData = null;
+    let companyInfo = {};
+
+    results.forEach(result => {
+      if (result.status === 'fulfilled') {
+        if (result.value.type === 'quote') {
+          quoteData = result.value.data;
+        } else if (result.value.type === 'company') {
+          companyInfo = result.value.data.companyInfo || result.value.data || {};
+        }
+      } else {
+        // Handle rejected promises
+        console.error('[QuotePresentation] Promise rejected:', result.reason);
+        if (result.reason?.message?.includes('Quote not found')) {
+          throw result.reason;
+        }
+      }
+    });
+
+    if (!quoteData) {
+      throw new Error('Failed to load quote data');
+    }
+
+    const sectionsArray = Array.isArray(quoteData.sections) 
+      ? JSON.parse(JSON.stringify(quoteData.sections))
+      : [];
+
+    const processedQuote = {
+      ...quoteData,
+      sections: sectionsArray,
+      customerName: quoteData.contactName || quoteData.customerName || 'Customer',
+      projectTitle: quoteData.projectTitle || quoteData.title || 'Project',
+      termsAndConditions: quoteData.termsAndConditions || 'Standard terms and conditions apply.',
+      paymentTerms: quoteData.paymentTerms || 'Payment due upon completion.',
+      notes: quoteData.notes || '',
+    };
+
+    console.log('[QuotePresentation] Data loaded successfully:', {
+      quoteId: processedQuote._id,
+      quoteNumber: processedQuote.quoteNumber,
+      sectionsCount: processedQuote.sections.length,
+      hasCompanyData: Object.keys(companyInfo).length > 0,
+      customerName: processedQuote.customerName,
+      total: processedQuote.total,
+      status: processedQuote.status
+    });
+
+    setQuote(processedQuote);
+    setCompanyData(companyInfo);
+
+  } catch (error) {
+    console.error('[QuotePresentation] Failed to load presentation data:', error);
+    setError(error.message || 'Failed to load quote data');
+  } finally {
+    setLoading(false);
+  }
+};
 
   // Build variables object for template rendering
   const buildVariables = () => {

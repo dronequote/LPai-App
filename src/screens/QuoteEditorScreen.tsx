@@ -1,5 +1,5 @@
 // src/screens/QuoteEditorScreen.tsx
-// Updated: 2025-06-17
+// Updated: 2025-06-26
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRoute, useNavigation } from '@react-navigation/native';
@@ -19,18 +20,28 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import { quoteService } from '../services/quoteService';
 import { libraryService } from '../services/libraryService';
-import { COLORS, FONT, RADIUS, SHADOW } from '../styles/theme';
+import { templateService } from '../services/templateService';
+import api from '../lib/api'; // Temporarily import API directly
+import { COLORS, FONT, RADIUS, SHADOW, SIZES } from '../styles/theme';
 import type { Project, Quote, QuoteSection, QuoteLineItem, ProductLibrary, LibraryItem } from '../../packages/types/dist';
 import TemplateSelectionModal from '../components/TemplateSelectionModal';
 
 // Global variable to store quote data for navigation (workaround for React Navigation serialization issues)
 global.tempQuoteData = null;
 
+const { width: screenWidth } = Dimensions.get('window');
+const isTablet = screenWidth >= 768;
+
 type QuoteEditorRouteParams = {
   mode: 'create' | 'edit';
   project?: Project;
   quote?: Quote;
 };
+
+type TabType = 'details' | 'items' | 'pricing' | 'terms';
+
+// Define the service name for this component
+const serviceName = 'quotes';
 
 export default function QuoteEditorScreen() {
   const route = useRoute();
@@ -44,6 +55,7 @@ export default function QuoteEditorScreen() {
   const [saving, setSaving] = useState(false);
   const [libraries, setLibraries] = useState<ProductLibrary[]>([]);
   const [savedQuoteId, setSavedQuoteId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<TabType>('details');
   
   // Create a ref to store quote data for navigation
   const quoteDataRef = useRef<any>(null);
@@ -80,7 +92,7 @@ export default function QuoteEditorScreen() {
       
       // Load libraries
       if (user?.locationId) {
-        const librariesData = await libraryService.list(user.locationId);
+        const librariesData = await libraryService.getLibraries(user.locationId);
         setLibraries(librariesData || []);
       }
       
@@ -311,23 +323,36 @@ export default function QuoteEditorScreen() {
   // Build quote data object
   const buildQuoteData = () => {
     const calculatedTotals = calculateTotals();
-    return {
+    
+    // Ensure all required fields are present
+    const quoteData = {
       title: title.trim(),
       description: description.trim(),
-      sections,
-      taxRate,
-      discountPercentage,
+      sections: sections || [],
+      taxRate: taxRate || 0.08,
+      discountPercentage: discountPercentage || 0,
+      discountAmount: totals.discountAmount || 0,
       termsAndConditions: termsAndConditions.trim(),
       paymentTerms: paymentTerms.trim(),
       notes: notes.trim(),
-      depositType,
-      depositValue,
-      depositAmount: calculatedTotals.depositAmount,
+      depositType: depositType || 'percentage',
+      depositValue: depositValue || 0,
+      depositAmount: calculatedTotals.depositAmount || 0,
       projectId: project?._id || existingQuote?.projectId,
       contactId: project?.contactId || existingQuote?.contactId,
       locationId: user?.locationId,
       userId: user?._id,
+      // Add calculated totals
+      subtotal: calculatedTotals.subtotal || 0,
+      taxAmount: calculatedTotals.taxAmount || 0,
+      total: calculatedTotals.total || 0,
     };
+    
+    if (__DEV__) {
+      console.log('[QuoteEditor] Building quote data:', quoteData);
+    }
+    
+    return quoteData;
   };
 
   // Save quote (regular save)
@@ -347,13 +372,18 @@ export default function QuoteEditorScreen() {
       
       const quoteData = buildQuoteData();
       
+      if (__DEV__) {
+        console.log('[QuoteEditor] Saving quote with data:', quoteData);
+      }
+      
       if (mode === 'create') {
-        const response = await quoteService.create(quoteData);
-        console.log('[QuoteEditor] Created quote:', response.quoteNumber);
+        // Use API directly for create as well
+        const response = await api.post('/api/quotes', quoteData);
+        console.log('[QuoteEditor] Created quote:', response.data.quoteNumber);
         
         Alert.alert(
           'Success',
-          `Quote ${response.quoteNumber} created successfully!`,
+          `Quote ${response.data.quoteNumber} created successfully!`,
           [
             {
               text: 'OK',
@@ -361,11 +391,29 @@ export default function QuoteEditorScreen() {
             }
           ]
         );
-      } else if (existingQuote) {
-        await quoteService.update(existingQuote._id, user.locationId, {
-          ...quoteData,
+      } else if (existingQuote?._id) {
+        // For update, use API directly to avoid service issues
+        const updatePayload = {
+          title: quoteData.title,
+          description: quoteData.description,
+          sections: quoteData.sections,
+          taxRate: quoteData.taxRate,
+          discountPercentage: quoteData.discountPercentage,
+          discountAmount: quoteData.discountAmount,
+          depositType: quoteData.depositType,
+          depositValue: quoteData.depositValue,
+          depositAmount: quoteData.depositAmount,
+          termsAndConditions: quoteData.termsAndConditions,
+          paymentTerms: quoteData.paymentTerms,
+          notes: quoteData.notes,
+          subtotal: quoteData.subtotal,
+          taxAmount: quoteData.taxAmount,
+          total: quoteData.total,
+          locationId: user.locationId,
           action: 'update_content',
-        });
+        };
+        
+        const response = await api.patch(`/api/quotes/${existingQuote._id}`, updatePayload);
         
         console.log('[QuoteEditor] Updated quote:', existingQuote.quoteNumber);
         
@@ -383,7 +431,13 @@ export default function QuoteEditorScreen() {
       
     } catch (error) {
       console.error('[QuoteEditor] Failed to save quote:', error);
-      Alert.alert('Error', 'Failed to save quote. Please try again.');
+      console.error('[QuoteEditor] Error details:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        stack: error.stack,
+      });
+      Alert.alert('Error', error.response?.data?.error || error.message || 'Failed to save quote. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -421,32 +475,65 @@ export default function QuoteEditorScreen() {
         hasSections: !!quoteData.sections,
         sectionsLength: quoteData.sections?.length,
         sectionsType: typeof quoteData.sections,
-        isArray: Array.isArray(quoteData.sections)
+        isArray: Array.isArray(quoteData.sections),
+        hasLocationId: !!quoteData.locationId,
+        hasProjectId: !!quoteData.projectId,
       });
 
       let quoteId;
       if (mode === 'create') {
-        const response = await quoteService.create(quoteData);
-        quoteId = response._id;
-        console.log('[QuoteEditor] Created quote for presentation:', response.quoteNumber);
-      } else if (existingQuote) {
-        await quoteService.update(existingQuote._id, user.locationId, {
-          ...quoteData,
+        // Use API directly for create
+        const response = await api.post('/api/quotes', quoteData);
+        quoteId = response.data._id;
+        console.log('[QuoteEditor] Created quote for presentation:', response.data.quoteNumber);
+        
+        // Small delay to ensure DB write completes
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } else if (existingQuote?._id) {
+        // For update, use API directly to avoid service issues
+        const updatePayload = {
+          title: quoteData.title,
+          description: quoteData.description,
+          sections: quoteData.sections,
+          taxRate: quoteData.taxRate,
+          discountPercentage: quoteData.discountPercentage,
+          discountAmount: quoteData.discountAmount,
+          depositType: quoteData.depositType,
+          depositValue: quoteData.depositValue,
+          depositAmount: quoteData.depositAmount,
+          termsAndConditions: quoteData.termsAndConditions,
+          paymentTerms: quoteData.paymentTerms,
+          notes: quoteData.notes,
+          subtotal: quoteData.subtotal,
+          taxAmount: quoteData.taxAmount,
+          total: quoteData.total,
+          locationId: user.locationId,
           action: 'update_content',
-        });
+        };
+        
+        const response = await api.patch(`/api/quotes/${existingQuote._id}`, updatePayload);
+        
         quoteId = existingQuote._id;
         console.log('[QuoteEditor] Updated quote for presentation:', existingQuote.quoteNumber);
       }
 
       // Store the saved quote ID for later use
       setSavedQuoteId(quoteId);
+      
+      console.log('[QuoteEditor] Saved quote ID for presentation:', quoteId);
 
       // Show template selection modal
       setShowTemplateSelection(true);
       
     } catch (error) {
       console.error('[QuoteEditor] Failed to save quote before presentation:', error);
-      Alert.alert('Error', 'Failed to save quote. Please try again.');
+      console.error('[QuoteEditor] Error details:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        stack: error.stack,
+      });
+      Alert.alert('Error', error.response?.data?.error || error.message || 'Failed to save quote. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -464,73 +551,81 @@ export default function QuoteEditorScreen() {
     try {
       console.log('[QuoteEditor] Fetching fresh quote data from DB, quoteId:', savedQuoteId);
       
-      // Fetch the complete, fresh quote from database
-      const freshQuoteData = await quoteService.getById(savedQuoteId, user.locationId);
-      
-      console.log('[QuoteEditor] Fresh quote data structure:', {
-        id: freshQuoteData._id,
-        quoteNumber: freshQuoteData.quoteNumber,
-        hasSections: Array.isArray(freshQuoteData.sections),
-        sectionsLength: freshQuoteData.sections?.length,
-        sectionsData: freshQuoteData.sections,
-        sectionsActualValue: JSON.stringify(freshQuoteData.sections),
-        hasContact: !!freshQuoteData.contact,
-        hasProject: !!freshQuoteData.project,
-        fullObject: freshQuoteData
-      });
+      // Fetch the complete, fresh quote from database using API directly
+      try {
+        const response = await api.get(`/api/quotes/${savedQuoteId}?locationId=${user.locationId}`);
+        const freshQuoteData = response.data;
+        
+        console.log('[QuoteEditor] Fresh quote data structure:', {
+          id: freshQuoteData._id,
+          quoteNumber: freshQuoteData.quoteNumber,
+          hasSections: Array.isArray(freshQuoteData.sections),
+          sectionsLength: freshQuoteData.sections?.length,
+          sectionsData: freshQuoteData.sections,
+          hasContact: !!freshQuoteData.contact,
+          hasProject: !!freshQuoteData.project,
+        });
 
-      // CRITICAL FIX: Deep clone and ensure sections is always an array
-      const sectionsArray = Array.isArray(freshQuoteData.sections) 
-        ? JSON.parse(JSON.stringify(freshQuoteData.sections))  // Deep clone
-        : [];
+        // CRITICAL FIX: Deep clone and ensure sections is always an array
+        const sectionsArray = Array.isArray(freshQuoteData.sections) 
+          ? JSON.parse(JSON.stringify(freshQuoteData.sections))  // Deep clone
+          : [];
 
-      console.log('[QuoteEditor] Sections processing:', {
-        originalSections: freshQuoteData.sections,
-        originalType: typeof freshQuoteData.sections,
-        originalIsArray: Array.isArray(freshQuoteData.sections),
-        processedSections: sectionsArray,
-        processedType: typeof sectionsArray,
-        processedIsArray: Array.isArray(sectionsArray),
-        processedLength: sectionsArray.length
-      });
+        console.log('[QuoteEditor] Sections processing:', {
+          originalSections: freshQuoteData.sections,
+          originalType: typeof freshQuoteData.sections,
+          originalIsArray: Array.isArray(freshQuoteData.sections),
+          processedSections: sectionsArray,
+          processedType: typeof sectionsArray,
+          processedIsArray: Array.isArray(sectionsArray),
+          processedLength: sectionsArray.length
+        });
 
-      const quoteForNavigation = {
-        _id: freshQuoteData._id,
-        quoteNumber: freshQuoteData.quoteNumber,
-        contactName: freshQuoteData.contactName,
-        customerName: freshQuoteData.contactName || freshQuoteData.customerName,
-        projectTitle: freshQuoteData.projectTitle || freshQuoteData.title,
-        title: freshQuoteData.title,
-        sections: sectionsArray,  // Use the processed array
-        subtotal: freshQuoteData.subtotal || 0,
-        taxAmount: freshQuoteData.taxAmount || 0,
-        total: freshQuoteData.total || 0,
-        termsAndConditions: freshQuoteData.termsAndConditions || '',
-        paymentTerms: freshQuoteData.paymentTerms || '',
-        notes: freshQuoteData.notes || '',
-        contact: freshQuoteData.contact,
-        project: freshQuoteData.project,
-        depositType: freshQuoteData.depositType,
-        depositValue: freshQuoteData.depositValue,
-        depositAmount: freshQuoteData.depositAmount,
-      };
+        const quoteForNavigation = {
+          _id: freshQuoteData._id,
+          quoteNumber: freshQuoteData.quoteNumber,
+          contactName: freshQuoteData.contactName,
+          customerName: freshQuoteData.contactName || freshQuoteData.customerName,
+          projectTitle: freshQuoteData.projectTitle || freshQuoteData.title,
+          title: freshQuoteData.title,
+          sections: sectionsArray,  // Use the processed array
+          subtotal: freshQuoteData.subtotal || 0,
+          taxAmount: freshQuoteData.taxAmount || 0,
+          total: freshQuoteData.total || 0,
+          termsAndConditions: freshQuoteData.termsAndConditions || '',
+          paymentTerms: freshQuoteData.paymentTerms || '',
+          notes: freshQuoteData.notes || '',
+          contact: freshQuoteData.contact,
+          project: freshQuoteData.project,
+          depositType: freshQuoteData.depositType,
+          depositValue: freshQuoteData.depositValue,
+          depositAmount: freshQuoteData.depositAmount,
+        };
 
-      console.log('[QuoteEditor] Quote prepared for navigation:', {
-        id: quoteForNavigation._id,
-        hasSections: Array.isArray(quoteForNavigation.sections),
-        sectionsLength: quoteForNavigation.sections?.length,
-        sectionsType: typeof quoteForNavigation.sections,
-        sectionsValue: JSON.stringify(quoteForNavigation.sections),
-        customerName: quoteForNavigation.customerName,
-        termsAndConditions: quoteForNavigation.termsAndConditions,
-        depositAmount: quoteForNavigation.depositAmount
-      });
+        console.log('[QuoteEditor] Quote prepared for navigation:', {
+          id: quoteForNavigation._id,
+          hasSections: Array.isArray(quoteForNavigation.sections),
+          sectionsLength: quoteForNavigation.sections?.length,
+          sectionsType: typeof quoteForNavigation.sections,
+          customerName: quoteForNavigation.customerName,
+          depositAmount: quoteForNavigation.depositAmount
+        });
 
-      // Navigate to presentation with sanitized data
-      navigation.navigate('QuotePresentation', {
-        quoteId: savedQuoteId,
-        template: template,
-      });
+        // Navigate to presentation with sanitized data
+        navigation.navigate('QuotePresentation', {
+          quoteId: savedQuoteId,
+          template: template,
+        });
+      } catch (fetchError) {
+        console.error('[QuoteEditor] Failed to fetch quote:', fetchError);
+        console.error('[QuoteEditor] Fetch error response:', fetchError.response?.data);
+        
+        // If fetch fails, try to navigate with the ID anyway
+        navigation.navigate('QuotePresentation', {
+          quoteId: savedQuoteId,
+          template: template,
+        });
+      }
             
     } catch (error) {
       console.error('[QuoteEditor] Failed to fetch quote for presentation:', error);
@@ -544,6 +639,323 @@ export default function QuoteEditorScreen() {
     // TODO: Navigate to LibraryBrowserScreen
     // For now, let's add a simple custom item
     addLineItem(sectionId);
+  };
+
+  // Tab configuration
+  const tabs = [
+    { id: 'details', label: 'Details', icon: 'document-text-outline' },
+    { id: 'items', label: 'Items', icon: 'list-outline' },
+    { id: 'pricing', label: 'Pricing', icon: 'calculator-outline' },
+    { id: 'terms', label: 'Terms', icon: 'shield-checkmark-outline' },
+  ];
+
+  // Render tab content
+  const renderTabContent = () => {
+    switch (activeTab) {
+      case 'details':
+        return (
+          <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
+            <View style={styles.section}>
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Title *</Text>
+                <TextInput
+                  style={styles.input}
+                  value={title}
+                  onChangeText={setTitle}
+                  placeholder="Quote title"
+                  placeholderTextColor={COLORS.textGray}
+                />
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Description</Text>
+                <TextInput
+                  style={[styles.input, styles.textArea]}
+                  value={description}
+                  onChangeText={setDescription}
+                  placeholder="Quote description (optional)"
+                  multiline
+                  numberOfLines={3}
+                  textAlignVertical="top"
+                  placeholderTextColor={COLORS.textGray}
+                />
+              </View>
+
+              {/* Quote Info Card */}
+              <View style={styles.infoCard}>
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Customer</Text>
+                  <Text style={styles.infoValue}>
+                    {project?.contactName || existingQuote?.contactName || 'Unknown'}
+                  </Text>
+                </View>
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Project</Text>
+                  <Text style={styles.infoValue}>
+                    {project?.title || existingQuote?.projectTitle || 'Unknown'}
+                  </Text>
+                </View>
+                {existingQuote && (
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>Quote #</Text>
+                    <Text style={styles.infoValue}>{existingQuote.quoteNumber}</Text>
+                  </View>
+                )}
+              </View>
+            </View>
+          </ScrollView>
+        );
+
+      case 'items':
+        return (
+          <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Line Items</Text>
+                <TouchableOpacity style={styles.addButton} onPress={addSection}>
+                  <Ionicons name="add" size={16} color="#fff" />
+                  <Text style={styles.addButtonText}>Section</Text>
+                </TouchableOpacity>
+              </View>
+
+              {sections.map((section) => (
+                <View key={section.id} style={styles.sectionCard}>
+                  {/* Section Header */}
+                  <TouchableOpacity 
+                    style={styles.sectionCardHeader}
+                    onPress={() => toggleSection(section.id)}
+                  >
+                    <View style={styles.sectionHeaderLeft}>
+                      <Ionicons 
+                        name={expandedSections.has(section.id) ? "chevron-down" : "chevron-forward"} 
+                        size={20} 
+                        color={COLORS.textGray} 
+                      />
+                      {editingSection === section.id ? (
+                        <TextInput
+                          style={styles.sectionNameInput}
+                          value={section.name}
+                          onChangeText={(text) => updateSectionName(section.id, text)}
+                          onBlur={() => setEditingSection(null)}
+                          onSubmitEditing={() => setEditingSection(null)}
+                          autoFocus
+                        />
+                      ) : (
+                        <Text style={styles.sectionName}>{section.name}</Text>
+                      )}
+                    </View>
+                    
+                    <View style={styles.sectionHeaderRight}>
+                      <Text style={styles.sectionTotal}>
+                        ${section.subtotal.toLocaleString()}
+                      </Text>
+                      <TouchableOpacity 
+                        onPress={() => setEditingSection(section.id)}
+                        style={styles.sectionAction}
+                      >
+                        <Ionicons name="pencil" size={16} color={COLORS.textGray} />
+                      </TouchableOpacity>
+                      <TouchableOpacity 
+                        onPress={() => deleteSection(section.id)}
+                        style={styles.sectionAction}
+                      >
+                        <Ionicons name="trash" size={16} color={COLORS.textRed} />
+                      </TouchableOpacity>
+                    </View>
+                  </TouchableOpacity>
+
+                  {/* Section Content */}
+                  {expandedSections.has(section.id) && (
+                    <View style={styles.sectionContent}>
+                      {section.lineItems.map((item) => (
+                        <LineItemRow
+                          key={item.id}
+                          item={item}
+                          onUpdate={(updates) => updateLineItem(section.id, item.id, updates)}
+                          onDelete={() => deleteLineItem(section.id, item.id)}
+                        />
+                      ))}
+                      
+                      {/* Add Item Button */}
+                      <TouchableOpacity 
+                        style={styles.addItemButton}
+                        onPress={() => openLibraryBrowser(section.id)}
+                      >
+                        <Ionicons name="add-circle-outline" size={20} color={COLORS.accent} />
+                        <Text style={styles.addItemText}>Add Item</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              ))}
+
+              {sections.length === 0 && (
+                <View style={styles.emptyState}>
+                  <Ionicons name="receipt-outline" size={48} color={COLORS.textGray} />
+                  <Text style={styles.emptyStateText}>No sections yet</Text>
+                  <Text style={styles.emptyStateSubtext}>
+                    Add a section to start building your quote
+                  </Text>
+                </View>
+              )}
+            </View>
+          </ScrollView>
+        );
+
+      case 'pricing':
+        return (
+          <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
+            {/* Pricing Summary */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Pricing Summary</Text>
+              
+              <View style={styles.pricingCard}>
+                <View style={styles.pricingRow}>
+                  <Text style={styles.pricingLabel}>Subtotal</Text>
+                  <Text style={styles.pricingValue}>${totals.subtotal.toLocaleString()}</Text>
+                </View>
+                
+                <View style={styles.pricingRow}>
+                  <View style={styles.pricingInputRow}>
+                    <Text style={styles.pricingLabel}>Discount</Text>
+                    <TextInput
+                      style={styles.percentInput}
+                      value={discountPercentage.toString()}
+                      onChangeText={(text) => setDiscountPercentage(parseFloat(text) || 0)}
+                      keyboardType="numeric"
+                      placeholder="0"
+                    />
+                    <Text style={styles.percentSymbol}>%</Text>
+                  </View>
+                  <Text style={styles.pricingValue}>-${totals.discountAmount.toLocaleString()}</Text>
+                </View>
+                
+                <View style={styles.pricingRow}>
+                  <View style={styles.pricingInputRow}>
+                    <Text style={styles.pricingLabel}>Tax</Text>
+                    <TextInput
+                      style={styles.percentInput}
+                      value={(taxRate * 100).toString()}
+                      onChangeText={(text) => setTaxRate((parseFloat(text) || 0) / 100)}
+                      keyboardType="numeric"
+                      placeholder="0"
+                    />
+                    <Text style={styles.percentSymbol}>%</Text>
+                  </View>
+                  <Text style={styles.pricingValue}>${totals.taxAmount.toLocaleString()}</Text>
+                </View>
+                
+                <View style={[styles.pricingRow, styles.totalRow]}>
+                  <Text style={styles.totalLabel}>Total</Text>
+                  <Text style={styles.totalValue}>${totals.total.toLocaleString()}</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Deposit Section */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Deposit</Text>
+              
+              <View style={styles.depositCard}>
+                <Text style={styles.label}>Deposit Type</Text>
+                <View style={styles.toggleContainer}>
+                  <TouchableOpacity
+                    style={[styles.toggle, depositType === 'percentage' && styles.activeToggle]}
+                    onPress={() => setDepositType('percentage')}
+                  >
+                    <Text style={[styles.toggleText, depositType === 'percentage' && styles.activeToggleText]}>
+                      Percentage %
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.toggle, depositType === 'fixed' && styles.activeToggle]}
+                    onPress={() => setDepositType('fixed')}
+                  >
+                    <Text style={[styles.toggleText, depositType === 'fixed' && styles.activeToggleText]}>
+                      Fixed Amount $
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>
+                    {depositType === 'percentage' ? 'Deposit Percentage' : 'Deposit Amount'}
+                  </Text>
+                  <TextInput
+                    style={styles.input}
+                    value={depositValue.toString()}
+                    onChangeText={(text) => setDepositValue(parseFloat(text) || 0)}
+                    keyboardType="numeric"
+                    placeholder={depositType === 'percentage' ? "50" : "500"}
+                    placeholderTextColor={COLORS.textGray}
+                  />
+                </View>
+
+                {depositValue > 0 && (
+                  <View style={styles.depositPreview}>
+                    <Text style={styles.depositPreviewLabel}>Deposit Due:</Text>
+                    <Text style={styles.depositPreviewValue}>
+                      ${totals.depositAmount.toFixed(2)}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </View>
+          </ScrollView>
+        );
+
+      case 'terms':
+        return (
+          <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
+            <View style={styles.section}>
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Terms & Conditions</Text>
+                <TextInput
+                  style={[styles.input, styles.textArea]}
+                  value={termsAndConditions}
+                  onChangeText={setTermsAndConditions}
+                  placeholder="Terms and conditions"
+                  multiline
+                  numberOfLines={4}
+                  textAlignVertical="top"
+                  placeholderTextColor={COLORS.textGray}
+                />
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Payment Terms</Text>
+                <TextInput
+                  style={[styles.input, styles.textArea]}
+                  value={paymentTerms}
+                  onChangeText={setPaymentTerms}
+                  placeholder="Payment terms"
+                  multiline
+                  numberOfLines={4}
+                  textAlignVertical="top"
+                  placeholderTextColor={COLORS.textGray}
+                />
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Notes</Text>
+                <TextInput
+                  style={[styles.input, styles.textArea, { height: 120 }]}
+                  value={notes}
+                  onChangeText={setNotes}
+                  placeholder="Additional notes (optional)"
+                  multiline
+                  numberOfLines={6}
+                  textAlignVertical="top"
+                  placeholderTextColor={COLORS.textGray}
+                />
+              </View>
+            </View>
+          </ScrollView>
+        );
+
+      default:
+        return null;
+    }
   };
 
   if (loading) {
@@ -571,297 +983,61 @@ export default function QuoteEditorScreen() {
           <Text style={styles.headerTitle}>
             {mode === 'create' ? 'Create Quote' : 'Edit Quote'}
           </Text>
-          <TouchableOpacity onPress={saveQuote} disabled={saving}>
-            {saving ? (
-              <ActivityIndicator size="small" color={COLORS.accent} />
-            ) : (
-              <Ionicons name="checkmark" size={24} color={COLORS.accent} />
-            )}
-          </TouchableOpacity>
+          <View style={{ width: 24 }} />
         </View>
 
-        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-          {/* Quote Info */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Quote Information</Text>
-            
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Title *</Text>
-              <TextInput
-                style={styles.input}
-                value={title}
-                onChangeText={setTitle}
-                placeholder="Quote title"
-                placeholderTextColor={COLORS.textGray}
+        {/* Tabs */}
+        <View style={styles.tabContainer}>
+          {tabs.map((tab) => (
+            <TouchableOpacity
+              key={tab.id}
+              style={[styles.tab, activeTab === tab.id && styles.activeTab]}
+              onPress={() => setActiveTab(tab.id as TabType)}
+            >
+              <Ionicons 
+                name={tab.icon as any} 
+                size={20} 
+                color={activeTab === tab.id ? COLORS.accent : COLORS.textGray} 
               />
-            </View>
-            
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Description</Text>
-              <TextInput
-                style={[styles.input, styles.textArea]}
-                value={description}
-                onChangeText={setDescription}
-                placeholder="Quote description (optional)"
-                multiline
-                numberOfLines={3}
-                textAlignVertical="top"
-                placeholderTextColor={COLORS.textGray}
-              />
-            </View>
-          </View>
+              <Text style={[
+                styles.tabText,
+                activeTab === tab.id && styles.activeTabText
+              ]}>
+                {tab.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
 
-          {/* Line Items Sections */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Line Items</Text>
-              <TouchableOpacity style={styles.addButton} onPress={addSection}>
-                <Ionicons name="add" size={16} color="#fff" />
-                <Text style={styles.addButtonText}>Section</Text>
-              </TouchableOpacity>
-            </View>
+        {/* Tab Content */}
+        <View style={styles.contentContainer}>
+          {renderTabContent()}
+        </View>
 
-            {sections.map((section) => (
-              <View key={section.id} style={styles.sectionCard}>
-                {/* Section Header */}
-                <TouchableOpacity 
-                  style={styles.sectionCardHeader}
-                  onPress={() => toggleSection(section.id)}
-                >
-                  <View style={styles.sectionHeaderLeft}>
-                    <Ionicons 
-                      name={expandedSections.has(section.id) ? "chevron-down" : "chevron-forward"} 
-                      size={20} 
-                      color={COLORS.textGray} 
-                    />
-                    {editingSection === section.id ? (
-                      <TextInput
-                        style={styles.sectionNameInput}
-                        value={section.name}
-                        onChangeText={(text) => updateSectionName(section.id, text)}
-                        onBlur={() => setEditingSection(null)}
-                        onSubmitEditing={() => setEditingSection(null)}
-                        autoFocus
-                      />
-                    ) : (
-                      <Text style={styles.sectionName}>{section.name}</Text>
-                    )}
-                  </View>
-                  
-                  <View style={styles.sectionHeaderRight}>
-                    <Text style={styles.sectionTotal}>
-                      ${section.subtotal.toLocaleString()}
-                    </Text>
-                    <TouchableOpacity 
-                      onPress={() => setEditingSection(section.id)}
-                      style={styles.sectionAction}
-                    >
-                      <Ionicons name="pencil" size={16} color={COLORS.textGray} />
-                    </TouchableOpacity>
-                    <TouchableOpacity 
-                      onPress={() => deleteSection(section.id)}
-                      style={styles.sectionAction}
-                    >
-                      <Ionicons name="trash" size={16} color={COLORS.textRed} />
-                    </TouchableOpacity>
-                  </View>
-                </TouchableOpacity>
-
-                {/* Section Content */}
-                {expandedSections.has(section.id) && (
-                  <View style={styles.sectionContent}>
-                    {section.lineItems.map((item) => (
-                      <LineItemRow
-                        key={item.id}
-                        item={item}
-                        onUpdate={(updates) => updateLineItem(section.id, item.id, updates)}
-                        onDelete={() => deleteLineItem(section.id, item.id)}
-                      />
-                    ))}
-                    
-                    {/* Add Item Button */}
-                    <TouchableOpacity 
-                      style={styles.addItemButton}
-                      onPress={() => openLibraryBrowser(section.id)}
-                    >
-                      <Ionicons name="add-circle-outline" size={20} color={COLORS.accent} />
-                      <Text style={styles.addItemText}>Add Item</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-              </View>
-            ))}
-          </View>
-
-          {/* Pricing Summary */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Pricing</Text>
-            
-            <View style={styles.pricingCard}>
-              <View style={styles.pricingRow}>
-                <Text style={styles.pricingLabel}>Subtotal</Text>
-                <Text style={styles.pricingValue}>${totals.subtotal.toLocaleString()}</Text>
-              </View>
-              
-              <View style={styles.pricingRow}>
-                <View style={styles.pricingInputRow}>
-                  <Text style={styles.pricingLabel}>Discount</Text>
-                  <TextInput
-                    style={styles.percentInput}
-                    value={discountPercentage.toString()}
-                    onChangeText={(text) => setDiscountPercentage(parseFloat(text) || 0)}
-                    keyboardType="numeric"
-                    placeholder="0"
-                  />
-                  <Text style={styles.percentSymbol}>%</Text>
-                </View>
-                <Text style={styles.pricingValue}>-${totals.discountAmount.toLocaleString()}</Text>
-              </View>
-              
-              <View style={styles.pricingRow}>
-                <View style={styles.pricingInputRow}>
-                  <Text style={styles.pricingLabel}>Tax</Text>
-                  <TextInput
-                    style={styles.percentInput}
-                    value={(taxRate * 100).toString()}
-                    onChangeText={(text) => setTaxRate((parseFloat(text) || 0) / 100)}
-                    keyboardType="numeric"
-                    placeholder="0"
-                  />
-                  <Text style={styles.percentSymbol}>%</Text>
-                </View>
-                <Text style={styles.pricingValue}>${totals.taxAmount.toLocaleString()}</Text>
-              </View>
-              
-              <View style={[styles.pricingRow, styles.totalRow]}>
-                <Text style={styles.totalLabel}>Total</Text>
-                <Text style={styles.totalValue}>${totals.total.toLocaleString()}</Text>
-              </View>
-            </View>
-          </View>
-
-          {/* ADD DEPOSIT SECTION */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Deposit</Text>
-            
-            <View style={styles.depositCard}>
-              <Text style={styles.label}>Deposit Type</Text>
-              <View style={styles.toggleContainer}>
-                <TouchableOpacity
-                  style={[styles.toggle, depositType === 'percentage' && styles.activeToggle]}
-                  onPress={() => setDepositType('percentage')}
-                >
-                  <Text style={[styles.toggleText, depositType === 'percentage' && styles.activeToggleText]}>
-                    Percentage %
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.toggle, depositType === 'fixed' && styles.activeToggle]}
-                  onPress={() => setDepositType('fixed')}
-                >
-                  <Text style={[styles.toggleText, depositType === 'fixed' && styles.activeToggleText]}>
-                    Fixed Amount $
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>
-                  {depositType === 'percentage' ? 'Deposit Percentage' : 'Deposit Amount'}
-                </Text>
-                <TextInput
-                  style={styles.input}
-                  value={depositValue.toString()}
-                  onChangeText={(text) => setDepositValue(parseFloat(text) || 0)}
-                  keyboardType="numeric"
-                  placeholder={depositType === 'percentage' ? "50" : "500"}
-                  placeholderTextColor={COLORS.textGray}
-                />
-              </View>
-
-              {depositValue > 0 && (
-                <View style={styles.depositPreview}>
-                  <Text style={styles.depositPreviewLabel}>Deposit Due:</Text>
-                  <Text style={styles.depositPreviewValue}>
-                    ${totals.depositAmount.toFixed(2)}
-                  </Text>
-                </View>
-              )}
-            </View>
-          </View>
-
-          {/* Terms & Notes */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Terms & Notes</Text>
-            
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Terms & Conditions</Text>
-              <TextInput
-                style={[styles.input, styles.textArea]}
-                value={termsAndConditions}
-                onChangeText={setTermsAndConditions}
-                placeholder="Terms and conditions"
-                multiline
-                numberOfLines={3}
-                textAlignVertical="top"
-                placeholderTextColor={COLORS.textGray}
-              />
-            </View>
-            
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Payment Terms</Text>
-              <TextInput
-                style={[styles.input, styles.textArea]}
-                value={paymentTerms}
-                onChangeText={setPaymentTerms}
-                placeholder="Payment terms"
-                multiline
-                numberOfLines={3}
-                textAlignVertical="top"
-                placeholderTextColor={COLORS.textGray}
-              />
-            </View>
-            
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Notes</Text>
-              <TextInput
-                style={[styles.input, styles.textArea]}
-                value={notes}
-                onChangeText={setNotes}
-                placeholder="Additional notes (optional)"
-                multiline
-                numberOfLines={3}
-                textAlignVertical="top"
-                placeholderTextColor={COLORS.textGray}
-              />
-            </View>
-          </View>
-
-          {/* Bottom Spacing */}
-          <View style={{ height: 50 }} />
-        </ScrollView>
-
-        {/* Save Container - Updated with two buttons */}
-        <View style={styles.saveContainer}>
+        {/* Action Buttons - Always visible */}
+        <View style={styles.actionContainer}>
           <TouchableOpacity 
-            style={[styles.saveButton, styles.secondaryButton]}
+            style={[styles.actionButton, styles.secondaryButton]}
             onPress={saveQuote}
             disabled={saving}
           >
             {saving ? (
               <ActivityIndicator color={COLORS.textDark} size="small" />
             ) : (
-              <Text style={styles.secondaryButtonText}>
-                {mode === 'create' ? 'Save Draft' : 'Save Changes'}
-              </Text>
+              <>
+                <Ionicons name="save-outline" size={20} color={COLORS.textDark} />
+                <Text style={styles.secondaryButtonText}>
+                  {mode === 'create' ? 'Save Draft' : 'Save Changes'}
+                </Text>
+              </>
             )}
           </TouchableOpacity>
           
           <TouchableOpacity 
             style={[
-              styles.saveButton, 
+              styles.actionButton, 
               styles.primaryButton,
-              (!isFormValid() || saving) && styles.saveButtonDisabled
+              (!isFormValid() || saving) && styles.actionButtonDisabled
             ]}
             onPress={handlePresentQuote}
             disabled={!isFormValid() || saving}
@@ -869,7 +1045,10 @@ export default function QuoteEditorScreen() {
             {saving ? (
               <ActivityIndicator color="#fff" size="small" />
             ) : (
-              <Text style={styles.primaryButtonText}>Present Quote</Text>
+              <>
+                <Ionicons name="paper-plane-outline" size={20} color="#fff" />
+                <Text style={styles.primaryButtonText}>Present Quote</Text>
+              </>
             )}
           </TouchableOpacity>
         </View>
@@ -983,12 +1162,52 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: COLORS.textDark,
   },
-  content: {
+  
+  // Tab Styles
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: COLORS.card,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 0,
+  },
+  tab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    marginHorizontal: 4,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  activeTab: {
+    borderBottomColor: COLORS.accent,
+  },
+  tabText: {
+    fontSize: FONT.meta,
+    color: COLORS.textGray,
+    fontWeight: '500',
+    marginLeft: 6,
+  },
+  activeTabText: {
+    color: COLORS.accent,
+  },
+  
+  // Content
+  contentContainer: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
+  tabContent: {
     flex: 1,
     paddingHorizontal: 20,
   },
+  
   section: {
     marginTop: 24,
+    marginBottom: 24,
   },
   sectionTitle: {
     fontSize: FONT.sectionTitle,
@@ -1002,6 +1221,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
+  
+  // Info Card
+  infoCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: RADIUS.card,
+    padding: 16,
+    marginTop: 16,
+    ...SHADOW.card,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  infoLabel: {
+    fontSize: FONT.input,
+    color: COLORS.textGray,
+  },
+  infoValue: {
+    fontSize: FONT.input,
+    color: COLORS.textDark,
+    fontWeight: '500',
+    flex: 1,
+    textAlign: 'right',
+  },
+  
+  // Form Inputs
   inputGroup: {
     marginBottom: 16,
   },
@@ -1021,9 +1268,11 @@ const styles = StyleSheet.create({
     color: COLORS.textDark,
   },
   textArea: {
-    height: 80,
+    height: 100,
     textAlignVertical: 'top',
   },
+  
+  // Buttons
   addButton: {
     backgroundColor: COLORS.accent,
     borderRadius: RADIUS.button,
@@ -1185,6 +1434,24 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   
+  // Empty State
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+  },
+  emptyStateText: {
+    fontSize: FONT.sectionTitle,
+    color: COLORS.textGray,
+    fontWeight: '600',
+    marginTop: 16,
+  },
+  emptyStateSubtext: {
+    fontSize: FONT.input,
+    color: COLORS.textGray,
+    marginTop: 8,
+  },
+  
   // Pricing Styles
   pricingCard: {
     backgroundColor: COLORS.card,
@@ -1243,7 +1510,7 @@ const styles = StyleSheet.create({
     color: COLORS.accent,
   },
   
-  // ADD DEPOSIT STYLES
+  // Deposit Styles
   depositCard: {
     backgroundColor: COLORS.card,
     borderRadius: RADIUS.card,
@@ -1296,8 +1563,8 @@ const styles = StyleSheet.create({
     color: COLORS.accent,
   },
   
-  // Save Container and Button Styles
-  saveContainer: {
+  // Action Container
+  actionContainer: {
     flexDirection: 'row',
     padding: 20,
     backgroundColor: COLORS.card,
@@ -1305,35 +1572,35 @@ const styles = StyleSheet.create({
     borderTopColor: COLORS.border,
     gap: 12,
   },
-  saveButton: {
+  actionButton: {
     borderRadius: RADIUS.button,
     padding: 16,
     alignItems: 'center',
     justifyContent: 'center',
+    flexDirection: 'row',
+    flex: 1,
   },
-  saveButtonDisabled: {
+  actionButtonDisabled: {
     backgroundColor: COLORS.textGray,
   },
   secondaryButton: {
     backgroundColor: COLORS.background,
     borderWidth: 1,
     borderColor: COLORS.border,
-    flex: 1,
-    marginRight: 8,
   },
   primaryButton: {
     backgroundColor: COLORS.accent,
-    flex: 1,
-    marginLeft: 8,
   },
   secondaryButtonText: {
     color: COLORS.textDark,
     fontSize: FONT.input,
     fontWeight: '600',
+    marginLeft: 8,
   },
   primaryButtonText: {
     color: '#fff',
     fontSize: FONT.input,
     fontWeight: '600',
+    marginLeft: 8,
   },
 });

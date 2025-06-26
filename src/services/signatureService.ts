@@ -31,36 +31,37 @@ interface SignedPDFResult {
 }
 
 class SignatureService extends BaseService {
+  protected serviceName = 'signatures';
+  
   /**
-   * Submit signatures for a quote
+   * Submit a single signature for a quote
+   * This matches the API's expected format exactly
    */
-  async submitSignatures(
+  async submitSignature(
     quoteId: string,
     locationId: string,
-    signatures: {
-      consultant?: SignatureData;
-      customer?: SignatureData;
+    signatureType: 'consultant' | 'customer',
+    signatureData: {
+      signature: string; // Base64 string
+      signedBy: string;
+      deviceInfo?: string;
     }
   ): Promise<SignatureSubmissionResult> {
     const endpoint = `/api/quotes/${quoteId}/sign`;
     
-    // Prepare signature data
-    const payload: any = {
+    const payload = {
       locationId,
+      signatureType,
+      signature: signatureData.signature,
+      signedBy: signatureData.signedBy,
+      deviceInfo: signatureData.deviceInfo || 'iPad App'
     };
     
-    if (signatures.consultant) {
-      payload.consultantSignature = signatures.consultant.signature;
-      payload.consultantName = signatures.consultant.name;
-      payload.consultantSignedAt = signatures.consultant.signedAt;
-    }
-    
-    if (signatures.customer) {
-      payload.customerSignature = signatures.customer.signature;
-      payload.customerName = signatures.customer.name;
-      payload.customerEmail = signatures.customer.email;
-      payload.customerSignedAt = signatures.customer.signedAt;
-    }
+    console.log('[SignatureService] Submitting signature:', {
+      quoteId,
+      signatureType,
+      signedBy: payload.signedBy
+    });
     
     const result = await this.post<SignatureSubmissionResult>(
       endpoint,
@@ -82,6 +83,49 @@ class SignatureService extends BaseService {
     
     return result;
   }
+
+  /**
+   * Original submitSignatures method - updated to use submitSignature internally
+   */
+  async submitSignatures(
+    quoteId: string,
+    locationId: string,
+    signatures: {
+      consultant?: SignatureData;
+      customer?: SignatureData;
+    }
+  ): Promise<SignatureSubmissionResult> {
+    // If consultant signature is provided, submit it
+    if (signatures.consultant) {
+      return this.submitSignature(
+        quoteId,
+        locationId,
+        'consultant',
+        {
+          signature: signatures.consultant.signature,
+          signedBy: signatures.consultant.name || 'Consultant',
+          deviceInfo: 'iPad App'
+        }
+      );
+    }
+    
+    // If customer signature is provided, submit it
+    if (signatures.customer) {
+      return this.submitSignature(
+        quoteId,
+        locationId,
+        'customer',
+        {
+          signature: signatures.customer.signature,
+          signedBy: signatures.customer.name || 'Customer',
+          deviceInfo: 'iPad App'
+        }
+      );
+    }
+    
+    throw new Error('No signature data provided');
+  }
+
 
   /**
    * Generate signed PDF
@@ -116,60 +160,91 @@ class SignatureService extends BaseService {
   /**
    * Update project status after signing
    */
-  async updateProjectAfterSigning(
-    projectId: string,
-    locationId: string,
-    signatureData: {
-      signedDate: string;
-      status?: string;
-      pipelineStageId?: string;
-    }
-  ): Promise<any> {
-    // Use projectService for project updates
-    return projectService.update(
-      projectId,
-      locationId,
-      {
-        status: signatureData.status || 'won',
-        signedDate: signatureData.signedDate,
-        pipelineStageId: signatureData.pipelineStageId,
-      }
-    );
+async updateProjectAfterSigning(
+  projectId: string,
+  locationId: string,
+  signatureData: {
+    signedDate: string;
+    status?: string;
+    pipelineStageId?: string;
   }
+): Promise<any> {
+  // Manually construct the URL with locationId as query param
+  const endpoint = `/api/projects/${projectId}?locationId=${locationId}`;
+  
+  return this.patch(
+    endpoint,
+    {
+      status: signatureData.status || 'won',
+      signedDate: signatureData.signedDate,
+      pipelineStageId: signatureData.pipelineStageId,
+    },
+    {
+      offline: false,
+      showError: true,
+    },
+    {
+      endpoint,
+      method: 'PATCH',
+      entity: 'project',
+      priority: 'high',
+    }
+  );
+}
 
   /**
    * Send signed quote email
    */
-  async sendSignedQuoteEmail(
-    quoteId: string,
-    locationId: string,
-    options: {
-      recipientEmail: string;
-      subject?: string;
-      message?: string;
-      includePDF?: boolean;
-    }
-  ): Promise<{ success: boolean; messageId: string }> {
-    const endpoint = `/api/emails/send-signed-quote`;
-    
-    return this.post(
-      endpoint,
-      {
-        quoteId,
-        locationId,
-        ...options,
-      },
-      {
-        offline: false, // Email must be sent online
-        showError: true,
-      },
-      {
-        endpoint,
-        method: 'POST',
-        entity: 'quote',
-      }
-    );
+async sendSignedQuoteEmail(
+  quoteId: string,
+  locationId: string,
+  options: {
+    recipientEmail: string;
+    subject?: string;
+    message?: string;
+    includePDF?: boolean;
   }
+): Promise<{ success: boolean; messageId: string }> {
+  // First, get the quote to find the contact
+  const quote = await this.get(`/api/quotes/${quoteId}?locationId=${locationId}`);
+  
+  if (!quote || !quote.contact?._id) {
+    throw new Error('Quote or contact not found');
+  }
+  
+  // Use the general email send endpoint
+  const endpoint = `/api/emails/send`;
+  
+  const emailData = {
+    contactObjectId: quote.contact._id, // MongoDB ObjectId of the contact
+    locationId,
+    subject: options.subject || `Contract Signed - ${quote.quoteNumber}`,
+    htmlContent: options.message || `
+      <p>Your signed contract for ${quote.projectTitle || 'your project'} is attached.</p>
+      <p>Total Amount: $${quote.total?.toFixed(2) || '0.00'}</p>
+      <p>Thank you for your business!</p>
+    `,
+    projectId: quote.projectId,
+    attachments: options.includePDF ? [{
+      url: `${process.env.API_BASE_URL || 'https://lpai-backend-omega.vercel.app'}/api/quotes/${quoteId}/pdf?locationId=${locationId}`,
+      filename: `${quote.quoteNumber}_signed.pdf`
+    }] : undefined
+  };
+  
+  return this.post(
+    endpoint,
+    emailData,
+    {
+      offline: false,
+      showError: true,
+    },
+    {
+      endpoint,
+      method: 'POST',
+      entity: 'quote',
+    }
+  );
+}
 
   /**
    * Verify signature authenticity
