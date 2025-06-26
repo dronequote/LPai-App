@@ -10,6 +10,16 @@ import { Provider as PaperProvider } from 'react-native-paper';
 import { CalendarProvider } from './src/contexts/CalendarContext';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Linking from 'expo-linking';
+import * as Notifications from 'expo-notifications';
+
+// Configure notification handler
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+});
 
 // Create a client
 const queryClient = new QueryClient({
@@ -93,6 +103,34 @@ export default function App() {
     return () => {
       linkingListener.remove();
     };
+  }, []);
+
+  useEffect(() => {
+    // Request notification permissions when app starts
+    (async () => {
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      let finalStatus = existingStatus;
+      
+      if (existingStatus !== 'granted') {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      }
+      
+      if (finalStatus !== 'granted') {
+        console.log('❌ Push notification permissions not granted');
+      } else {
+        console.log('✅ Push notification permissions granted');
+        
+        // Get the Expo push token (optional - for remote push notifications)
+        try {
+          const token = await Notifications.getExpoPushTokenAsync();
+          console.log('📱 Expo Push Token:', token.data);
+          // You can save this token to your backend if needed
+        } catch (error) {
+          console.log('Failed to get push token:', error);
+        }
+      }
+    })();
   }, []);
 
   return (

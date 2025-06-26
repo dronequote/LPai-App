@@ -599,3 +599,49 @@ if (!isConnected) {
 **The bottom line**: For just $49-499/month, you can give ALL your users a WhatsApp-like real-time experience. Your current polling probably costs more in a single day!
 
 Ready to make your app feel magical? 🪄
+
+I just implemented WebSocket real-time messaging in my LPai React Native app, replacing SSE with Ably. Here's the current status:
+
+## ✅ What's Done:
+1. Backend WebSocket implementation:
+   - Updated lpai-backend/src/utils/webhooks/directProcessor.ts with Ably
+   - Updated lpai-backend/src/utils/webhooks/processors/messages.ts with Ably
+   - Backend successfully publishes to Ably (verified in logs: "[Ably Direct] Published inbound message to user: UflDPM1zkSDhrgJUBjZm")
+   - Processing time improved to ~500ms
+
+2. Frontend WebSocket implementation:
+   - Updated src/components/ConversationsList.tsx to use Ably
+   - Removed react-native-sse and react-native-event-source dependencies
+   - Added Ably WebSocket connection code
+
+3. Build & Deployment:
+   - Built APK with EAS: eas build --platform android --profile preview
+   - Deployed backend to Vercel with ABLY_API_KEY environment variable
+   - APK installed on emulator and physical device
+
+## ❌ Current Issues:
+1. The app shows "Connecting to real-time updates..." but messages aren't appearing instantly
+2. No Ably logs appearing in Android Logcat 
+3. The old SSE code is still referenced (need to remove useRealtimeMessages hook completely)
+4. Need to push OTA update with the Ably changes (APK was built before WebSocket implementation)
+
+## 🔧 What Needs to be Done:
+1. Push OTA update: eas update --branch preview --message "Add WebSocket support"
+2. Remove all SSE remnants:
+   - Delete src/hooks/useRealtimeMessages.ts
+   - Remove any imports of useRealtimeMessages
+   - Clean up the "Connecting to real-time updates..." message (shows from old code)
+3. Debug why Ably isn't connecting in the app
+4. Verify the frontend is using the correct user channel (user:${ghlUserId})
+
+## 📝 Key Information:
+- Ably API Key: vL_QGw.wgR5wg:8n2Gst6H2I2rpNGe4O3YtXKFqNyiBBm6FLK17E5OBv8
+- Test User ghlUserId: UflDPM1zkSDhrgJUBjZm
+- Backend URL: https://lpai-backend-omega.vercel.app
+- The backend IS working (verified in Vercel logs)
+- Frontend needs to connect to channel: user:UflDPM1zkSDhrgJUBjZm
+
+Please help me:
+1. Clean up the old SSE code
+2. Debug why Ably isn't connecting on the frontend
+3. Get real-time messages working instantly

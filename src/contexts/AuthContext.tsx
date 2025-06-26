@@ -92,13 +92,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children, expoPushTo
       // Extract user data from response
       const userData: User = {
         _id: response._id,
-        userId: response.userId || response.ghlUserId, // Handle both field names
+        userId: response.userId || response.ghlUserId, // Keep this for backwards compatibility
+        ghlUserId: response.ghlUserId, // ADD THIS LINE - preserve the original ghlUserId
         name: response.name,
         email: response.email,
         role: response.role,
         locationId: response.locationId,
         permissions: response.permissions,
-        preferences: response.preferences, // This should now include timezone
+        preferences: response.preferences,
       };
       
       setToken(response.token);
