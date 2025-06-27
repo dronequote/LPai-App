@@ -1,9 +1,17 @@
-// pages/api/libraries/[locationId].ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
+import cors from '@/lib/cors';
+import {
+  sendSuccess,
+  sendBadRequest,
+  sendUnauthorized,
+  sendServerError,
+  sendNotFound
+} from '../../../src/utils/httpResponses';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  await cors(req, res);
   const { locationId } = req.query;
   
   if (!locationId || typeof locationId !== 'string') {
@@ -19,28 +27,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     case 'POST':
       return await createLibrary(db, locationId, req.body, res);
     case 'PATCH':
-      return await updateLibrary(db, locationId, req.body, res);
+      return await patchLibrary(db, locationId, req.body, res);
     default:
       res.setHeader('Allow', ['GET', 'POST', 'PATCH']);
       return res.status(405).json({ error: `Method ${req.method} not allowed` });
   }
 }
 
-// 📚 GET: Fetch all libraries for a location
 async function getLibraries(db: any, locationId: string, res: NextApiResponse) {
   try {
     console.log(`[LIBRARIES API] Fetching libraries for locationId: ${locationId}`);
-    
-    const libraries = await db.collection('libraries').find({ 
-      locationId: locationId 
+
+    const libraries = await db.collection('libraries').find({
+      locationId: locationId,
     }).toArray();
-    
+
     console.log(`[LIBRARIES API] Found ${libraries.length} libraries`);
-    
-    // If no libraries exist, create a default one
+
     if (libraries.length === 0) {
       console.log(`[LIBRARIES API] No libraries found, creating default library`);
-      
+
+      const now = new Date().toISOString();
       const defaultLibrary = {
         locationId,
         name: 'Main Product Library',
@@ -53,8 +60,8 @@ async function getLibraries(db: any, locationId: string, res: NextApiResponse) {
             items: [],
             isActive: true,
             sortOrder: 1,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
+            createdAt: now,
+            updatedAt: now,
           },
           {
             id: new ObjectId().toString(),
@@ -64,8 +71,8 @@ async function getLibraries(db: any, locationId: string, res: NextApiResponse) {
             items: [],
             isActive: true,
             sortOrder: 2,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
+            createdAt: now,
+            updatedAt: now,
           },
           {
             id: new ObjectId().toString(),
@@ -75,26 +82,26 @@ async function getLibraries(db: any, locationId: string, res: NextApiResponse) {
             items: [],
             isActive: true,
             sortOrder: 3,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          }
+            createdAt: now,
+            updatedAt: now,
+          },
         ],
         isDefault: true,
         createdBy: 'system',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        createdAt: now,
+        updatedAt: now,
       };
-      
+
       const result = await db.collection('libraries').insertOne(defaultLibrary);
       const createdLibrary = { ...defaultLibrary, _id: result.insertedId };
-      
-      return res.status(200).json([createdLibrary]);
+
+      return sendSuccess(res, [createdLibrary], 'Default library created');
     }
-    
-    return res.status(200).json(libraries);
+
+    return sendSuccess(res, libraries, 'Libraries fetched successfully');
   } catch (error) {
     console.error('[LIBRARIES API] Error fetching libraries:', error);
-    return res.status(500).json({ error: 'Failed to fetch libraries' });
+    return sendServerError(res, error, 'Failed to fetch libraries');
   }
 }
 
@@ -129,15 +136,15 @@ async function createLibrary(db: any, locationId: string, body: any, res: NextAp
     const createdLibrary = { ...newLibrary, _id: result.insertedId };
     
     console.log(`[LIBRARIES API] Created new library: ${name}`);
-    return res.status(201).json(createdLibrary);
+    return sendSuccess(res, createdLibrary, 'Libraries created successfully');
   } catch (error) {
     console.error('[LIBRARIES API] Error creating library:', error);
-    return res.status(500).json({ error: 'Failed to create library' });
+    return sendServerError(res, error, 'Failed to create libraries');
   }
 }
 
 // ✏️ PATCH: Update library (add/edit categories and items)
-async function updateLibrary(db: any, locationId: string, body: any, res: NextApiResponse) {
+async function patchLibrary(db: any, locationId: string, body: any, res: NextApiResponse) {
   try {
     const { libraryId, action, category, item } = body;
     

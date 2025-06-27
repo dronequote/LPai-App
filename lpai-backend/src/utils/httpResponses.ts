@@ -57,3 +57,15 @@ export const sendServerError = (
     error: error?.message || 'Unexpected error',
   });
 };
+
+export const sendNotFound = (
+  res: NextApiResponse,
+  error = 'Not Found',
+  message = 'Not Found'
+) => {
+  return res.status(404).json({
+    success: false,
+    message,
+    error,
+  });
+};
