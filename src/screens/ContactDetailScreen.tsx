@@ -1,6 +1,7 @@
 // src/screens/ContactDetailScreen.tsx
 // Updated Date: 06/27/2025
 // Added sexy user dropdown and conditional logging
+// FIXED: Now handles both { contact } and { contactId } navigation params
 
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
@@ -46,7 +47,8 @@ const { width } = Dimensions.get('window');
 const isTablet = width >= 768;
 
 type ContactDetailRouteParams = {
-  contact: Contact;
+  contact?: Contact;
+  contactId?: string;
 };
 
 type TabType = 'overview' | 'details' | 'conversations' | 'notes';
@@ -64,7 +66,67 @@ export default function ContactDetailScreen() {
   const { user } = useAuth();
   const { calendarMap } = useCalendar();
   
-  const { contact: initialContact } = route.params as ContactDetailRouteParams;
+  // Handle both contact object and contactId params
+  const params = route.params as ContactDetailRouteParams;
+  const hasContactObject = params?.contact;
+  const contactIdParam = params?.contactId;
+  
+  // Get initial contact data and ID
+  const initialContactFromRoute = hasContactObject ? params.contact : null;
+  const contactIdToUse = hasContactObject ? params.contact._id : contactIdParam;
+  
+  // State for contact data
+  const [contactData, setContactData] = useState(initialContactFromRoute);
+  
+  // Fetch contact if we only have ID
+  const { 
+    data: fetchedContact, 
+    isLoading: fetchingContact, 
+    refetch: refetchContact 
+  } = useContact(
+    !hasContactObject && contactIdToUse ? contactIdToUse : null,
+    !hasContactObject
+  );
+  
+  // Use either the passed contact or the fetched one
+  const contact = contactData || fetchedContact;
+  
+  // Update contactData when fetched
+  useEffect(() => {
+    if (fetchedContact && !contactData) {
+      setContactData(fetchedContact);
+    }
+  }, [fetchedContact]);
+  
+  // Show loading only if we're fetching
+  if (!contact && fetchingContact) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={COLORS.accent} />
+          <Text style={styles.loadingText}>Loading contact...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+  
+  // Show error if no contact found
+  if (!contact) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.errorContainer}>
+          <Ionicons name="alert-circle" size={48} color={COLORS.textGray} />
+          <Text style={styles.errorText}>Contact not found</Text>
+          <TouchableOpacity 
+            style={styles.backButton} 
+            onPress={() => navigation.goBack()}
+          >
+            <Text style={styles.backButtonText}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
   
   // Calculate appointment start date once to prevent infinite loop
   const appointmentStartDate = useMemo(() => {
@@ -95,25 +157,49 @@ export default function ContactDetailScreen() {
   const [newNote, setNewNote] = useState('');
   const [addingNote, setAddingNote] = useState(false);
   
-  // Form fields
+  // Form fields - initialize with contact data
   const [formData, setFormData] = useState({
-    firstName: initialContact.firstName || '',
-    lastName: initialContact.lastName || '',
-    email: initialContact.email || '',
-    phone: initialContact.phone || '',
-    secondaryPhone: initialContact.secondaryPhone || '',
-    address: initialContact.address || '',
-    city: initialContact.city || '',
-    state: initialContact.state || '',
-    postalCode: initialContact.postalCode || '',
-    country: initialContact.country || '',
-    companyName: initialContact.companyName || '',
-    website: initialContact.website || '',
-    notes: initialContact.notes || '',
-    tags: initialContact.tags || [],
-    source: initialContact.source || '',
-    assignedUserId: initialContact.assignedUserId || '',
+    firstName: contact.firstName || '',
+    lastName: contact.lastName || '',
+    email: contact.email || '',
+    phone: contact.phone || '',
+    secondaryPhone: contact.secondaryPhone || '',
+    address: contact.address || '',
+    city: contact.city || '',
+    state: contact.state || '',
+    postalCode: contact.postalCode || '',
+    country: contact.country || '',
+    companyName: contact.companyName || '',
+    website: contact.website || '',
+    notes: contact.notes || '',
+    tags: contact.tags || [],
+    source: contact.source || '',
+    assignedUserId: contact.assignedUserId || '',
   });
+  
+  // Update form data when contact changes
+  useEffect(() => {
+    if (contact) {
+      setFormData({
+        firstName: contact.firstName || '',
+        lastName: contact.lastName || '',
+        email: contact.email || '',
+        phone: contact.phone || '',
+        secondaryPhone: contact.secondaryPhone || '',
+        address: contact.address || '',
+        city: contact.city || '',
+        state: contact.state || '',
+        postalCode: contact.postalCode || '',
+        country: contact.country || '',
+        companyName: contact.companyName || '',
+        website: contact.website || '',
+        notes: contact.notes || '',
+        tags: contact.tags || [],
+        source: contact.source || '',
+        assignedUserId: contact.assignedUserId || '',
+      });
+    }
+  }, [contact]);
   
   // Keyboard listeners
   useEffect(() => {
@@ -133,10 +219,6 @@ export default function ContactDetailScreen() {
   }, []);
   
   // React Query hooks - Updated to use contactObjectId
-  const { data: contact = initialContact, isLoading: contactLoading, refetch: refetchContact } = useContact(
-    initialContact._id,
-    initialContact // Pass initial data to prevent loading state
-  );
   const { data: projectsRaw = [], isLoading: projectsLoading, refetch: refetchProjects } = useProjects(user?.locationId || '', {
     contactObjectId: contact._id,  // This should filter by contact
     limit: 100,  // Add limit to ensure we get all projects for this contact
@@ -325,7 +407,6 @@ export default function ContactDetailScreen() {
       ]
     );
   };
-  
   // Add note using GHL API
   const handleAddNote = async () => {
     if (!newNote.trim() || !user?.locationId) return;
@@ -1935,5 +2016,38 @@ const styles = StyleSheet.create({
     fontFamily: FONT.regular,
     color: COLORS.textGray,
     marginTop: 2,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: FONT.body,
+    color: COLORS.textGray,
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  errorText: {
+    fontSize: FONT.sectionTitle,
+    color: COLORS.textGray,
+    marginTop: 16,
+    marginBottom: 24,
+  },
+  backButton: {
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    backgroundColor: COLORS.accent,
+    borderRadius: RADIUS.button,
+  },
+  backButtonText: {
+    color: COLORS.white,
+    fontSize: FONT.input,
+    fontWeight: '600',
   },
 });
