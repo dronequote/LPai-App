@@ -1,6 +1,6 @@
 // src/screens/ContactDetailScreen.tsx
-// Updated Date: 12/19/2024
-// Added simple project creation modal matching QuoteBuilderScreen style
+// Updated Date: 06/27/2025
+// Added sexy user dropdown and conditional logging
 
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
@@ -18,6 +18,9 @@ import {
   RefreshControl,
   FlatList,
   Modal,
+  Keyboard,
+  Dimensions,
+  Animated,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRoute, useNavigation } from '@react-navigation/native';
@@ -30,6 +33,8 @@ import { useAppointments } from '../hooks/useAppointments';
 import { projectService } from '../services/projectService';
 import { appointmentService } from '../services/appointmentService';
 import { contactService } from '../services/contactService';
+import { noteService } from '../services/noteService';
+import { userService } from '../services/userService';
 import CreateAppointmentModal from '../components/CreateAppointmentModal';
 import CompactAppointmentCard from '../components/CompactAppointmentCard';
 import ProjectCard from '../components/ProjectCard';
@@ -37,6 +42,8 @@ import ConversationsList from '../components/ConversationsList';
 import { COLORS, FONT, SHADOW, RADIUS } from '../styles/theme';
 import type { Contact, Project, Appointment } from '../../packages/types/dist';
 
+const { width } = Dimensions.get('window');
+const isTablet = width >= 768;
 
 type ContactDetailRouteParams = {
   contact: Contact;
@@ -73,6 +80,15 @@ export default function ContactDetailScreen() {
   const [showAddProject, setShowAddProject] = useState(false);
   const [projectName, setProjectName] = useState('');
   const [creatingProject, setCreatingProject] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [refreshingNotes, setRefreshingNotes] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [users, setUsers] = useState<any[]>([]);
+  const [showUserDropdown, setShowUserDropdown] = useState(false);
+  
+  // Animation for dropdown
+  const dropdownAnimation = useState(new Animated.Value(0))[0];
   
   // Notes state
   const [notes, setNotes] = useState<any[]>([]);
@@ -96,7 +112,25 @@ export default function ContactDetailScreen() {
     notes: initialContact.notes || '',
     tags: initialContact.tags || [],
     source: initialContact.source || '',
+    assignedUserId: initialContact.assignedUserId || '',
   });
+  
+  // Keyboard listeners
+  useEffect(() => {
+    const keyboardDidShowListener = Keyboard.addListener(
+      'keyboardDidShow',
+      () => setKeyboardVisible(true)
+    );
+    const keyboardDidHideListener = Keyboard.addListener(
+      'keyboardDidHide',
+      () => setKeyboardVisible(false)
+    );
+
+    return () => {
+      keyboardDidHideListener.remove();
+      keyboardDidShowListener.remove();
+    };
+  }, []);
   
   // React Query hooks - Updated to use contactObjectId
   const { data: contact = initialContact, isLoading: contactLoading, refetch: refetchContact } = useContact(
@@ -107,16 +141,48 @@ export default function ContactDetailScreen() {
     contactObjectId: contact._id,  // This should filter by contact
     limit: 100,  // Add limit to ensure we get all projects for this contact
   });
-  const { data: appointmentsRaw = [], isLoading: appointmentsLoading } = useAppointments(user?.locationId || '', {
+  const { data: appointmentsRaw = [], isLoading: appointmentsLoading, refetch: refetchAppointments } = useAppointments(user?.locationId || '', {
     contactObjectId: contact._id,  // Changed from contactId
     start: appointmentStartDate,
     limit: 10,
   });
   
+  // Fetch users for assignment dropdown
+  useEffect(() => {
+    const fetchUsers = async () => {
+      if (__DEV__) {
+        console.log('[ContactDetail] Fetching users for location:', user?.locationId);
+      }
+      
+      if (user?.locationId && user?.role === 'admin') {
+        try {
+          // Clear cache first to ensure fresh data
+          await userService.clearCache();
+          
+          const usersList = await userService.list(user.locationId);
+          
+          if (__DEV__) {
+            console.log('[ContactDetail] Fetched users:', usersList?.length || 0);
+          }
+          
+          setUsers(usersList || []);
+        } catch (error) {
+          if (__DEV__) {
+            console.error('[ContactDetail] Error fetching users:', error);
+          }
+        }
+      }
+    };
+    
+    fetchUsers();
+  }, [user?.locationId, user?.role]);
+  
   // Ensure projects have required fields with defaults and filter by contact
   const projects = useMemo(() => {
     if (!Array.isArray(projectsRaw)) {
-      console.warn('[ContactDetailScreen] Projects data is not an array:', projectsRaw);
+      if (__DEV__) {
+        console.warn('[ContactDetailScreen] Projects data is not an array:', projectsRaw);
+      }
       return [];
     }
     
@@ -138,7 +204,9 @@ export default function ContactDetailScreen() {
   // Ensure appointments have required fields
   const appointments = useMemo(() => {
     if (!Array.isArray(appointmentsRaw)) {
-      console.warn('[ContactDetailScreen] Appointments data is not an array:', appointmentsRaw);
+      if (__DEV__) {
+        console.warn('[ContactDetailScreen] Appointments data is not an array:', appointmentsRaw);
+      }
       return [];
     }
     
@@ -167,22 +235,56 @@ export default function ContactDetailScreen() {
       .slice(0, 5);
   }, [appointments]);
   
-  // Load notes
-  const loadNotes = async () => {
-    // For now, just parse notes from contact.notes
-    // In the future, this could be a separate notes API
-    const existingNotes = contact.notes ? [{
-      id: '1',
-      text: contact.notes,
-      createdAt: contact.updatedAt || contact.createdAt,
-      createdBy: 'System'
-    }] : [];
-    setNotes(existingNotes);
+  // Load notes from GHL API
+  const loadNotes = async (forceRefresh = false) => {
+    if (!contact?._id || !user?.locationId) return;
+    
+    setNotesLoading(true);
+    try {
+      // If force refresh, clear cache first
+      if (forceRefresh) {
+        await noteService.clearCache(`/api/contacts/${contact._id}/notes`);
+      }
+      
+      const fetchedNotes = await noteService.getContactNotes(
+        contact._id,
+        user.locationId
+      );
+      
+      if (fetchedNotes && fetchedNotes.length > 0) {
+        setNotes(fetchedNotes);
+      } else {
+        // Fallback to existing notes if no API notes
+        const existingNotes = contact.notes ? [{
+          id: '1',
+          text: contact.notes,
+          body: contact.notes,
+          createdAt: contact.updatedAt || contact.createdAt,
+          createdBy: 'System'
+        }] : [];
+        setNotes(existingNotes);
+      }
+    } catch (error) {
+      if (__DEV__) {
+        console.error('[ContactDetail] Error loading notes:', error);
+      }
+      // Fallback to existing notes on error
+      const existingNotes = contact.notes ? [{
+        id: '1',
+        text: contact.notes,
+        body: contact.notes,
+        createdAt: contact.updatedAt || contact.createdAt,
+        createdBy: 'System'
+      }] : [];
+      setNotes(existingNotes);
+    } finally {
+      setNotesLoading(false);
+    }
   };
   
-  // Load data when tab changes
+  // Load notes when tab changes to notes
   useEffect(() => {
-    if (activeTab === 'notes') {
+    if (activeTab === 'notes' && contact._id) {
       loadNotes();
     }
   }, [activeTab, contact._id]);
@@ -224,26 +326,32 @@ export default function ContactDetailScreen() {
     );
   };
   
-  // Add note
+  // Add note using GHL API
   const handleAddNote = async () => {
-    if (!newNote.trim()) return;
+    if (!newNote.trim() || !user?.locationId) return;
     
     setAddingNote(true);
     try {
-      // For now, append to existing notes
-      const updatedNotes = contact.notes 
-        ? `${contact.notes}\n\n[${new Date().toLocaleString()}] ${user?.name || 'User'}: ${newNote}`
-        : `[${new Date().toLocaleString()}] ${user?.name || 'User'}: ${newNote}`;
+      const createdNote = await noteService.createNote(
+        contact._id,
+        user.locationId,
+        {
+          text: newNote.trim(),
+          userId: user.ghlUserId || user._id,
+        }
+      );
       
-      await updateContactMutation.mutateAsync({
-        id: contact._id,
-        data: { notes: updatedNotes },
-      });
-      
-      setNewNote('');
-      loadNotes();
-      Alert.alert('Success', 'Note added successfully');
+      if (createdNote) {
+        setNewNote('');
+        await loadNotes(true); // Force refresh after creating note
+        Alert.alert('Success', 'Note added successfully');
+      } else {
+        throw new Error('Failed to create note');
+      }
     } catch (error) {
+      if (__DEV__) {
+        console.error('[ContactDetail] Error adding note:', error);
+      }
       Alert.alert('Error', 'Failed to add note');
     } finally {
       setAddingNote(false);
@@ -272,13 +380,30 @@ export default function ContactDetailScreen() {
     });
   };
   
-  // Pull to refresh
+  // Pull to refresh with cache clearing
   const onRefresh = useCallback(async () => {
-    await Promise.all([
-      refetchContact(),
-      refetchProjects(),
-    ]);
-  }, [refetchContact, refetchProjects]);
+    setRefreshing(true);
+    try {
+      // Clear caches before refetching
+      await contactService.clearCache();
+      await projectService.clearCache();
+      await appointmentService.clearCache();
+      
+      // Refetch data
+      await Promise.all([
+        refetchContact(),
+        refetchProjects(),
+        refetchAppointments(),
+        activeTab === 'notes' ? loadNotes(true) : Promise.resolve(),
+      ]);
+    } catch (error) {
+      if (__DEV__) {
+        console.error('[ContactDetail] Error refreshing:', error);
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refetchContact, refetchProjects, refetchAppointments, activeTab]);
   
   // Navigation handlers for conversations
   const handleNavigateToProject = (projectId: string) => {
@@ -303,7 +428,9 @@ export default function ContactDetailScreen() {
         monetaryValue: 0,
       });
       
-      console.log('[ContactDetailScreen] Created project:', newProject);
+      if (__DEV__) {
+        console.log('[ContactDetailScreen] Created project:', newProject);
+      }
       
       // Reset modal
       setShowAddProject(false);
@@ -313,10 +440,32 @@ export default function ContactDetailScreen() {
       navigation.navigate('ProjectDetailScreen', { project: newProject });
       
     } catch (error) {
-      console.error('[ContactDetailScreen] Failed to create project:', error);
+      if (__DEV__) {
+        console.error('[ContactDetailScreen] Failed to create project:', error);
+      }
       Alert.alert('Error', 'Failed to create project. Please try again.');
     } finally {
       setCreatingProject(false);
+    }
+  };
+  
+  // Toggle dropdown animation
+  const toggleUserDropdown = () => {
+    if (showUserDropdown) {
+      // Close
+      Animated.timing(dropdownAnimation, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }).start(() => setShowUserDropdown(false));
+    } else {
+      // Open
+      setShowUserDropdown(true);
+      Animated.timing(dropdownAnimation, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
     }
   };
   
@@ -384,9 +533,122 @@ export default function ContactDetailScreen() {
     </View>
   );
   
+  // Render user dropdown modal
+  const renderUserDropdown = () => (
+    <Modal
+      visible={showUserDropdown}
+      transparent={true}
+      animationType="fade"
+      onRequestClose={() => toggleUserDropdown()}
+    >
+      <TouchableOpacity 
+        style={styles.dropdownOverlay} 
+        activeOpacity={1} 
+        onPress={() => toggleUserDropdown()}
+      >
+        <Animated.View 
+          style={[
+            styles.dropdownContainer,
+            {
+              opacity: dropdownAnimation,
+              transform: [{
+                translateY: dropdownAnimation.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [-20, 0]
+                })
+              }]
+            }
+          ]}
+        >
+          <View style={styles.dropdownContent}>
+            <View style={styles.dropdownHeader}>
+              <Text style={styles.dropdownTitle}>Assign Contact To</Text>
+              <Text style={styles.dropdownSubtitle}>{users.length} team members</Text>
+            </View>
+            
+            <ScrollView style={styles.dropdownScroll} showsVerticalScrollIndicator={false}>
+              {/* Unassigned option */}
+              <TouchableOpacity
+                style={[
+                  styles.dropdownItem,
+                  !formData.assignedUserId && styles.dropdownItemSelected
+                ]}
+                onPress={() => {
+                  setFormData({ ...formData, assignedUserId: '' });
+                  toggleUserDropdown();
+                }}
+              >
+                <View style={styles.dropdownItemLeft}>
+                  <View style={styles.userAvatar}>
+                    <Ionicons name="person-outline" size={20} color={COLORS.textGray} />
+                  </View>
+                  <View>
+                    <Text style={styles.dropdownItemName}>Unassigned</Text>
+                    <Text style={styles.dropdownItemEmail}>No one is assigned</Text>
+                  </View>
+                </View>
+                {!formData.assignedUserId && (
+                  <Ionicons name="checkmark-circle" size={22} color={COLORS.accent} />
+                )}
+              </TouchableOpacity>
+              
+              {/* User list */}
+              {users.map((user) => (
+                <TouchableOpacity
+                  key={user._id}
+                  style={[
+                    styles.dropdownItem,
+                    formData.assignedUserId === user._id && styles.dropdownItemSelected
+                  ]}
+                  onPress={() => {
+                    setFormData({ ...formData, assignedUserId: user._id });
+                    toggleUserDropdown();
+                  }}
+                >
+                  <View style={styles.dropdownItemLeft}>
+                    <View style={[styles.userAvatar, user.role === 'admin' && styles.userAvatarAdmin]}>
+                      <Text style={styles.userAvatarText}>
+                        {(user.name || user.email || '?')[0].toUpperCase()}
+                      </Text>
+                    </View>
+                    <View>
+                      <Text style={styles.dropdownItemName}>{user.name || user.email}</Text>
+                      <View style={styles.dropdownItemMeta}>
+                        <Text style={styles.dropdownItemEmail}>{user.email}</Text>
+                        {user.role && (
+                          <View style={[styles.roleBadge, user.role === 'admin' && styles.roleBadgeAdmin]}>
+                            <Text style={styles.roleBadgeText}>{user.role}</Text>
+                          </View>
+                        )}
+                      </View>
+                    </View>
+                  </View>
+                  {formData.assignedUserId === user._id && (
+                    <Ionicons name="checkmark-circle" size={22} color={COLORS.accent} />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </Animated.View>
+      </TouchableOpacity>
+    </Modal>
+  );
+  
   // Render overview tab
   const renderOverviewTab = () => (
-    <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
+    <ScrollView 
+      style={styles.tabContent} 
+      showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          colors={[COLORS.accent]}
+          tintColor={COLORS.accent}
+        />
+      }
+    >
       {/* Quick Actions */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Quick Actions</Text>
@@ -485,7 +747,9 @@ export default function ContactDetailScreen() {
           projects.slice(0, 3).map((project) => {
             // Extra validation before rendering
             if (!project || !project._id) {
-              console.warn('[ContactDetailScreen] Invalid project data:', project);
+              if (__DEV__) {
+                console.warn('[ContactDetailScreen] Invalid project data:', project);
+              }
               return null;
             }
             
@@ -501,7 +765,7 @@ export default function ContactDetailScreen() {
         {projects.length > 3 && (
           <TouchableOpacity 
             style={styles.viewAllButton}
-            onPress={() => navigation.navigate('ProjectsScreen', { contactObjectId: contact._id })}  // Changed from contactId
+            onPress={() => navigation.navigate('ProjectsScreen', { contactObjectId: contact._id })}
           >
             <Text style={styles.viewAllText}>View all projects</Text>
             <Ionicons name="arrow-forward" size={16} color={COLORS.accent} />
@@ -539,267 +803,347 @@ export default function ContactDetailScreen() {
     </ScrollView>
   );
   
-  // Render details tab
+  // Render details tab with keyboard handling
   const renderDetailsTab = () => (
-    <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Basic Information</Text>
-        
-        {/* First Name */}
-        <View style={styles.fieldContainer}>
-          <Text style={styles.fieldLabel}>First Name</Text>
-          {editing ? (
-            <TextInput
-              style={styles.input}
-              value={formData.firstName}
-              onChangeText={(text) => setFormData({ ...formData, firstName: text })}
-              placeholder="First name"
-            />
-          ) : (
-            <Text style={styles.fieldValue}>{contact.firstName || '-'}</Text>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={180}
+    >
+      <ScrollView 
+        style={styles.tabContent} 
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Basic Information</Text>
+          
+          {/* First Name */}
+          <View style={styles.fieldContainer}>
+            <Text style={styles.fieldLabel}>First Name</Text>
+            {editing ? (
+              <TextInput
+                style={styles.input}
+                value={formData.firstName}
+                onChangeText={(text) => setFormData({ ...formData, firstName: text })}
+                placeholder="First name"
+              />
+            ) : (
+              <Text style={styles.fieldValue}>{contact.firstName || '-'}</Text>
+            )}
+          </View>
+          
+          {/* Last Name */}
+          <View style={styles.fieldContainer}>
+            <Text style={styles.fieldLabel}>Last Name</Text>
+            {editing ? (
+              <TextInput
+                style={styles.input}
+                value={formData.lastName}
+                onChangeText={(text) => setFormData({ ...formData, lastName: text })}
+                placeholder="Last name"
+              />
+            ) : (
+              <Text style={styles.fieldValue}>{contact.lastName || '-'}</Text>
+            )}
+          </View>
+          
+          {/* Company */}
+          <View style={styles.fieldContainer}>
+            <Text style={styles.fieldLabel}>Company</Text>
+            {editing ? (
+              <TextInput
+                style={styles.input}
+                value={formData.companyName}
+                onChangeText={(text) => setFormData({ ...formData, companyName: text })}
+                placeholder="Company name"
+              />
+            ) : (
+              <Text style={styles.fieldValue}>{contact.companyName || '-'}</Text>
+            )}
+          </View>
+          
+          {/* Website */}
+          <View style={styles.fieldContainer}>
+            <Text style={styles.fieldLabel}>Website</Text>
+            {editing ? (
+              <TextInput
+                style={styles.input}
+                value={formData.website}
+                onChangeText={(text) => setFormData({ ...formData, website: text })}
+                placeholder="Website URL"
+                autoCapitalize="none"
+              />
+            ) : (
+              <Text style={styles.fieldValue}>{contact.website || '-'}</Text>
+            )}
+          </View>
+          
+          {/* Source */}
+          <View style={styles.fieldContainer}>
+            <Text style={styles.fieldLabel}>Source</Text>
+            {editing ? (
+              <TextInput
+                style={styles.input}
+                value={formData.source}
+                onChangeText={(text) => setFormData({ ...formData, source: text })}
+                placeholder="Lead source"
+              />
+            ) : (
+              <Text style={styles.fieldValue}>{contact.source || '-'}</Text>
+            )}
+          </View>
+          
+          {/* Assigned User - Only editable by admins */}
+          {user?.role === 'admin' && (
+            <View style={styles.fieldContainer}>
+              <Text style={styles.fieldLabel}>Assigned To</Text>
+              {editing ? (
+                <TouchableOpacity
+                  style={styles.dropdownButton}
+                  onPress={() => toggleUserDropdown()}
+                >
+                  <View style={styles.dropdownButtonContent}>
+                    {formData.assignedUserId ? (
+                      <View style={styles.selectedUser}>
+                        <View style={styles.selectedUserAvatar}>
+                          <Text style={styles.selectedUserAvatarText}>
+                            {(users.find(u => u._id === formData.assignedUserId)?.name || 
+                              users.find(u => u._id === formData.assignedUserId)?.email || 
+                              '?')[0].toUpperCase()}
+                          </Text>
+                        </View>
+                        <Text style={styles.dropdownButtonText}>
+                          {users.find(u => u._id === formData.assignedUserId)?.name || 
+                           users.find(u => u._id === formData.assignedUserId)?.email || 
+                           'Select User'}
+                        </Text>
+                      </View>
+                    ) : (
+                      <View style={styles.selectedUser}>
+                        <View style={[styles.selectedUserAvatar, styles.unassignedAvatar]}>
+                          <Ionicons name="person-outline" size={16} color={COLORS.textGray} />
+                        </View>
+                        <Text style={styles.dropdownButtonText}>Unassigned</Text>
+                      </View>
+                    )}
+                    <Ionicons name="chevron-down" size={20} color={COLORS.textGray} />
+                  </View>
+                </TouchableOpacity>
+              ) : (
+                <Text style={styles.fieldValue}>
+                  {contact.assignedUserId 
+                    ? users.find(u => u._id === contact.assignedUserId)?.name || 
+                      users.find(u => u._id === contact.assignedUserId)?.email || 
+                      'Unknown User'
+                    : 'Unassigned'}
+                </Text>
+              )}
+            </View>
           )}
         </View>
         
-        {/* Last Name */}
-        <View style={styles.fieldContainer}>
-          <Text style={styles.fieldLabel}>Last Name</Text>
-          {editing ? (
-            <TextInput
-              style={styles.input}
-              value={formData.lastName}
-              onChangeText={(text) => setFormData({ ...formData, lastName: text })}
-              placeholder="Last name"
-            />
-          ) : (
-            <Text style={styles.fieldValue}>{contact.lastName || '-'}</Text>
-          )}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Contact Details</Text>
+          
+          {/* Email */}
+          <View style={styles.fieldContainer}>
+            <Text style={styles.fieldLabel}>Email</Text>
+            {editing ? (
+              <TextInput
+                style={styles.input}
+                value={formData.email}
+                onChangeText={(text) => setFormData({ ...formData, email: text })}
+                placeholder="Email address"
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+            ) : (
+              <Text style={styles.fieldValue}>{contact.email || '-'}</Text>
+            )}
+          </View>
+          
+          {/* Phone */}
+          <View style={styles.fieldContainer}>
+            <Text style={styles.fieldLabel}>Phone</Text>
+            {editing ? (
+              <TextInput
+                style={styles.input}
+                value={formData.phone}
+                onChangeText={(text) => setFormData({ ...formData, phone: text })}
+                placeholder="Phone number"
+                keyboardType="phone-pad"
+              />
+            ) : (
+              <Text style={styles.fieldValue}>{contact.phone || '-'}</Text>
+            )}
+          </View>
+          
+          {/* Secondary Phone */}
+          <View style={styles.fieldContainer}>
+            <Text style={styles.fieldLabel}>Secondary Phone</Text>
+            {editing ? (
+              <TextInput
+                style={styles.input}
+                value={formData.secondaryPhone}
+                onChangeText={(text) => setFormData({ ...formData, secondaryPhone: text })}
+                placeholder="Secondary phone"
+                keyboardType="phone-pad"
+              />
+            ) : (
+              <Text style={styles.fieldValue}>{contact.secondaryPhone || '-'}</Text>
+            )}
+          </View>
         </View>
         
-        {/* Company */}
-        <View style={styles.fieldContainer}>
-          <Text style={styles.fieldLabel}>Company</Text>
-          {editing ? (
-            <TextInput
-              style={styles.input}
-              value={formData.companyName}
-              onChangeText={(text) => setFormData({ ...formData, companyName: text })}
-              placeholder="Company name"
-            />
-          ) : (
-            <Text style={styles.fieldValue}>{contact.companyName || '-'}</Text>
-          )}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Address</Text>
+          
+          {/* Street Address */}
+          <View style={styles.fieldContainer}>
+            <Text style={styles.fieldLabel}>Street Address</Text>
+            {editing ? (
+              <TextInput
+                style={styles.input}
+                value={formData.address}
+                onChangeText={(text) => setFormData({ ...formData, address: text })}
+                placeholder="Street address"
+              />
+            ) : (
+              <Text style={styles.fieldValue}>{contact.address || '-'}</Text>
+            )}
+          </View>
+          
+          {/* City */}
+          <View style={styles.fieldContainer}>
+            <Text style={styles.fieldLabel}>City</Text>
+            {editing ? (
+              <TextInput
+                style={styles.input}
+                value={formData.city}
+                onChangeText={(text) => setFormData({ ...formData, city: text })}
+                placeholder="City"
+              />
+            ) : (
+              <Text style={styles.fieldValue}>{contact.city || '-'}</Text>
+            )}
+          </View>
+          
+          {/* State */}
+          <View style={styles.fieldContainer}>
+            <Text style={styles.fieldLabel}>State</Text>
+            {editing ? (
+              <TextInput
+                style={styles.input}
+                value={formData.state}
+                onChangeText={(text) => setFormData({ ...formData, state: text })}
+                placeholder="State"
+              />
+            ) : (
+              <Text style={styles.fieldValue}>{contact.state || '-'}</Text>
+            )}
+          </View>
+          
+          {/* Postal Code */}
+          <View style={styles.fieldContainer}>
+            <Text style={styles.fieldLabel}>Postal Code</Text>
+            {editing ? (
+              <TextInput
+                style={styles.input}
+                value={formData.postalCode}
+                onChangeText={(text) => setFormData({ ...formData, postalCode: text })}
+                placeholder="Postal code"
+                keyboardType="numeric"
+              />
+            ) : (
+              <Text style={styles.fieldValue}>{contact.postalCode || '-'}</Text>
+            )}
+          </View>
+          
+          {/* Country */}
+          <View style={styles.fieldContainer}>
+            <Text style={styles.fieldLabel}>Country</Text>
+            {editing ? (
+              <TextInput
+                style={styles.input}
+                value={formData.country}
+                onChangeText={(text) => setFormData({ ...formData, country: text })}
+                placeholder="Country"
+              />
+            ) : (
+              <Text style={styles.fieldValue}>{contact.country || '-'}</Text>
+            )}
+          </View>
         </View>
         
-        {/* Website */}
-        <View style={styles.fieldContainer}>
-          <Text style={styles.fieldLabel}>Website</Text>
-          {editing ? (
-            <TextInput
-              style={styles.input}
-              value={formData.website}
-              onChangeText={(text) => setFormData({ ...formData, website: text })}
-              placeholder="Website URL"
-              autoCapitalize="none"
-            />
-          ) : (
-            <Text style={styles.fieldValue}>{contact.website || '-'}</Text>
-          )}
-        </View>
-        
-        {/* Source */}
-        <View style={styles.fieldContainer}>
-          <Text style={styles.fieldLabel}>Source</Text>
-          {editing ? (
-            <TextInput
-              style={styles.input}
-              value={formData.source}
-              onChangeText={(text) => setFormData({ ...formData, source: text })}
-              placeholder="Lead source"
-            />
-          ) : (
-            <Text style={styles.fieldValue}>{contact.source || '-'}</Text>
-          )}
-        </View>
-      </View>
-      
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Contact Details</Text>
-        
-        {/* Email */}
-        <View style={styles.fieldContainer}>
-          <Text style={styles.fieldLabel}>Email</Text>
-          {editing ? (
-            <TextInput
-              style={styles.input}
-              value={formData.email}
-              onChangeText={(text) => setFormData({ ...formData, email: text })}
-              placeholder="Email address"
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
-          ) : (
-            <Text style={styles.fieldValue}>{contact.email || '-'}</Text>
-          )}
-        </View>
-        
-        {/* Phone */}
-        <View style={styles.fieldContainer}>
-          <Text style={styles.fieldLabel}>Phone</Text>
-          {editing ? (
-            <TextInput
-              style={styles.input}
-              value={formData.phone}
-              onChangeText={(text) => setFormData({ ...formData, phone: text })}
-              placeholder="Phone number"
-              keyboardType="phone-pad"
-            />
-          ) : (
-            <Text style={styles.fieldValue}>{contact.phone || '-'}</Text>
-          )}
-        </View>
-        
-        {/* Secondary Phone */}
-        <View style={styles.fieldContainer}>
-          <Text style={styles.fieldLabel}>Secondary Phone</Text>
-          {editing ? (
-            <TextInput
-              style={styles.input}
-              value={formData.secondaryPhone}
-              onChangeText={(text) => setFormData({ ...formData, secondaryPhone: text })}
-              placeholder="Secondary phone"
-              keyboardType="phone-pad"
-            />
-          ) : (
-            <Text style={styles.fieldValue}>{contact.secondaryPhone || '-'}</Text>
-          )}
-        </View>
-      </View>
-      
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Address</Text>
-        
-        {/* Street Address */}
-        <View style={styles.fieldContainer}>
-          <Text style={styles.fieldLabel}>Street Address</Text>
-          {editing ? (
-            <TextInput
-              style={styles.input}
-              value={formData.address}
-              onChangeText={(text) => setFormData({ ...formData, address: text })}
-              placeholder="Street address"
-            />
-          ) : (
-            <Text style={styles.fieldValue}>{contact.address || '-'}</Text>
-          )}
-        </View>
-        
-        {/* City */}
-        <View style={styles.fieldContainer}>
-          <Text style={styles.fieldLabel}>City</Text>
-          {editing ? (
-            <TextInput
-              style={styles.input}
-              value={formData.city}
-              onChangeText={(text) => setFormData({ ...formData, city: text })}
-              placeholder="City"
-            />
-          ) : (
-            <Text style={styles.fieldValue}>{contact.city || '-'}</Text>
-          )}
-        </View>
-        
-        {/* State */}
-        <View style={styles.fieldContainer}>
-          <Text style={styles.fieldLabel}>State</Text>
-          {editing ? (
-            <TextInput
-              style={styles.input}
-              value={formData.state}
-              onChangeText={(text) => setFormData({ ...formData, state: text })}
-              placeholder="State"
-            />
-          ) : (
-            <Text style={styles.fieldValue}>{contact.state || '-'}</Text>
-          )}
-        </View>
-        
-        {/* Postal Code */}
-        <View style={styles.fieldContainer}>
-          <Text style={styles.fieldLabel}>Postal Code</Text>
-          {editing ? (
-            <TextInput
-              style={styles.input}
-              value={formData.postalCode}
-              onChangeText={(text) => setFormData({ ...formData, postalCode: text })}
-              placeholder="Postal code"
-              keyboardType="numeric"
-            />
-          ) : (
-            <Text style={styles.fieldValue}>{contact.postalCode || '-'}</Text>
-          )}
-        </View>
-        
-        {/* Country */}
-        <View style={styles.fieldContainer}>
-          <Text style={styles.fieldLabel}>Country</Text>
-          {editing ? (
-            <TextInput
-              style={styles.input}
-              value={formData.country}
-              onChangeText={(text) => setFormData({ ...formData, country: text })}
-              placeholder="Country"
-            />
-          ) : (
-            <Text style={styles.fieldValue}>{contact.country || '-'}</Text>
-          )}
-        </View>
-      </View>
-      
-      {editing && (
-        <TouchableOpacity 
-          style={styles.saveButton} 
-          onPress={handleSave}
-          disabled={updateContactMutation.isPending}
-        >
-          {updateContactMutation.isPending ? (
-            <ActivityIndicator color={COLORS.white} />
-          ) : (
-            <Text style={styles.saveButtonText}>Save Changes</Text>
-          )}
-        </TouchableOpacity>
-      )}
-    </ScrollView>
+        {editing && (
+          <TouchableOpacity 
+            style={styles.saveButton} 
+            onPress={handleSave}
+            disabled={updateContactMutation.isPending}
+          >
+            {updateContactMutation.isPending ? (
+              <ActivityIndicator color={COLORS.white} />
+            ) : (
+              <Text style={styles.saveButtonText}>Save Changes</Text>
+            )}
+          </TouchableOpacity>
+        )}
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
   
   // Render conversations tab
   const renderConversationsTab = () => (
     <ConversationsList
-      contactObjectId={contact._id}  // Changed from contactId
+      contactObjectId={contact._id}
       contactPhone={contact.phone}
       contactEmail={contact.email}
       locationId={user?.locationId || ''}
       userId={user?._id || ''}
       userName={user?.name}
-      user={user} // Add this - passes the full user object with preferences
+      user={user}
       onNavigateToProject={handleNavigateToProject}
       onNavigateToAppointment={handleNavigateToAppointment}
       onNavigateToSettings={() => {
         navigation.navigate('SettingsScreen', { initialTab: 'communication' });
-      }} // Add this - navigates to Settings (Communication tab)
+      }}
       style={styles.conversationsContainer}
     />
   );
   
-  // Render notes tab
+  // Render notes tab with proper keyboard handling
   const renderNotesTab = () => (
-    <View style={styles.notesContainer}>
-      <ScrollView style={styles.notesList} showsVerticalScrollIndicator={false}>
-        {notes.length === 0 ? (
+    <KeyboardAvoidingView
+      style={styles.notesContainer}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={180}
+    >
+      <ScrollView 
+        style={styles.notesList} 
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 20 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshingNotes}
+            onRefresh={async () => {
+              setRefreshingNotes(true);
+              await loadNotes(true);
+              setRefreshingNotes(false);
+            }}
+            colors={[COLORS.accent]}
+            tintColor={COLORS.accent}
+          />
+        }
+      >
+        {notesLoading && !refreshingNotes ? (
+          <ActivityIndicator size="small" color={COLORS.accent} style={{ marginTop: 50 }} />
+        ) : notes.length === 0 ? (
           <Text style={styles.noNotes}>No notes yet. Add your first note below.</Text>
         ) : (
           notes.map((note, index) => (
             <View key={note.id || index} style={styles.noteItem}>
-              <Text style={styles.noteText}>{note.text || contact.notes}</Text>
+              <Text style={styles.noteText}>{note.body || note.text || contact.notes}</Text>
               <Text style={styles.noteMetadata}>
                 {note.createdBy || 'System'} • {new Date(note.createdAt || contact.updatedAt).toLocaleDateString()}
               </Text>
@@ -808,7 +1152,7 @@ export default function ContactDetailScreen() {
         )}
       </ScrollView>
       
-      <View style={styles.addNoteContainer}>
+      <View style={[styles.addNoteContainer, keyboardVisible && styles.addNoteContainerKeyboard]}>
         <TextInput
           style={styles.noteInput}
           placeholder="Add a note..."
@@ -834,7 +1178,7 @@ export default function ContactDetailScreen() {
           )}
         </TouchableOpacity>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
   
   // Render project creation modal (bottom sheet style)
@@ -859,6 +1203,7 @@ export default function ContactDetailScreen() {
         <KeyboardAvoidingView 
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.bottomSheetContainer}
+          keyboardVerticalOffset={0}
         >
           <TouchableOpacity activeOpacity={1} style={styles.bottomSheet}>
             {/* Drag Handle */}
@@ -930,7 +1275,7 @@ export default function ContactDetailScreen() {
   
   if (contactLoading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={['top']}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={COLORS.accent} />
           <Text style={styles.loadingText}>Loading contact...</Text>
@@ -940,10 +1285,13 @@ export default function ContactDetailScreen() {
   }
   
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       {renderHeader()}
       {renderTabs()}
       {renderTabContent()}
+      
+      {/* Hide bottom navigation when keyboard is visible */}
+      {keyboardVisible && <View style={styles.keyboardSpacer} />}
       
       {/* Modals */}
       <CreateAppointmentModal
@@ -964,6 +1312,9 @@ export default function ContactDetailScreen() {
       
       {/* Project Creation Modal */}
       {renderProjectModal()}
+      
+      {/* User Dropdown Modal */}
+      {renderUserDropdown()}
     </SafeAreaView>
   );
 }
@@ -988,6 +1339,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     paddingHorizontal: 20,
     paddingVertical: 16,
+    paddingTop: Platform.OS === 'ios' ? 16 : 24,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
     ...SHADOW.light,
@@ -995,7 +1347,7 @@ const styles = StyleSheet.create({
   backButton: {
     position: 'absolute',
     left: 20,
-    top: 16,
+    top: Platform.OS === 'ios' ? 16 : 24,
     zIndex: 1,
     padding: 8,
   },
@@ -1005,16 +1357,16 @@ const styles = StyleSheet.create({
     marginLeft: 40,
   },
   avatar: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: isTablet ? 60 : 50,
+    height: isTablet ? 60 : 50,
+    borderRadius: isTablet ? 30 : 25,
     backgroundColor: COLORS.accent,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 16,
   },
   avatarText: {
-    fontSize: 24,
+    fontSize: isTablet ? 22 : 18,
     fontFamily: FONT.bold,
     color: COLORS.white,
   },
@@ -1053,7 +1405,7 @@ const styles = StyleSheet.create({
   headerActions: {
     position: 'absolute',
     right: 20,
-    top: 16,
+    top: Platform.OS === 'ios' ? 16 : 24,
     flexDirection: 'row',
   },
   headerButton: {
@@ -1266,6 +1618,9 @@ const styles = StyleSheet.create({
     borderTopColor: COLORS.border,
     padding: 16,
   },
+  addNoteContainerKeyboard: {
+    marginBottom: 0,
+  },
   noteInput: {
     borderWidth: 1,
     borderColor: COLORS.border,
@@ -1309,7 +1664,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    paddingBottom: Platform.OS === 'ios' ? 34 : 24, // Account for iPhone safe area
+    paddingBottom: Platform.OS === 'ios' ? 34 : 24,
     ...SHADOW.large,
   },
   dragHandle: {
@@ -1370,6 +1725,191 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: FONT.semiBold,
     color: COLORS.white,
+  },
+  
+  // Keyboard spacer
+  keyboardSpacer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 56,
+    backgroundColor: COLORS.white,
+  },
+  
+  // Sexy dropdown styles
+  dropdownButton: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 12,
+    backgroundColor: COLORS.white,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginTop: 4,
+    ...SHADOW.small,
+  },
+  dropdownButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  dropdownButtonText: {
+    fontSize: 16,
+    fontFamily: FONT.regular,
+    color: COLORS.textDark,
+    marginLeft: 8,
+  },
+  selectedUser: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  selectedUserAvatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: COLORS.accent,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  selectedUserAvatarText: {
+    fontSize: 12,
+    fontFamily: FONT.semiBold,
+    color: COLORS.white,
+  },
+  unassignedAvatar: {
+    backgroundColor: COLORS.lightGray,
+  },
+  dropdownOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  dropdownContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    overflow: 'hidden',
+    maxHeight: 420,
+    marginHorizontal: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 10,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 20,
+  },
+  dropdownContent: {
+    backgroundColor: '#FFFFFF',
+  },
+  dropdownHeader: {
+    paddingHorizontal: 24,
+    paddingTop: 24,
+    paddingBottom: 20,
+    backgroundColor: COLORS.accent,
+    borderBottomWidth: 0,
+  },
+  dropdownTitle: {
+    fontSize: 22,
+    fontFamily: FONT.bold,
+    color: '#FFFFFF',
+    marginBottom: 4,
+  },
+  dropdownSubtitle: {
+    fontSize: 15,
+    fontFamily: FONT.regular,
+    color: '#FFFFFF',
+    opacity: 0.9,
+  },
+  dropdownScroll: {
+    maxHeight: 320,
+    backgroundColor: '#FFFFFF',
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  dropdownItemSelected: {
+    backgroundColor: '#E8F4FB',
+  },
+  dropdownItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  userAvatar: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: '#E5E5E5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  userAvatarAdmin: {
+    backgroundColor: COLORS.accent,
+    borderColor: '#FFFFFF',
+  },
+  userAvatarText: {
+    fontSize: 18,
+    fontFamily: FONT.bold,
+    color: '#FFFFFF',
+  },
+  dropdownItemName: {
+    fontSize: 17,
+    fontFamily: FONT.semiBold,
+    color: '#1A1A1A',
+    marginBottom: 3,
+  },
+  dropdownItemMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  dropdownItemEmail: {
+    fontSize: 14,
+    fontFamily: FONT.regular,
+    color: '#666666',
+    flex: 1,
+  },
+  roleBadge: {
+    backgroundColor: '#F5F5F5',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  roleBadgeAdmin: {
+    backgroundColor: '#E8F4FB',
+    borderColor: '#B8E0F5',
+  },
+  roleBadgeText: {
+    fontSize: 11,
+    fontFamily: FONT.bold,
+    color: '#666666',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   
   // Keep these for contact avatar in the main screen
