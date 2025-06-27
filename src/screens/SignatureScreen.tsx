@@ -75,6 +75,21 @@ export default function SignatureScreen() {
   const [manualPaymentId, setManualPaymentId] = useState(null);
   const [manualInvoiceId, setManualInvoiceId] = useState(null);
   
+    // Handle continue button press
+  const handleContinue = () => {
+    if (quote?.project) {
+      navigation.navigate('ProjectDetailScreen', { 
+        project: quote.project 
+      });
+    } else if (quote?.projectId) {
+      navigation.navigate('ProjectDetailScreen', { 
+        projectId: quote.projectId 
+      });
+    } else {
+      navigation.navigate('Projects');
+    }
+  };
+
   // Load company data on mount
   useEffect(() => {
     loadCompanyData();
@@ -318,48 +333,34 @@ export default function SignatureScreen() {
       
       // Update the project timeline using existing method
       try {
-        // Fix: Pass locationId as query parameter
-        await projectService.patch(
-          `/api/projects/${quote.projectId}?locationId=${user.locationId}`,
-          {
-            timeline: [{
-              id: `timeline_${Date.now()}`,
-              event: 'contract_signed',
-              description: `Contract signed on ${new Date().toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: '2-digit', 
-                day: '2-digit'
-              })}. GHL sync pending - OAuth authentication required.`,
-              timestamp: new Date().toISOString(),
-              userId: user._id || 'system',
-              metadata: {
-                signedDate: new Date().toLocaleDateString('en-US', {
-                  year: 'numeric',
-                  month: '2-digit', 
-                  day: '2-digit'
-                }),
-                ghlSyncSkipped: true,
-                reason: 'OAuth location - API key not applicable'
-              }
-            }]
-          },
-          {
-            offline: false,
-            showError: false,
-          },
-          {
-            endpoint: `/api/projects/${quote.projectId}`,
-            method: 'PATCH',
-            entity: 'project',
+  // Don't use patch directly - use the addTimelineEvent method
+      await projectService.addTimelineEvent(
+        quote.projectId,
+        {
+          event: 'contract_signed',
+          description: `Contract signed on ${new Date().toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: '2-digit', 
+            day: '2-digit'
+          })}. GHL sync pending - OAuth authentication required.`,
+          metadata: {
+            signedDate: new Date().toLocaleDateString('en-US', {
+              year: 'numeric',
+              month: '2-digit', 
+              day: '2-digit'
+            }),
+            ghlSyncSkipped: true,
+            reason: 'OAuth location - API key not applicable'
           }
-        );
-        
-        setOpportunityUpdated(true);
-        setOpportunityError('Local update only - GHL sync requires backend fix');
-      } catch (noteError) {
-        console.error('[SignatureScreen] Failed to add timeline event:', noteError);
-        setOpportunityError('Update partially completed');
-      }
+        }
+      );
+      
+      setOpportunityUpdated(true);
+      setOpportunityError('Local update only - GHL sync requires backend fix');
+    } catch (noteError) {
+      console.error('[SignatureScreen] Failed to add timeline event:', noteError);
+      setOpportunityError('Update partially completed');
+    }
     } else {
       setOpportunityError(error.message);
     }
@@ -368,32 +369,50 @@ export default function SignatureScreen() {
   }
 };
 
-  // ✅ NEW: Add audit trail note to project
-  const addProjectNote = async (noteText) => {
-    if (!quote?.projectId) return;
+// ✅ NEW: Add audit trail note to project
+const addProjectNote = async (noteText) => {
+  if (!quote?.projectId) return;
+  
+  try {
+    // Create timeline event data
+    const eventData = {
+      event: 'signature_complete',
+      description: noteText,
+      metadata: {
+        signedBy: [
+          { role: 'consultant', name: user.name || 'Consultant' },
+          { role: 'customer', name: quote.customerName || 'Customer' }
+        ],
+        timestamp: new Date().toISOString()
+      }
+    };
     
-    try {
-      // Update project notes using projectService
-      await projectService.update(
-        quote.projectId,
-        user.locationId,
-        {
-          notes: noteText,
-        }
-      );
-      console.log('[SignatureScreen] Project note added successfully');
-    } catch (error) {
-      console.warn('[SignatureScreen] Failed to add project note:', error);
-    }
-  };
+    // Use patch directly with locationId as query parameter
+    await projectService.patch(
+      `/api/projects/${quote.projectId}?locationId=${user.locationId}`,
+      {
+        timeline: [{
+          id: `timeline_${Date.now()}`,
+          ...eventData,
+          timestamp: new Date().toISOString(),
+          userId: user._id
+        }]
+      },
+      {},
+      {
+        endpoint: `/api/projects/${quote.projectId}`,
+        method: 'PATCH',
+        entity: 'project'
+      }
+    );
+    
+    console.log('[SignatureScreen] Project timeline event added successfully');
+  } catch (error) {
+    console.warn('[SignatureScreen] Failed to add project timeline event:', error);
+    // Don't throw - let the process continue
+  }
+};
 
-  const handleContinue = () => {
-    if (quote?.project?._id) {
-      navigation.navigate('ProjectDetailScreen', { project: quote.project });
-    } else {
-      navigation.navigate('Projects');
-    }
-  };
 
   // Add card payment handler
   const handleCardPayment = async () => {
@@ -446,74 +465,147 @@ export default function SignatureScreen() {
   };
 
   // Handle payment method selection
-  const handlePaymentMethodSelect = async (method: string) => {
-    setSelectedPaymentMethod(method);
-    setSavingPaymentPreference(true);
+const handlePaymentMethodSelect = async (method: string) => {
+  setSelectedPaymentMethod(method);
+  setSavingPaymentPreference(true);
+  
+  try {
+    // Save payment preference to project
+    const projectId = quote.projectId || quote.project?._id;
     
-    try {
-      // Save payment preference to project
-      const projectId = quote.projectId || quote.project?._id;
+    if (projectId) {
+      const url = `/api/projects/${projectId}?locationId=${user.locationId}`;
       
-      if (projectId) {
-        await projectService.update(
-          projectId,
-          user.locationId,
-          {
-            paymentPreference: method,
-            depositExpected: quote.depositAmount > 0,
-            depositAmount: quote.depositAmount || 0
+      await projectService.patch(
+        url,
+        {
+          paymentPreference: method,
+          depositExpected: quote.depositAmount > 0,
+          depositAmount: quote.depositAmount || 0
+        },
+        {},
+        {
+          endpoint: `/api/projects/${projectId}`,
+          method: 'PATCH',
+          entity: 'project'
+        }
+      );
+    }
+    
+    console.log('Payment preference saved:', method);
+    
+    if (method === 'card') {
+      await handleCardPayment();
+    } else if (method === 'check') {
+      // Check requires photo proof
+      console.log('[SignatureScreen] Creating invoice for check payment...');
+      
+      const response = await paymentService.createPaymentLink({
+        projectId: quote.projectId || quote.project?._id,
+        quoteId: quote._id,
+        contactId: quote.contactId || quote.contact?._id,
+        locationId: user.locationId,
+        amount: quote.depositAmount,
+        description: `Deposit for ${quote.quoteNumber}`,
+        type: 'deposit',
+        userId: user._id
+      });
+      
+      if (response.success) {
+        let ghlInvoiceId = response.ghlInvoiceId;
+        if (!ghlInvoiceId && response.paymentUrl) {
+          const match = response.paymentUrl.match(/\/invoice\/([a-f0-9]+)$/);
+          if (match) {
+            ghlInvoiceId = match[1];
           }
-        );
-      }
-      
-      console.log('Payment preference saved:', method);
-      
-      if (method === 'card') {
-        // Existing card payment flow
-        await handleCardPayment();
-      } else if (method === 'check' || method === 'cash') {
-        // Create invoice using payment service
-        const response = await paymentService.createPaymentLink({
-          projectId: quote.projectId || quote.project?._id,
-          quoteId: quote._id,
-          contactId: quote.contactId || quote.contact?._id,
-          locationId: user.locationId,
-          amount: quote.depositAmount,
-          description: `Deposit for ${quote.quoteNumber}`,
-          type: 'deposit',
-          userId: user._id
-        });
+        }
         
-        if (response.success) {
-          // Handle both new and existing invoices
-          console.log('Invoice response:', response);
-          
-          // Extract the GHL invoice ID from the URL if not provided directly
-          let ghlInvoiceId = response.ghlInvoiceId;
-          if (!ghlInvoiceId && response.paymentUrl) {
-            // Extract from URL: https://updates.leadprospecting.ai/invoice/[ID]
-            const match = response.paymentUrl.match(/\/invoice\/([a-f0-9]+)$/);
-            if (match) {
-              ghlInvoiceId = match[1];
+        setManualPaymentId(response.paymentId);
+        setManualInvoiceId(ghlInvoiceId);
+        setShowPhotoModal(true);
+      }
+    } else if (method === 'cash') {
+  // Cash - confirm before marking as paid
+  Alert.alert(
+    'Confirm Cash Payment',
+    `Mark $${quote.depositAmount.toFixed(2)} deposit as paid?`,
+    [
+      {
+        text: 'Cancel',
+        style: 'cancel',
+        onPress: () => {
+          setSelectedPaymentMethod(null);
+          setSavingPaymentPreference(false);
+        }
+      },
+      {
+        text: 'Mark as Paid',
+        style: 'default',
+        onPress: async () => {
+          try {
+            console.log('[SignatureScreen] Marking cash payment as received...');
+            
+            // Create and immediately mark invoice as paid
+            const response = await paymentService.createPaymentLink({
+              projectId: quote.projectId || quote.project?._id,
+              quoteId: quote._id,
+              contactId: quote.contactId || quote.contact?._id,
+              locationId: user.locationId,
+              amount: quote.depositAmount,
+              description: `Deposit for ${quote.quoteNumber}`,
+              type: 'deposit',
+              userId: user._id
+            });
+            
+            if (response.success) {
+              // Record the cash payment immediately
+              const recordResponse = await paymentService.recordManualPayment({
+                invoiceId: response.ghlInvoiceId,
+                locationId: user.locationId,
+                amount: quote.depositAmount,
+                mode: 'cash',
+                notes: 'Cash payment received in person',
+                userId: user._id
+              });
+              
+              if (recordResponse.success) {
+                Alert.alert(
+                  'Payment Recorded',
+                  `Cash payment of $${quote.depositAmount.toFixed(2)} has been recorded successfully.`,
+                  [{
+                    text: 'OK',
+                    onPress: () => {
+                      if (quote.project) {
+                        navigation.navigate('ProjectDetailScreen', { 
+                          project: quote.project 
+                        });
+                      } else {
+                        navigation.navigate('Projects');
+                      }
+                    }
+                  }]
+                );
+              }
             }
+          } catch (error) {
+            console.error('Failed to record cash payment:', error);
+            Alert.alert('Error', 'Failed to record payment. Please try again.');
+            setSelectedPaymentMethod(null);
+          } finally {
+            setSavingPaymentPreference(false);
           }
-          
-          // Store invoice info for photo capture
-          setManualPaymentId(response.paymentId);
-          setManualInvoiceId(ghlInvoiceId);
-          setShowPhotoModal(true);
-        } else {
-          throw new Error(response.error || 'Failed to create invoice');
         }
       }
-      
-    } catch (error) {
-      console.error('Failed to process payment:', error);
-      Alert.alert('Error', error.message || 'Failed to process payment selection');
-    } finally {
-      setSavingPaymentPreference(false);
-    }
-  };
+    ]
+  );
+}
+  } catch (error) {
+    console.error('Failed to process payment:', error);
+    Alert.alert('Error', error.response?.data?.error || error.message || 'Failed to process payment selection');
+  } finally {
+    setSavingPaymentPreference(false);
+  }
+};
 
   const renderProgressIndicator = () => (
     <View style={styles.progressContainer}>
@@ -727,6 +819,7 @@ export default function SignatureScreen() {
                   How would you like to collect the ${quote.depositAmount.toFixed(2)} deposit?
                 </Text>
                 
+                / In the payment options section of renderCompleteStep, update this part:
                 <TouchableOpacity 
                   style={[
                     styles.paymentOption,
@@ -735,10 +828,14 @@ export default function SignatureScreen() {
                   onPress={() => handlePaymentMethodSelect('card')}
                   disabled={savingPaymentPreference}
                 >
-                  <Ionicons name="card-outline" size={24} color="#2E86AB" />
+                  {savingPaymentPreference && selectedPaymentMethod === 'card' ? (
+                    <ActivityIndicator size="small" color="#2E86AB" />
+                  ) : (
+                    <Ionicons name="card-outline" size={24} color="#2E86AB" />
+                  )}
                   <Text style={styles.paymentOptionText}>Pay with Card</Text>
                 </TouchableOpacity>
-                
+
                 <TouchableOpacity 
                   style={[
                     styles.paymentOption,
@@ -747,10 +844,14 @@ export default function SignatureScreen() {
                   onPress={() => handlePaymentMethodSelect('check')}
                   disabled={savingPaymentPreference}
                 >
-                  <Ionicons name="document-text-outline" size={24} color="#2E86AB" />
+                  {savingPaymentPreference && selectedPaymentMethod === 'check' ? (
+                    <ActivityIndicator size="small" color="#2E86AB" />
+                  ) : (
+                    <Ionicons name="document-text-outline" size={24} color="#2E86AB" />
+                  )}
                   <Text style={styles.paymentOptionText}>Pay by Check</Text>
                 </TouchableOpacity>
-                
+
                 <TouchableOpacity 
                   style={[
                     styles.paymentOption,
@@ -759,7 +860,11 @@ export default function SignatureScreen() {
                   onPress={() => handlePaymentMethodSelect('cash')}
                   disabled={savingPaymentPreference}
                 >
-                  <Ionicons name="cash-outline" size={24} color="#2E86AB" />
+                  {savingPaymentPreference && selectedPaymentMethod === 'cash' ? (
+                    <ActivityIndicator size="small" color="#2E86AB" />
+                  ) : (
+                    <Ionicons name="cash-outline" size={24} color="#2E86AB" />
+                  )}
                   <Text style={styles.paymentOptionText}>Pay with Cash</Text>
                 </TouchableOpacity>
               </View>
@@ -859,6 +964,7 @@ export default function SignatureScreen() {
       </View>
     </SafeAreaView>
   );
+  
 }
 
 const styles = StyleSheet.create({
@@ -1169,4 +1275,24 @@ const styles = StyleSheet.create({
     fontSize: FONT.input,
     color: '#6b7280',
   },
+  // Add to your styles:
+paymentOption: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  padding: 15,
+  backgroundColor: 'white',
+  borderRadius: 8,
+  marginBottom: 10,
+  borderWidth: 1,
+  borderColor: '#ddd',
+  opacity: 1, // Add this
+},
+selectedPaymentOption: {
+  borderColor: '#2E86AB',
+  backgroundColor: '#f0f8ff',
+},
+// Add this new style:
+disabledPaymentOption: {
+  opacity: 0.6,
+},
 });
