@@ -1,6 +1,7 @@
 // src/screens/ContactsScreen.tsx
 // Updated: 2025-06-18
 // Enhanced with React Query, modern UI, and sorting options
+// FIXED: Pull-to-refresh now properly invalidates cache
 
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import {
@@ -20,6 +21,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '@react-navigation/native';
+import { useQueryClient } from '@tanstack/react-query';
 import { useContacts, useCreateContact } from '../hooks/useContacts';
 import ContactCard from '../components/ContactCard';
 import FilterModal from '../components/FilterModal';
@@ -47,6 +49,7 @@ const sortOptions = [
 export default function ContactsScreen() {
   const { user } = useAuth();
   const navigation = useNavigation();
+  const queryClient = useQueryClient();
   
   // State
   const [search, setSearch] = useState('');
@@ -65,9 +68,20 @@ export default function ContactsScreen() {
   const searchBarOpacity = useRef(new Animated.Value(1)).current;
   const sortOptionsHeight = useRef(new Animated.Value(0)).current;
   
-  // React Query
+  // React Query with cache invalidation
   const { data: contacts = [], isLoading, refetch, isRefetching } = useContacts();
   const createContactMutation = useCreateContact();
+  
+  // Force refresh function that clears cache
+  const handleRefresh = async () => {
+    // Invalidate the cache first
+    await queryClient.invalidateQueries({ 
+      queryKey: ['contacts'],
+      refetchType: 'all'
+    });
+    // Then refetch
+    await refetch();
+  };
   
   // Debounce search
   useEffect(() => {
@@ -468,7 +482,7 @@ export default function ContactsScreen() {
         refreshControl={
           <RefreshControl 
             refreshing={isRefetching} 
-            onRefresh={refetch}
+            onRefresh={handleRefresh}
             colors={[COLORS.accent]}
             tintColor={COLORS.accent}
           />

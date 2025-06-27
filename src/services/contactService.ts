@@ -92,31 +92,63 @@ class ContactService extends BaseService {
   /**
    * Create contact - Goes to MongoDB then GHL
    */
-  async create(
-    data: CreateContactInput
-  ): Promise<Contact> {
-    const endpoint = '/api/contacts';
+async create(
+  data: CreateContactInput
+): Promise<Contact> {
+  // Extract locationId and address from data
+  const { locationId, address, ...restData } = data;
+  
+  // Parse address into GHL format if provided
+  let addressFields = {};
+  if (address) {
+    // Simple parsing - you might want to use a proper address parser
+    const parts = address.split(',').map(p => p.trim());
     
-    const newContact = await super.post<Contact>(
-      endpoint,
-      data,
-      {
-        offline: true,
-        locationId: data.locationId,
-      },
-      {
-        endpoint,
-        method: 'POST',
-        entity: 'contact',
-        priority: 'high',
-      }
-    );
-
-    // Clear list cache
-    await this.clearCache('@lpai_cache_GET_/api/contacts/search/lpai');
-    
-    return newContact;
+    if (parts.length >= 3) {
+      // Assume format: "street, city, state zip"
+      addressFields = {
+        address1: parts[0],
+        city: parts[1],
+        // Split state and zip
+        state: parts[2].split(' ')[0],
+        postalCode: parts[2].split(' ')[1] || '',
+        country: 'US' // Default to US
+      };
+    } else {
+      // If we can't parse it, just put it all in address1
+      addressFields = {
+        address1: address
+      };
+    }
   }
+  
+  // Format data for GHL
+  const ghlFormattedData = {
+    ...restData,
+    ...addressFields,
+    name: `${restData.firstName} ${restData.lastName}`, // GHL also wants full name
+    // Notes should go in customFields if you want to keep them
+  };
+  
+  // Add locationId as query parameter
+  const endpoint = `/api/contacts${locationId ? `?locationId=${locationId}` : ''}`;
+  
+  const newContact = await super.post<Contact>(
+    endpoint,
+    ghlFormattedData,
+    {
+      offline: true,
+    },
+    {
+      endpoint: '/api/contacts',
+      method: 'POST',
+      entity: 'contact',
+      priority: 'high',
+    }
+  );
+  
+  return newContact;
+}
 
   /**
    * Update contact - Updates MongoDB & triggers GHL sync

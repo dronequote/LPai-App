@@ -23,7 +23,7 @@ import { libraryService } from '../services/libraryService';
 import { templateService } from '../services/templateService';
 import api from '../lib/api'; // Temporarily import API directly
 import { COLORS, FONT, RADIUS, SHADOW, SIZES } from '../styles/theme';
-import type { Project, Quote, QuoteSection, QuoteLineItem, ProductLibrary, LibraryItem } from '../../packages/types/dist';
+import type { Project, Quote, QuoteSection, QuoteLineItem, ProductLibrary, LibraryItem, Contact } from '../../packages/types/dist';
 import TemplateSelectionModal from '../components/TemplateSelectionModal';
 
 // Global variable to store quote data for navigation (workaround for React Navigation serialization issues)
@@ -36,6 +36,10 @@ type QuoteEditorRouteParams = {
   mode: 'create' | 'edit';
   project?: Project;
   quote?: Quote;
+  contact?: Contact;
+  opportunityId?: string;
+  opportunityTitle?: string;
+  createNewOpportunity?: boolean;
 };
 
 type TabType = 'details' | 'items' | 'pricing' | 'terms';
@@ -48,7 +52,15 @@ export default function QuoteEditorScreen() {
   const navigation = useNavigation();
   const { user } = useAuth();
   
-  const { mode, project, quote: existingQuote } = route.params as QuoteEditorRouteParams;
+  const { 
+    mode, 
+    project, 
+    quote: existingQuote,
+    contact,
+    opportunityId,
+    opportunityTitle,
+    createNewOpportunity 
+  } = route.params as QuoteEditorRouteParams;
 
   // State
   const [loading, setLoading] = useState(false);
@@ -97,10 +109,21 @@ export default function QuoteEditorScreen() {
       }
       
       // Set initial data based on mode
-      if (mode === 'create' && project) {
-        // Creating new quote
-        setTitle(`${project.contactName} - ${project.title} Quote`);
-        setDescription(`Quote for ${project.title}`);
+      if (mode === 'create') {
+        // Creating new quote with contact data passed from QuoteBuilder
+        if (contact) {
+          const contactName = `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 
+                            contact.companyName || 
+                            contact.email || 
+                            'Unknown Customer';
+          
+          setTitle(`${contactName} - ${opportunityTitle || 'Quote'}`);
+          setDescription(`Quote for ${opportunityTitle || contactName}`);
+        } else if (project) {
+          // Legacy support for project-based creation
+          setTitle(`${project.contactName} - ${project.title} Quote`);
+          setDescription(`Quote for ${project.title}`);
+        }
         
         // Create default sections
         const defaultSections: QuoteSection[] = [
@@ -324,6 +347,10 @@ export default function QuoteEditorScreen() {
   const buildQuoteData = () => {
     const calculatedTotals = calculateTotals();
     
+    // Determine contact and project IDs based on what was passed
+    let finalContactId = contact?._id || project?.contactId || existingQuote?.contactId;
+    let finalProjectId = opportunityId || project?._id || existingQuote?.projectId;
+    
     // Ensure all required fields are present
     const quoteData = {
       title: title.trim(),
@@ -338,8 +365,8 @@ export default function QuoteEditorScreen() {
       depositType: depositType || 'percentage',
       depositValue: depositValue || 0,
       depositAmount: calculatedTotals.depositAmount || 0,
-      projectId: project?._id || existingQuote?.projectId,
-      contactId: project?.contactId || existingQuote?.contactId,
+      projectId: finalProjectId,
+      contactId: finalContactId,
       locationId: user?.locationId,
       userId: user?._id,
       // Add calculated totals
@@ -641,6 +668,36 @@ export default function QuoteEditorScreen() {
     addLineItem(sectionId);
   };
 
+  // Get display names for customer info
+  const getCustomerDisplayName = () => {
+    if (contact) {
+      const firstName = contact.firstName || '';
+      const lastName = contact.lastName || '';
+      const fullName = `${firstName} ${lastName}`.trim();
+      return fullName || contact.companyName || contact.email || 'Unknown Customer';
+    }
+    return project?.contactName || existingQuote?.contactName || 'Unknown';
+  };
+
+  const getProjectDisplayName = () => {
+    return opportunityTitle || project?.title || existingQuote?.projectTitle || 'Unknown';
+  };
+
+  // Get customer details for display
+  const getCustomerDetails = () => {
+    if (contact) {
+      return {
+        name: getCustomerDisplayName(),
+        phone: contact.phone || 'No phone',
+        email: contact.email || 'No email',
+        address: contact.address1 ? 
+          `${contact.address1}${contact.address2 ? ' ' + contact.address2 : ''}, ${contact.city || ''} ${contact.state || ''} ${contact.postalCode || ''}`.trim() : 
+          'No address'
+      };
+    }
+    return null;
+  };
+
   // Tab configuration
   const tabs = [
     { id: 'details', label: 'Details', icon: 'document-text-outline' },
@@ -651,6 +708,8 @@ export default function QuoteEditorScreen() {
 
   // Render tab content
   const renderTabContent = () => {
+    const customerDetails = getCustomerDetails();
+    
     switch (activeTab) {
       case 'details':
         return (
@@ -681,20 +740,49 @@ export default function QuoteEditorScreen() {
                 />
               </View>
 
-              {/* Quote Info Card */}
+              {/* Customer Info Card */}
               <View style={styles.infoCard}>
+                <Text style={styles.infoCardTitle}>Customer Information</Text>
+                
                 <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Customer</Text>
+                  <Text style={styles.infoLabel}>Name</Text>
                   <Text style={styles.infoValue}>
-                    {project?.contactName || existingQuote?.contactName || 'Unknown'}
+                    {getCustomerDisplayName()}
                   </Text>
                 </View>
-                <View style={styles.infoRow}>
+                
+                {customerDetails && (
+                  <>
+                    <View style={styles.infoRow}>
+                      <Text style={styles.infoLabel}>Phone</Text>
+                      <Text style={styles.infoValue}>
+                        {customerDetails.phone}
+                      </Text>
+                    </View>
+                    
+                    <View style={styles.infoRow}>
+                      <Text style={styles.infoLabel}>Email</Text>
+                      <Text style={styles.infoValue} numberOfLines={1}>
+                        {customerDetails.email}
+                      </Text>
+                    </View>
+                    
+                    <View style={styles.infoRow}>
+                      <Text style={styles.infoLabel}>Address</Text>
+                      <Text style={styles.infoValue} numberOfLines={2}>
+                        {customerDetails.address}
+                      </Text>
+                    </View>
+                  </>
+                )}
+                
+                <View style={[styles.infoRow, { borderTopWidth: 1, borderTopColor: COLORS.border, paddingTop: 12, marginTop: 8 }]}>
                   <Text style={styles.infoLabel}>Project</Text>
                   <Text style={styles.infoValue}>
-                    {project?.title || existingQuote?.projectTitle || 'Unknown'}
+                    {getProjectDisplayName()}
                   </Text>
                 </View>
+                
                 {existingQuote && (
                   <View style={styles.infoRow}>
                     <Text style={styles.infoLabel}>Quote #</Text>
@@ -1230,21 +1318,28 @@ const styles = StyleSheet.create({
     marginTop: 16,
     ...SHADOW.card,
   },
+  infoCardTitle: {
+    fontSize: FONT.input,
+    fontWeight: '600',
+    color: COLORS.textDark,
+    marginBottom: 12,
+  },
   infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: 12,
   },
   infoLabel: {
     fontSize: FONT.input,
     color: COLORS.textGray,
+    flex: 0.35,
   },
   infoValue: {
     fontSize: FONT.input,
     color: COLORS.textDark,
     fontWeight: '500',
-    flex: 1,
+    flex: 0.65,
     textAlign: 'right',
   },
   

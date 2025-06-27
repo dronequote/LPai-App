@@ -1,5 +1,5 @@
 // src/screens/QuoteBuilderScreen.tsx
-// Updated: 2025-01-19
+// Updated: 2025-06-26
 // Clean iOS-style design with expandable opportunity cards
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
@@ -20,6 +20,7 @@ import {
   Platform,
   Modal,
   ScrollView,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -100,32 +101,87 @@ export default function QuoteBuilderScreen({ navigation }: { navigation: any }) 
   const [showContactSortOptions, setShowContactSortOptions] = useState(false);
   const [showAddContactModal, setShowAddContactModal] = useState(false);
   
+  // Project creation state
+  const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
+  const [showProjectStep, setShowProjectStep] = useState(false);
+  const [projectName, setProjectName] = useState('');
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [contactProjects, setContactProjects] = useState<Project[]>([]);
+  const [creatingProject, setCreatingProject] = useState(false);
+  
   // Animation values
   const sortAnimHeight = useRef(new Animated.Value(0)).current;
   const contactSortAnimHeight = useRef(new Animated.Value(0)).current;
   
   // Load data
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (isRefreshing = false) => {
     if (!user?.locationId) return;
     
     try {
-      setLoading(true);
+      if (!isRefreshing) {
+        setLoading(true);
+      }
       
+      // Clear cache only on refresh
+      if (isRefreshing) {
+        console.log('[QuoteBuilder] Clearing cache...');
+        await Promise.all([
+          quoteService.clearCache(),
+          contactService.clearCache(),
+          projectService.clearCache(),
+        ]);
+      }
+      
+      // Load data - use cache normally, bypass cache on refresh
       const [quotesData, contactsData, opportunitiesData] = await Promise.all([
-        quoteService.list(user.locationId),
-        contactService.list(user.locationId, { limit: 100 }),
-        projectService.list(user.locationId),
+        quoteService.list(user.locationId, isRefreshing ? { cache: false } : {}),
+        contactService.list(user.locationId, { limit: 100, ...(isRefreshing ? { cache: false } : {}) }),
+        projectService.list(user.locationId, isRefreshing ? { cache: false } : {}),
       ]);
       
-      // Filter quotes - only show non-accepted/declined quotes
-      const activeQuotes = quotesData.filter((q: Quote) => 
-        q.status !== 'accepted' && q.status !== 'declined'
-      );
+      // Debug logging
+      console.log('[QuoteBuilder] Raw data loaded:', {
+        quotes: quotesData.length,
+        contacts: contactsData.length,
+        opportunities: opportunitiesData.length,
+        firstQuote: quotesData[0],
+        firstOpportunity: opportunitiesData[0],
+        allQuotes: quotesData.map(q => ({ 
+          id: q._id, 
+          status: q.status, 
+          projectId: q.projectId,
+          quoteNumber: q.quoteNumber 
+        }))
+      });
+      
+      // Update the filter to check for signed status
+      const activeQuotes = quotesData.filter((q: Quote) => {
+        // Check if quote has both signatures
+        const isFullySigned = q.signatures?.customer?.signature && q.signatures?.consultant?.signature;
+        
+        return q.status !== 'accepted' && 
+               q.status !== 'declined' && 
+               q.status !== 'signed' &&
+               !isFullySigned;  // Also check signature fields
+      });
+      
+      console.log('[QuoteBuilder] Filtered quotes:', {
+        totalQuotes: quotesData.length,
+        activeQuotes: activeQuotes.length,
+        filteredOut: quotesData.length - activeQuotes.length,
+        statuses: quotesData.map(q => ({ id: q._id, status: q.status }))
+      });
       
       // Filter opportunities - only show open ones
       const openOpportunities = opportunitiesData.filter((p: Project) => 
         p.status === 'open'
       );
+      
+      console.log('[QuoteBuilder] Open opportunities:', {
+        total: opportunitiesData.length,
+        open: openOpportunities.length,
+        statuses: opportunitiesData.map(p => ({ id: p._id, status: p.status, title: p.title }))
+      });
       
       setQuotes(activeQuotes);
       setContacts(contactsData);
@@ -140,77 +196,113 @@ export default function QuoteBuilderScreen({ navigation }: { navigation: any }) 
     }
   }, [user?.locationId]);
 
+  // Pull to refresh handler
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadData(true);
+  }, [loadData]);
+
   useEffect(() => {
     loadData();
   }, [loadData]);
+  
 
   // Handle create contact
-  const handleCreateContact = async (contactData: any) => {
+  const handleCreateContact = async (newContact: any) => {
     try {
-      // Add locationId to the contact data
-      const newContact = await contactService.create({
-        ...contactData,
-        locationId: user?.locationId,
-      });
+      console.log('[QuoteBuilderScreen] New contact created:', newContact);
       
       // Close the add contact modal
       setShowAddContactModal(false);
       
-      // Reload contacts to include the new one
-      await loadData();
+      // The AddContactForm already created the contact and passed it here
+      // Extract the contact from the response (API returns { contact: {...} })
+      const contact = newContact.contact || newContact;
       
-      // Show contact picker and auto-select the new contact
-      setShowContactPicker(true);
-      
-      // Give a slight delay to ensure modal is open and data is loaded
-      setTimeout(() => {
-        handleSelectContact(newContact);
-      }, 300);
+      // Set the selected contact and show project step
+      setSelectedContact(contact);
+      setShowProjectStep(true);
+      setProjectName('');
+      setSelectedProjectId(null);
+      setContactProjects([]);
       
     } catch (error) {
-      console.error('Failed to create contact:', error);
-      Alert.alert('Error', 'Failed to create contact. Please try again.');
+      console.error('Failed to handle new contact:', error);
+      Alert.alert('Error', 'Failed to process new contact. Please try again.');
     }
   };
 
-  // Group quotes by opportunity
+  // Group by opportunities (projects) - show ALL open opportunities
   const opportunityGroups = useMemo(() => {
     const groups: { [key: string]: OpportunityGroup } = {};
     
+    console.log('[QuoteBuilder] Starting grouping with:', {
+      quotesCount: quotes.length,
+      contactsCount: contacts.length,
+      opportunitiesCount: opportunities.length
+    });
+    
+    // First, create groups for all open opportunities
+    opportunities.forEach(opportunity => {
+      const contact = contacts.find(c => c._id === opportunity.contactId);
+      if (!contact) {
+        console.warn('[QuoteBuilder] Opportunity has no matching contact:', {
+          opportunityId: opportunity._id,
+          contactId: opportunity.contactId
+        });
+        return;
+      }
+      
+      groups[opportunity._id] = {
+        id: opportunity._id,
+        contactId: contact._id,
+        contactName: `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || contact.companyName || contact.email || 'Unknown',
+        contactCompany: contact.companyName,
+        opportunityTitle: opportunity.title || 'Untitled Project',
+        quotes: [],
+        totalAmount: 0,
+        hasViewed: false,
+        hasPresented: false,
+      };
+    });
+    
+    // Then, add quotes to their respective opportunities
     quotes.forEach(quote => {
-      const contact = contacts.find(c => c._id === quote.contactId);
-      if (!contact) return;
+      // Use opportunityId OR projectId (for backward compatibility)
+      const opportunityId = quote.opportunityId || quote.projectId;
       
-      // Use opportunity ID or create a fake one for quotes without opportunities
-      const opportunityId = quote.opportunityId || `contact-${contact._id}`;
-      const opportunity = opportunities.find(o => o._id === opportunityId);
-      
-      if (!groups[opportunityId]) {
-        groups[opportunityId] = {
-          id: opportunityId,
-          contactId: contact._id,
-          contactName: `${contact.firstName} ${contact.lastName}`,
-          contactCompany: contact.companyName,
-          opportunityTitle: opportunity?.title || quote.title || 'General Quote',
-          quotes: [],
-          totalAmount: 0,
-          hasViewed: false,
-          hasPresented: false,
-        };
-      }
-      
-      groups[opportunityId].quotes.push(quote);
-      groups[opportunityId].totalAmount += quote.totalAmount || 0;
-      
-      if (quote.status === 'viewed' || quote.viewedAt) {
-        groups[opportunityId].hasViewed = true;
-      }
-      if (quote.status === 'presented' || quote.presentedAt) {
-        groups[opportunityId].hasPresented = true;
+      if (opportunityId && groups[opportunityId]) {
+        groups[opportunityId].quotes.push(quote);
+        // Handle both totalAmount and total fields
+        const quoteAmount = quote.totalAmount || quote.total || 0;
+        groups[opportunityId].totalAmount += quoteAmount;
+        
+        if (quote.status === 'viewed' || quote.viewedAt) {
+          groups[opportunityId].hasViewed = true;
+        }
+        if (quote.status === 'presented' || quote.presentedAt) {
+          groups[opportunityId].hasPresented = true;
+        }
+      } else {
+        console.warn('[QuoteBuilder] Quote has no matching opportunity:', {
+          quoteId: quote._id,
+          opportunityId,
+          projectId: quote.projectId
+        });
       }
     });
     
-    return Object.values(groups);
+    const result = Object.values(groups);
+    console.log('[QuoteBuilder] Grouping complete:', {
+      groupsCount: result.length,
+      groups: result.map(g => ({ 
+        id: g.id, 
+        title: g.opportunityTitle, 
+        quotesCount: g.quotes.length 
+      }))
+    });
+    
+    return result;
   }, [quotes, contacts, opportunities]);
 
   // Apply filters and search
@@ -294,6 +386,7 @@ export default function QuoteBuilderScreen({ navigation }: { navigation: any }) 
         mode: 'create',
         contact,
         opportunityId: group.id,
+        opportunityTitle: group.opportunityTitle,
         createNewOpportunity: false,
       });
     } else {
@@ -303,53 +396,74 @@ export default function QuoteBuilderScreen({ navigation }: { navigation: any }) 
   };
 
   // Handle contact selection from picker
-  const handleSelectContact = (contact: Contact) => {
-    setShowContactPicker(false);
-    setContactSearchQuery('');
+  const handleSelectContact = async (contact: Contact) => {
+    console.log('[QuoteBuilder] Contact selected:', contact);
     
-    // Check if contact has existing opportunities
-    const contactOpportunities = opportunities.filter(o => o.contactId === contact._id);
+    // Set the selected contact
+    setSelectedContact(contact);
     
-    if (contactOpportunities.length > 0) {
-      // Show opportunity picker
-      Alert.alert(
-        'Select Project',
-        'Would you like to add this quote to an existing project or create a new one?',
-        [
-          {
-            text: 'New Project',
-            onPress: () => {
-              navigation.navigate('QuoteEditor', {
-                mode: 'create',
-                contact,
-                createNewOpportunity: true,
-              });
-            },
-          },
-          ...contactOpportunities.map(opp => ({
-            text: opp.title || 'Unnamed Project',
-            onPress: () => {
-              navigation.navigate('QuoteEditor', {
-                mode: 'create',
-                contact,
-                opportunityId: opp._id,
-                createNewOpportunity: false,
-              });
-            },
-          })),
-          {
-            text: 'Cancel',
-            style: 'cancel',
-          },
-        ]
-      );
-    } else {
-      // Create new opportunity
+    // Load existing projects for this contact
+    const contactOpportunities = opportunities.filter(o => o.contactId === contact._id && o.status === 'open');
+    setContactProjects(contactOpportunities);
+    
+    // Show project step
+    setShowProjectStep(true);
+    setProjectName('');
+    setSelectedProjectId(null);
+  };
+
+  // Handle project creation/selection
+  const handleProjectContinue = async () => {
+    if (!selectedContact) return;
+    
+    try {
+      let finalProjectId = selectedProjectId;
+      let finalProjectTitle = '';
+      
+      // If creating new project
+      if (!selectedProjectId && projectName.trim()) {
+        setCreatingProject(true);
+        
+        // Create the project/opportunity
+        const newProject = await projectService.create({
+          title: projectName.trim(),
+          contactId: selectedContact._id,
+          locationId: user?.locationId,
+          status: 'open',
+          monetaryValue: 0,
+        });
+        
+        console.log('[QuoteBuilder] Created new project:', newProject);
+        finalProjectId = newProject._id;
+        finalProjectTitle = newProject.title;
+      } else if (selectedProjectId) {
+        // Using existing project
+        const selectedProject = contactProjects.find(p => p._id === selectedProjectId);
+        finalProjectTitle = selectedProject?.title || '';
+      }
+      
+      // Reset modal state
+      setShowContactPicker(false);
+      setShowProjectStep(false);
+      setSelectedContact(null);
+      setProjectName('');
+      setSelectedProjectId(null);
+      setContactSearchQuery('');
+      
+      // Navigate to quote editor
       navigation.navigate('QuoteEditor', {
         mode: 'create',
-        contact,
-        createNewOpportunity: true,
+        contact: selectedContact,
+        opportunityId: finalProjectId,
+        opportunityTitle: finalProjectTitle,
+        createNewOpportunity: false,
       });
+      
+    } catch (error) {
+      console.error('[QuoteBuilder] Failed to create project:', error);
+      Alert.alert('Error', 'Failed to create project. Please try again.');
+    } finally {
+      setCreatingProject(false);
     }
   };
 
@@ -481,7 +595,7 @@ export default function QuoteBuilderScreen({ navigation }: { navigation: any }) 
           <View style={styles.statDivider} />
           <View style={styles.statItem}>
             <Text style={styles.statValue}>
-              ${(group.totalAmount / group.quotes.length).toLocaleString()}
+              ${group.quotes.length > 0 ? (group.totalAmount / group.quotes.length).toLocaleString() : '0'}
             </Text>
             <Text style={styles.statLabel}>Avg Value</Text>
           </View>
@@ -490,67 +604,82 @@ export default function QuoteBuilderScreen({ navigation }: { navigation: any }) 
         {/* Expanded content */}
         {isExpanded && (
           <View style={styles.expandedContent}>
-            {group.quotes.map((quote, index) => (
-              <TouchableOpacity
-                key={quote._id}
-                style={[styles.quoteItem, index === 0 && styles.firstQuoteItem]}
-                onPress={() => handleEditQuote(quote)}
-              >
-                <View style={styles.quoteItemHeader}>
-                  <View>
-                    <Text style={styles.quoteNumber}>{quote.quoteNumber}</Text>
-                    <Text style={styles.quoteTitle}>{quote.title || 'Untitled'}</Text>
-                  </View>
-                  <View style={styles.quoteItemRight}>
-                    <Text style={styles.quoteAmount}>${(quote.totalAmount || 0).toLocaleString()}</Text>
-                    <View style={[styles.statusBadge, { backgroundColor: STATUS_COLORS[quote.status] + '20' }]}>
-                      <Text style={[styles.statusText, { color: STATUS_COLORS[quote.status] }]}>
-                        {quote.status}
-                      </Text>
+            {group.quotes.length === 0 ? (
+              <View style={styles.noQuotesContainer}>
+                <Text style={styles.noQuotesText}>No quotes yet</Text>
+                <TouchableOpacity 
+                  style={styles.addFirstQuoteButton}
+                  onPress={() => handleCreateQuote(group)}
+                >
+                  <Ionicons name="add" size={20} color={COLORS.white} />
+                  <Text style={styles.addFirstQuoteText}>Create First Quote</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <>
+                {group.quotes.map((quote, index) => (
+                  <TouchableOpacity
+                    key={quote._id}
+                    style={[styles.quoteItem, index === 0 && styles.firstQuoteItem]}
+                    onPress={() => handleEditQuote(quote)}
+                  >
+                    <View style={styles.quoteItemHeader}>
+                      <View>
+                        <Text style={styles.quoteNumber}>{quote.quoteNumber}</Text>
+                        <Text style={styles.quoteTitle}>{quote.title || 'Untitled'}</Text>
+                      </View>
+                      <View style={styles.quoteItemRight}>
+                        <Text style={styles.quoteAmount}>${((quote.totalAmount || quote.total) || 0).toLocaleString()}</Text>
+                        <View style={[styles.statusBadge, { backgroundColor: STATUS_COLORS[quote.status] + '20' }]}>
+                          <Text style={[styles.statusText, { color: STATUS_COLORS[quote.status] }]}>
+                            {quote.status}
+                          </Text>
+                        </View>
+                      </View>
                     </View>
-                  </View>
-                </View>
+                    
+                    <View style={styles.quoteActions}>
+                      {quote.status === 'draft' && (
+                        <TouchableOpacity 
+                          style={styles.actionButton}
+                          onPress={() => handleQuoteAction(quote, 'send')}
+                        >
+                          <Ionicons name="send" size={16} color={COLORS.accent} />
+                          <Text style={styles.actionText}>Send</Text>
+                        </TouchableOpacity>
+                      )}
+                      <TouchableOpacity 
+                        style={styles.actionButton}
+                        onPress={() => handleQuoteAction(quote, 'present')}
+                      >
+                        <Ionicons name="tv" size={16} color={COLORS.accent} />
+                        <Text style={styles.actionText}>Present</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity 
+                        style={styles.actionButton}
+                        onPress={() => handleQuoteAction(quote, 'duplicate')}
+                      >
+                        <Ionicons name="copy" size={16} color={COLORS.textGray} />
+                      </TouchableOpacity>
+                      <TouchableOpacity 
+                        style={styles.actionButton}
+                        onPress={() => handleQuoteAction(quote, 'delete')}
+                      >
+                        <Ionicons name="trash" size={16} color={COLORS.error} />
+                      </TouchableOpacity>
+                    </View>
+                  </TouchableOpacity>
+                ))}
                 
-                <View style={styles.quoteActions}>
-                  {quote.status === 'draft' && (
-                    <TouchableOpacity 
-                      style={styles.actionButton}
-                      onPress={() => handleQuoteAction(quote, 'send')}
-                    >
-                      <Ionicons name="send" size={16} color={COLORS.accent} />
-                      <Text style={styles.actionText}>Send</Text>
-                    </TouchableOpacity>
-                  )}
-                  <TouchableOpacity 
-                    style={styles.actionButton}
-                    onPress={() => handleQuoteAction(quote, 'present')}
-                  >
-                    <Ionicons name="tv" size={16} color={COLORS.accent} />
-                    <Text style={styles.actionText}>Present</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity 
-                    style={styles.actionButton}
-                    onPress={() => handleQuoteAction(quote, 'duplicate')}
-                  >
-                    <Ionicons name="copy" size={16} color={COLORS.textGray} />
-                  </TouchableOpacity>
-                  <TouchableOpacity 
-                    style={styles.actionButton}
-                    onPress={() => handleQuoteAction(quote, 'delete')}
-                  >
-                    <Ionicons name="trash" size={16} color={COLORS.error} />
-                  </TouchableOpacity>
-                </View>
-              </TouchableOpacity>
-            ))}
-            
-            <TouchableOpacity 
-              style={styles.addQuoteButton}
-              onPress={() => handleCreateQuote(group)}
-            >
-              <Ionicons name="add" size={20} color={COLORS.accent} />
-              <Text style={styles.addQuoteText}>Add Quote to Project</Text>
-            </TouchableOpacity>
+                <TouchableOpacity 
+                  style={styles.addQuoteButton}
+                  onPress={() => handleCreateQuote(group)}
+                >
+                  <Ionicons name="add" size={20} color={COLORS.accent} />
+                  <Text style={styles.addQuoteText}>Add Another Quote</Text>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         )}
       </View>
@@ -628,213 +757,337 @@ export default function QuoteBuilderScreen({ navigation }: { navigation: any }) 
         visible={showContactPicker}
         animationType="slide"
         presentationStyle="pageSheet"
-        onRequestClose={() => setShowContactPicker(false)}
+        onRequestClose={() => {
+          setShowContactPicker(false);
+          setShowProjectStep(false);
+          setSelectedContact(null);
+          setProjectName('');
+          setSelectedProjectId(null);
+        }}
       >
         <SafeAreaView style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => {
-              setShowContactPicker(false);
-              setContactSearchQuery('');
-              setShowContactSortOptions(false);
-            }}>
-              <Ionicons name="close" size={24} color={COLORS.textDark} />
-            </TouchableOpacity>
-            <Text style={styles.modalTitle}>Select Contact</Text>
-            <View style={{ width: 24 }} />
-          </View>
-          
-          <View style={styles.modalSearch}>
-            <Ionicons name="search" size={20} color={COLORS.textGray} />
-            <TextInput
-              style={styles.modalSearchInput}
-              placeholder="Search contacts..."
-              placeholderTextColor={COLORS.textGray}
-              value={contactSearchQuery}
-              onChangeText={setContactSearchQuery}
-              autoFocus
-            />
-            {contactSearchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => setContactSearchQuery('')}>
-                <Ionicons name="close-circle" size={20} color={COLORS.textGray} />
-              </TouchableOpacity>
-            )}
-          </View>
-          
-          {/* Contact Filters */}
-          <View style={styles.contactFilters}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>
-              <TouchableOpacity
-                style={[styles.contactFilterPill, contactFilter === 'all' && styles.contactFilterActive]}
-                onPress={() => setContactFilter('all')}
-              >
-                <Text style={[styles.contactFilterText, contactFilter === 'all' && styles.contactFilterTextActive]}>
-                  All
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.contactFilterPill, contactFilter === 'withProjects' && styles.contactFilterActive]}
-                onPress={() => setContactFilter('withProjects')}
-              >
-                <Text style={[styles.contactFilterText, contactFilter === 'withProjects' && styles.contactFilterTextActive]}>
-                  With Projects
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.contactFilterPill, contactFilter === 'withoutProjects' && styles.contactFilterActive]}
-                onPress={() => setContactFilter('withoutProjects')}
-              >
-                <Text style={[styles.contactFilterText, contactFilter === 'withoutProjects' && styles.contactFilterTextActive]}>
-                  New Customers
-                </Text>
-              </TouchableOpacity>
-            </ScrollView>
-            
-            {/* Sort dropdown */}
-            <TouchableOpacity 
-              style={styles.contactSortButton}
-              onPress={handleToggleContactSort}
-            >
-              <Ionicons name="swap-vertical" size={18} color={COLORS.accent} />
-            </TouchableOpacity>
-          </View>
-          
-          {/* Sort Options Dropdown */}
-          <Animated.View style={[styles.contactSortOptions, { height: contactSortAnimHeight }]}>
-            <TouchableOpacity
-              style={[styles.contactSortOption, contactSort === 'name' && styles.contactSortOptionActive]}
-              onPress={() => {
-                setContactSort('name');
-                handleToggleContactSort();
-              }}
-            >
-              <Ionicons name="text" size={18} color={contactSort === 'name' ? COLORS.accent : COLORS.textGray} />
-              <Text style={[styles.contactSortOptionText, contactSort === 'name' && styles.contactSortOptionTextActive]}>
-                Name (A-Z)
-              </Text>
-              {contactSort === 'name' && (
-                <Ionicons name="checkmark" size={18} color={COLORS.accent} style={styles.sortCheck} />
-              )}
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={[styles.contactSortOption, contactSort === 'company' && styles.contactSortOptionActive]}
-              onPress={() => {
-                setContactSort('company');
-                handleToggleContactSort();
-              }}
-            >
-              <Ionicons name="briefcase" size={18} color={contactSort === 'company' ? COLORS.accent : COLORS.textGray} />
-              <Text style={[styles.contactSortOptionText, contactSort === 'company' && styles.contactSortOptionTextActive]}>
-                Company
-              </Text>
-              {contactSort === 'company' && (
-                <Ionicons name="checkmark" size={18} color={COLORS.accent} style={styles.sortCheck} />
-              )}
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={[styles.contactSortOption, contactSort === 'recent' && styles.contactSortOptionActive]}
-              onPress={() => {
-                setContactSort('recent');
-                handleToggleContactSort();
-              }}
-            >
-              <Ionicons name="time" size={18} color={contactSort === 'recent' ? COLORS.accent : COLORS.textGray} />
-              <Text style={[styles.contactSortOptionText, contactSort === 'recent' && styles.contactSortOptionTextActive]}>
-                Recently Updated
-              </Text>
-              {contactSort === 'recent' && (
-                <Ionicons name="checkmark" size={18} color={COLORS.accent} style={styles.sortCheck} />
-              )}
-            </TouchableOpacity>
-          </Animated.View>
-          
-          {/* Create Contact Button */}
-          <TouchableOpacity 
-            style={styles.createContactButton}
-            onPress={() => {
-              setShowContactPicker(false);
-              setContactSearchQuery('');
-              setShowAddContactModal(true);
-            }}
-          >
-            <View style={styles.createContactIcon}>
-              <Ionicons name="add" size={24} color={COLORS.white} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.createContactText}>Create New Contact</Text>
-              <Text style={styles.createContactSubtext}>Add a new customer to your contacts</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={COLORS.textGray} />
-          </TouchableOpacity>
-          
-          <FlatList
-            data={filteredContacts}
-            keyExtractor={(item) => item._id}
-            renderItem={({ item }) => {
-              const hasProjects = opportunities.some(o => o.contactId === item._id);
+          {!showProjectStep ? (
+            // Contact selection step
+            <>
+              <View style={styles.modalHeader}>
+                <TouchableOpacity onPress={() => {
+                  setShowContactPicker(false);
+                  setContactSearchQuery('');
+                  setShowContactSortOptions(false);
+                }}>
+                  <Ionicons name="close" size={24} color={COLORS.textDark} />
+                </TouchableOpacity>
+                <Text style={styles.modalTitle}>Select Contact</Text>
+                <View style={{ width: 24 }} />
+              </View>
               
-              // Handle name display like ContactsScreen
-              const firstName = item.firstName || '';
-              const lastName = item.lastName || '';
-              const fullName = `${firstName} ${lastName}`.trim();
-              const hasName = Boolean(firstName || lastName);
+              <View style={styles.modalSearch}>
+                <Ionicons name="search" size={20} color={COLORS.textGray} />
+                <TextInput
+                  style={styles.modalSearchInput}
+                  placeholder="Search contacts..."
+                  placeholderTextColor={COLORS.textGray}
+                  value={contactSearchQuery}
+                  onChangeText={setContactSearchQuery}
+                  autoFocus
+                />
+                {contactSearchQuery.length > 0 && (
+                  <TouchableOpacity onPress={() => setContactSearchQuery('')}>
+                    <Ionicons name="close-circle" size={20} color={COLORS.textGray} />
+                  </TouchableOpacity>
+                )}
+              </View>
               
-              // Get initials
-              const initials = firstName && lastName 
-                ? `${firstName[0]}${lastName[0]}`.toUpperCase()
-                : (firstName || lastName || item.companyName || item.email || '?')[0].toUpperCase();
-              
-              // Determine display name
-              const displayName = fullName || item.companyName || item.email || 'No Name';
-              
-              return (
-                <TouchableOpacity
-                  style={styles.contactItem}
-                  onPress={() => handleSelectContact(item)}
+              {/* Contact Filters */}
+              <View style={styles.contactFilters}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>
+                  <TouchableOpacity
+                    style={[styles.contactFilterPill, contactFilter === 'all' && styles.contactFilterActive]}
+                    onPress={() => setContactFilter('all')}
+                  >
+                    <Text style={[styles.contactFilterText, contactFilter === 'all' && styles.contactFilterTextActive]}>
+                      All
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.contactFilterPill, contactFilter === 'withProjects' && styles.contactFilterActive]}
+                    onPress={() => setContactFilter('withProjects')}
+                  >
+                    <Text style={[styles.contactFilterText, contactFilter === 'withProjects' && styles.contactFilterTextActive]}>
+                      With Projects
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.contactFilterPill, contactFilter === 'withoutProjects' && styles.contactFilterActive]}
+                    onPress={() => setContactFilter('withoutProjects')}
+                  >
+                    <Text style={[styles.contactFilterText, contactFilter === 'withoutProjects' && styles.contactFilterTextActive]}>
+                      New Customers
+                    </Text>
+                  </TouchableOpacity>
+                </ScrollView>
+                
+                {/* Sort dropdown */}
+                <TouchableOpacity 
+                  style={styles.contactSortButton}
+                  onPress={handleToggleContactSort}
                 >
-                  <View style={[styles.contactAvatar, !hasName && styles.contactAvatarGray]}>
+                  <Ionicons name="swap-vertical" size={18} color={COLORS.accent} />
+                </TouchableOpacity>
+              </View>
+              
+              {/* Sort Options Dropdown */}
+              <Animated.View style={[styles.contactSortOptions, { height: contactSortAnimHeight }]}>
+                <TouchableOpacity
+                  style={[styles.contactSortOption, contactSort === 'name' && styles.contactSortOptionActive]}
+                  onPress={() => {
+                    setContactSort('name');
+                    handleToggleContactSort();
+                  }}
+                >
+                  <Ionicons name="text" size={18} color={contactSort === 'name' ? COLORS.accent : COLORS.textGray} />
+                  <Text style={[styles.contactSortOptionText, contactSort === 'name' && styles.contactSortOptionTextActive]}>
+                    Name (A-Z)
+                  </Text>
+                  {contactSort === 'name' && (
+                    <Ionicons name="checkmark" size={18} color={COLORS.accent} style={styles.sortCheck} />
+                  )}
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={[styles.contactSortOption, contactSort === 'company' && styles.contactSortOptionActive]}
+                  onPress={() => {
+                    setContactSort('company');
+                    handleToggleContactSort();
+                  }}
+                >
+                  <Ionicons name="briefcase" size={18} color={contactSort === 'company' ? COLORS.accent : COLORS.textGray} />
+                  <Text style={[styles.contactSortOptionText, contactSort === 'company' && styles.contactSortOptionTextActive]}>
+                    Company
+                  </Text>
+                  {contactSort === 'company' && (
+                    <Ionicons name="checkmark" size={18} color={COLORS.accent} style={styles.sortCheck} />
+                  )}
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={[styles.contactSortOption, contactSort === 'recent' && styles.contactSortOptionActive]}
+                  onPress={() => {
+                    setContactSort('recent');
+                    handleToggleContactSort();
+                  }}
+                >
+                  <Ionicons name="time" size={18} color={contactSort === 'recent' ? COLORS.accent : COLORS.textGray} />
+                  <Text style={[styles.contactSortOptionText, contactSort === 'recent' && styles.contactSortOptionTextActive]}>
+                    Recently Updated
+                  </Text>
+                  {contactSort === 'recent' && (
+                    <Ionicons name="checkmark" size={18} color={COLORS.accent} style={styles.sortCheck} />
+                  )}
+                </TouchableOpacity>
+              </Animated.View>
+              
+              {/* Create Contact Button */}
+              <TouchableOpacity 
+                style={styles.createContactButton}
+                onPress={() => {
+                  setShowContactPicker(false);
+                  setContactSearchQuery('');
+                  setShowAddContactModal(true);
+                }}
+              >
+                <View style={styles.createContactIcon}>
+                  <Ionicons name="add" size={24} color={COLORS.white} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.createContactText}>Create New Contact</Text>
+                  <Text style={styles.createContactSubtext}>Add a new customer to your contacts</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={COLORS.textGray} />
+              </TouchableOpacity>
+              
+              <FlatList
+                data={filteredContacts}
+                keyExtractor={(item) => item._id}
+                renderItem={({ item }) => {
+                  const hasProjects = opportunities.some(o => o.contactId === item._id);
+                  
+                  // Handle name display like ContactsScreen
+                  const firstName = item.firstName || '';
+                  const lastName = item.lastName || '';
+                  const fullName = `${firstName} ${lastName}`.trim();
+                  const hasName = Boolean(firstName || lastName);
+                  
+                  // Get initials
+                  const initials = firstName && lastName 
+                    ? `${firstName[0]}${lastName[0]}`.toUpperCase()
+                    : (firstName || lastName || item.companyName || item.email || '?')[0].toUpperCase();
+                  
+                  // Determine display name
+                  const displayName = fullName || item.companyName || item.email || 'No Name';
+                  
+                  return (
+                    <TouchableOpacity
+                      style={styles.contactItem}
+                      onPress={() => handleSelectContact(item)}
+                    >
+                      <View style={[styles.contactAvatar, !hasName && styles.contactAvatarGray]}>
+                        <Text style={styles.contactAvatarText}>
+                          {initials}
+                        </Text>
+                      </View>
+                      <View style={styles.contactDetails}>
+                        <Text style={styles.contactName}>
+                          {displayName}
+                        </Text>
+                        {item.email && displayName !== item.email && (
+                          <View style={styles.contactDetailRow}>
+                            <Ionicons name="mail-outline" size={14} color={COLORS.textGray} />
+                            <Text style={styles.contactDetailText} numberOfLines={1}>
+                              {item.email}
+                            </Text>
+                          </View>
+                        )}
+                        {item.phone && (
+                          <View style={styles.contactDetailRow}>
+                            <Ionicons name="call-outline" size={14} color={COLORS.textGray} />
+                            <Text style={styles.contactDetailText}>{item.phone}</Text>
+                          </View>
+                        )}
+                      </View>
+                      {hasProjects && (
+                        <View style={styles.hasProjectsBadge}>
+                          <Ionicons name="folder" size={14} color={COLORS.accent} />
+                        </View>
+                      )}
+                      <Ionicons name="chevron-forward" size={20} color={COLORS.textGray} />
+                    </TouchableOpacity>
+                  );
+                }}
+                ListEmptyComponent={
+                  <View style={styles.emptyContactList}>
+                    <Text style={styles.emptyContactText}>
+                      {contactSearchQuery ? 'No contacts found' : 'No contacts available'}
+                    </Text>
+                  </View>
+                }
+                contentContainerStyle={filteredContacts.length === 0 ? styles.emptyContactListContainer : undefined}
+              />
+            </>
+          ) : (
+            // Project creation/selection step
+            <KeyboardAvoidingView 
+              style={{ flex: 1 }}
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            >
+              <View style={styles.modalHeader}>
+                <TouchableOpacity onPress={() => {
+                  setShowProjectStep(false);
+                  setSelectedContact(null);
+                  setProjectName('');
+                  setSelectedProjectId(null);
+                }}>
+                  <Ionicons name="arrow-back" size={24} color={COLORS.textDark} />
+                </TouchableOpacity>
+                <Text style={styles.modalTitle}>Select Project</Text>
+                <View style={{ width: 24 }} />
+              </View>
+              
+              {/* Selected Contact Info */}
+              {selectedContact && (
+                <View style={styles.selectedContactInfo}>
+                  <View style={styles.contactAvatar}>
                     <Text style={styles.contactAvatarText}>
-                      {initials}
+                      {(selectedContact.firstName?.[0] || '') + (selectedContact.lastName?.[0] || '')}
                     </Text>
                   </View>
                   <View style={styles.contactDetails}>
                     <Text style={styles.contactName}>
-                      {displayName}
+                      {`${selectedContact.firstName || ''} ${selectedContact.lastName || ''}`.trim() || 
+                       selectedContact.companyName || 
+                       selectedContact.email || 
+                       'Unknown Contact'}
                     </Text>
-                    {item.email && displayName !== item.email && (
-                      <View style={styles.contactDetailRow}>
-                        <Ionicons name="mail-outline" size={14} color={COLORS.textGray} />
-                        <Text style={styles.contactDetailText} numberOfLines={1}>
-                          {item.email}
-                        </Text>
-                      </View>
-                    )}
-                    {item.phone && (
-                      <View style={styles.contactDetailRow}>
-                        <Ionicons name="call-outline" size={14} color={COLORS.textGray} />
-                        <Text style={styles.contactDetailText}>{item.phone}</Text>
-                      </View>
+                    {selectedContact.companyName && (
+                      <Text style={styles.contactDetailText}>{selectedContact.companyName}</Text>
                     )}
                   </View>
-                  {hasProjects && (
-                    <View style={styles.hasProjectsBadge}>
-                      <Ionicons name="folder" size={14} color={COLORS.accent} />
-                    </View>
+                </View>
+              )}
+              
+              <ScrollView style={styles.projectContent}>
+                {/* New Project Input */}
+                <View style={styles.projectSection}>
+                  <Text style={styles.projectSectionTitle}>Create New Project</Text>
+                  <TextInput
+                    style={styles.projectInput}
+                    placeholder="Enter project name (e.g., Kitchen Remodel)"
+                    placeholderTextColor={COLORS.textGray}
+                    value={projectName}
+                    onChangeText={setProjectName}
+                    autoFocus
+                  />
+                </View>
+                
+                {/* Existing Projects */}
+                {contactProjects.length > 0 && (
+                  <View style={styles.projectSection}>
+                    <Text style={styles.projectSectionTitle}>Or Select Existing Project</Text>
+                    {contactProjects.map((project) => (
+                      <TouchableOpacity
+                        key={project._id}
+                        style={[
+                          styles.projectOption,
+                          selectedProjectId === project._id && styles.projectOptionSelected
+                        ]}
+                        onPress={() => {
+                          setSelectedProjectId(project._id);
+                          setProjectName(''); // Clear new project name when selecting existing
+                        }}
+                      >
+                        <View style={styles.projectOptionLeft}>
+                          <Ionicons 
+                            name={selectedProjectId === project._id ? "radio-button-on" : "radio-button-off"} 
+                            size={20} 
+                            color={selectedProjectId === project._id ? COLORS.accent : COLORS.textGray} 
+                          />
+                          <View style={styles.projectOptionInfo}>
+                            <Text style={styles.projectOptionTitle}>{project.title}</Text>
+                            <Text style={styles.projectOptionMeta}>
+                              {project.monetaryValue ? `$${project.monetaryValue.toLocaleString()}` : 'No value set'}
+                            </Text>
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+              </ScrollView>
+              
+              {/* Continue Button */}
+              <View style={styles.projectActionContainer}>
+                <TouchableOpacity
+                  style={[
+                    styles.continueButton,
+                    (!projectName.trim() && !selectedProjectId) && styles.continueButtonDisabled
+                  ]}
+                  onPress={handleProjectContinue}
+                  disabled={!projectName.trim() && !selectedProjectId || creatingProject}
+                >
+                  {creatingProject ? (
+                    <ActivityIndicator color={COLORS.white} />
+                  ) : (
+                    <>
+                      <Text style={styles.continueButtonText}>
+                        {selectedProjectId ? 'Continue with Selected Project' : 'Create Project & Continue'}
+                      </Text>
+                      <Ionicons name="arrow-forward" size={20} color={COLORS.white} />
+                    </>
                   )}
-                  <Ionicons name="chevron-forward" size={20} color={COLORS.textGray} />
                 </TouchableOpacity>
-              );
-            }}
-            ListEmptyComponent={
-              <View style={styles.emptyContactList}>
-                <Text style={styles.emptyContactText}>
-                  {contactSearchQuery ? 'No contacts found' : 'No contacts available'}
-                </Text>
               </View>
-            }
-            contentContainerStyle={filteredContacts.length === 0 ? styles.emptyContactListContainer : undefined}
-          />
+            </KeyboardAvoidingView>
+          )}
         </SafeAreaView>
       </Modal>
     );
@@ -844,13 +1097,13 @@ export default function QuoteBuilderScreen({ navigation }: { navigation: any }) 
   const renderEmpty = () => (
     <View style={styles.emptyContainer}>
       <Ionicons name="document-text-outline" size={64} color={COLORS.textLight} />
-      <Text style={styles.emptyText}>No active quotes</Text>
+      <Text style={styles.emptyText}>No open projects</Text>
       <Text style={styles.emptySubtext}>
-        Create quotes for your contacts to get started
+        Create a new project to start bidding
       </Text>
       <TouchableOpacity style={styles.createButton} onPress={() => handleCreateQuote()}>
         <Ionicons name="add" size={20} color={COLORS.white} />
-        <Text style={styles.createButtonText}>Create Quote</Text>
+        <Text style={styles.createButtonText}>Create Project</Text>
       </TouchableOpacity>
     </View>
   );
@@ -973,7 +1226,7 @@ export default function QuoteBuilderScreen({ navigation }: { navigation: any }) 
         <View style={styles.statDivider} />
         <View style={styles.stat}>
           <Text style={styles.mainStatValue}>
-            ${quotes.reduce((sum, q) => sum + (q.totalAmount || 0), 0).toLocaleString()}
+            ${quotes.reduce((sum, q) => sum + ((q.totalAmount || q.total) || 0), 0).toLocaleString()}
           </Text>
           <Text style={styles.mainStatLabel}>Total Value</Text>
         </View>
@@ -988,7 +1241,13 @@ export default function QuoteBuilderScreen({ navigation }: { navigation: any }) 
           keyExtractor={(item) => item.id}
           renderItem={renderOpportunityCard}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={loadData} />
+            <RefreshControl 
+              refreshing={refreshing} 
+              onRefresh={handleRefresh}
+              tintColor={COLORS.accent}
+              title="Pull to refresh"
+              titleColor={COLORS.textGray}
+            />
           }
           contentContainerStyle={styles.listContainer}
           showsVerticalScrollIndicator={false}
@@ -1326,6 +1585,33 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   
+  // No quotes styles
+  noQuotesContainer: {
+    padding: 24,
+    alignItems: 'center',
+  },
+  noQuotesText: {
+    fontSize: 14,
+    fontFamily: FONT.regular,
+    color: COLORS.textGray,
+    marginBottom: 16,
+  },
+  addFirstQuoteButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.accent,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+    ...SHADOW.small,
+  },
+  addFirstQuoteText: {
+    fontSize: 14,
+    fontFamily: FONT.medium,
+    color: COLORS.white,
+    marginLeft: 8,
+  },
+  
   // Empty state
   emptyContainer: {
     flex: 1,
@@ -1559,5 +1845,97 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: FONT.regular,
     color: COLORS.textGray,
-  }
+  },
+  
+  // Project step styles
+  selectedContactInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: COLORS.background,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  projectContent: {
+    flex: 1,
+  },
+  projectSection: {
+    padding: 20,
+  },
+  projectSectionTitle: {
+    fontSize: 14,
+    fontFamily: FONT.medium,
+    color: COLORS.textGray,
+    marginBottom: 12,
+    textTransform: 'uppercase',
+  },
+  projectInput: {
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.medium,
+    padding: 16,
+    fontSize: 16,
+    fontFamily: FONT.regular,
+    color: COLORS.textDark,
+  },
+  projectOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.medium,
+    padding: 16,
+    marginBottom: 12,
+  },
+  projectOptionSelected: {
+    borderColor: COLORS.accent,
+    backgroundColor: COLORS.lightAccent,
+  },
+  projectOptionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  projectOptionInfo: {
+    marginLeft: 12,
+    flex: 1,
+  },
+  projectOptionTitle: {
+    fontSize: 16,
+    fontFamily: FONT.medium,
+    color: COLORS.textDark,
+  },
+  projectOptionMeta: {
+    fontSize: 14,
+    fontFamily: FONT.regular,
+    color: COLORS.textGray,
+    marginTop: 2,
+  },
+  projectActionContainer: {
+    padding: 20,
+    backgroundColor: COLORS.white,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+  },
+  continueButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accent,
+    paddingVertical: 16,
+    borderRadius: RADIUS.button,
+    ...SHADOW.medium,
+  },
+  continueButtonDisabled: {
+    backgroundColor: COLORS.textGray,
+    ...SHADOW.none,
+  },
+  continueButtonText: {
+    fontSize: 16,
+    fontFamily: FONT.medium,
+    color: COLORS.white,
+    marginRight: 8,
+  },
 });

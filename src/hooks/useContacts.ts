@@ -22,7 +22,11 @@ export const useContacts = (filters?: any) => {
       });
     },
     enabled: !!user?.locationId,
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: 0, // Changed from 5 minutes to 0 - always consider data stale
+    cacheTime: 5 * 60 * 1000, // Keep in cache for 5 minutes
+    refetchOnMount: 'always', // Always refetch when component mounts
+    refetchOnWindowFocus: true, // Refetch when window regains focus
+    refetchOnReconnect: true, // Refetch on reconnect
   });
 };
 
@@ -109,11 +113,27 @@ export const useCreateContact = () => {
       });
     },
     onSuccess: (newContact) => {
-      // Invalidate and refetch contacts list
-      queryClient.invalidateQueries({ queryKey: ['contacts'] });
+      // Invalidate and refetch contacts list with refetchType: 'all'
+      queryClient.invalidateQueries({ 
+        queryKey: ['contacts'],
+        exact: false,
+        refetchType: 'all' // Force refetch even if query is not active
+      });
       
       // Also set the individual contact in cache
       queryClient.setQueryData(['contact', newContact._id], newContact);
+      
+      // Optionally update the contacts list cache optimistically
+      queryClient.setQueriesData(
+        { queryKey: ['contacts'] },
+        (oldData: any) => {
+          if (!oldData) return [newContact];
+          if (Array.isArray(oldData)) {
+            return [newContact, ...oldData];
+          }
+          return oldData;
+        }
+      );
     },
   });
 };
@@ -129,8 +149,12 @@ export const useUpdateContact = () => {
       // Update the individual contact in cache
       queryClient.setQueryData(['contact', variables.id], updatedContact);
       
-      // Invalidate contacts list to refetch
-      queryClient.invalidateQueries({ queryKey: ['contacts'] });
+      // Invalidate contacts list to refetch with refetchType: 'all'
+      queryClient.invalidateQueries({ 
+        queryKey: ['contacts'],
+        exact: false,
+        refetchType: 'all'
+      });
     },
   });
 };
@@ -146,8 +170,12 @@ export const useDeleteContact = () => {
       // Remove from cache
       queryClient.removeQueries({ queryKey: ['contact', deletedId] });
       
-      // Invalidate contacts list
-      queryClient.invalidateQueries({ queryKey: ['contacts'] });
+      // Invalidate contacts list with refetchType: 'all'
+      queryClient.invalidateQueries({ 
+        queryKey: ['contacts'],
+        exact: false,
+        refetchType: 'all'
+      });
     },
   });
 };
