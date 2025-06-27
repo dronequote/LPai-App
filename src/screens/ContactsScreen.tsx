@@ -29,6 +29,7 @@ import AddContactForm from '../components/AddContactForm';
 import { Contact } from '../../packages/types/dist';
 import { COLORS, FONT, SHADOW } from '../styles/theme';
 
+
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const topFilters = [
@@ -218,9 +219,20 @@ export default function ContactsScreen() {
   // Handle create contact
   const handleCreateContact = async (contactData: any) => {
     try {
-      const newContact = await createContactMutation.mutateAsync(contactData);
+      // The contact service returns the full response including the contact object
+      const response = await createContactMutation.mutateAsync(contactData);
+      
+      // Close the modal
       setIsAddModalVisible(false);
-      navigation.navigate('ContactDetailScreen', { contact: newContact });
+      
+      // Refresh the contacts list
+      await queryClient.invalidateQueries({ queryKey: ['contacts'] });
+      
+      // Navigate to the contact detail screen with the contactId
+      // The response.contact.id is the GHL contact ID we need
+      navigation.navigate('ContactDetailScreen', { 
+        contactId: response.contact.id 
+      });
     } catch (error) {
       Alert.alert('Error', 'Failed to create contact. Please try again.');
     }

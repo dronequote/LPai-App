@@ -354,6 +354,29 @@ class UserService extends BaseService {
       value
     });
   }
+    /**
+   * Get all users for location
+   */
+  async list(locationId: string): Promise<User[]> {
+    const endpoint = `/api/users`;  // Don't include locationId in URL
+    
+    if (__DEV__) {
+      console.log('📋 [UserService] Fetching users for location:', locationId);
+    }
+    
+    return this.get<User[]>(
+      endpoint,
+      {
+        params: { locationId },  // Pass locationId as a param instead
+        cache: { priority: 'medium', ttl: 30 * 60 * 1000 }, // 30 min
+      },
+      {
+        endpoint,
+        method: 'GET',
+        entity: 'contact',
+      }
+    );
+  }
   
   // Convenience methods
   async getSmsPreference() {
