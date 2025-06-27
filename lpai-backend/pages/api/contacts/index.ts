@@ -174,6 +174,7 @@ async function handleCreateContact(req: NextApiRequest, res: NextApiResponse) {
     const location = await getLocation(locationId);
     const auth = await getAuthHeader(location);
 
+    // Step 1: Create in GHL
     const ghlResponse = await axios.post(
       GHL_ENDPOINTS.CONTACTS.base,
       {
@@ -189,10 +190,61 @@ async function handleCreateContact(req: NextApiRequest, res: NextApiResponse) {
       }
     );
 
-    return sendSuccess(res, ghlResponse.data, 'Contact created successfully');
+    const ghlContact = ghlResponse.data.contact;
+
+    // Step 2: Save to MongoDB
+    const client = await clientPromise;
+    const db = client.db('lpai');
+    
+    const mongoContact = {
+      ghlContactId: ghlContact.id,
+      locationId: locationId,
+      firstName: ghlContact.firstName || '',
+      lastName: ghlContact.lastName || '',
+      fullName: ghlContact.contactName || `${ghlContact.firstName} ${ghlContact.lastName}`.trim(),
+      email: ghlContact.email || '',
+      phone: ghlContact.phone || '',
+      secondaryPhone: ghlContact.additionalPhones?.[0] || '',
+      address: ghlContact.address1 || '',
+      city: ghlContact.city || '',
+      state: ghlContact.state || '',
+      country: ghlContact.country || 'US',
+      postalCode: ghlContact.postalCode || '',
+      companyName: ghlContact.companyName || '',
+      website: ghlContact.website || '',
+      dateOfBirth: ghlContact.dateOfBirth || null,
+      tags: ghlContact.tags || [],
+      source: ghlContact.source || body.source || '',
+      type: ghlContact.type || 'lead',
+      dnd: ghlContact.dnd || false,
+      dndSettings: ghlContact.dndSettings || {},
+      customFields: ghlContact.customFields || [],
+      additionalEmails: ghlContact.additionalEmails || [],
+      attributions: ghlContact.attributions || [],
+      assignedUserId: ghlContact.assignedTo || null,
+      notes: body.notes || '',
+      ghlCreatedAt: new Date(ghlContact.dateAdded || Date.now()),
+      ghlUpdatedAt: new Date(ghlContact.dateUpdated || Date.now()),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    // Insert into MongoDB
+    const result = await db.collection('contacts').insertOne(mongoContact);
+    
+    // Step 3: Return the MongoDB document with _id
+    const createdContact = {
+      _id: result.insertedId,
+      ...mongoContact
+    };
+
+    return sendSuccess(res, {
+      contact: ghlContact,  // GHL response for compatibility
+      mongoContact: createdContact  // MongoDB document with _id
+    }, 'Contact created successfully');
     
   } catch (error: any) {
-    console.error('❌ Error creating contact in GHL:', error.response?.data || error.message);
+    console.error('❌ Error creating contact:', error.response?.data || error.message);
 
     if (error?.response?.status === 401) {
       return sendError(res, 'Invalid or expired GHL token', 401);

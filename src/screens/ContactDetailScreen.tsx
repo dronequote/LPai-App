@@ -48,7 +48,8 @@ const isTablet = width >= 768;
 
 type ContactDetailRouteParams = {
   contact?: Contact;
-  contactId?: string;
+  contactId?: string;      // Could be MongoDB _id OR GHL ID
+  ghlContactId?: string;   // Explicitly GHL ID
 };
 
 type TabType = 'overview' | 'details' | 'conversations' | 'notes';
@@ -1338,33 +1339,21 @@ export default function ContactDetailScreen() {
     </Modal>
   );
   
-  // Render current tab content
-  const renderTabContent = () => {
-    switch (activeTab) {
-      case 'overview':
-        return renderOverviewTab();
-      case 'details':
-        return renderDetailsTab();
-      case 'conversations':
-        return renderConversationsTab();
-      case 'notes':
-        return renderNotesTab();
-      default:
-        return null;
-    }
-  };
-  
-  if (contactLoading) {
-    return (
-      <SafeAreaView style={styles.container} edges={['top']}>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={COLORS.accent} />
-          <Text style={styles.loadingText}>Loading contact...</Text>
-        </View>
-      </SafeAreaView>
-    );
+// Render current tab content
+const renderTabContent = () => {
+  switch (activeTab) {
+    case 'overview':
+      return renderOverviewTab();
+    case 'details':
+      return renderDetailsTab();
+    case 'conversations':
+      return renderConversationsTab();
+    case 'notes':
+      return renderNotesTab();
+    default:
+      return null;
   }
-  
+};
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       {renderHeader()}

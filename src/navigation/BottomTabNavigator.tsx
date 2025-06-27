@@ -27,6 +27,8 @@ import MoreScreen from '../screens/MoreScreen';
 import QuoteBuilderScreen from '../screens/QuoteBuilderScreen';
 import ConversationScreen from '../screens/ConversationScreen';
 import JobCompletionScreen from '../screens/JobCompletionScreen';
+import { contactService } from '../services/contactService';
+
 
 // Import modals
 import AddContactForm from '../components/AddContactForm';
@@ -156,22 +158,28 @@ export default function BottomTabNavigator() {
   }, [toggleQuickAdd, navigation]);
 
   // Handle contact creation - navigate to detail after creation
-  const handleContactCreated = useCallback((newContact: any) => {
+const handleContactCreated = useCallback((newContact: any) => {
+  if (__DEV__) {
+    console.log('[BottomTabNavigator] Contact created:', newContact);
+  }
+  
+  setShowContactModal(false);
+  
+  // Use the MongoDB contact that's now being returned
+  const mongoContact = newContact.mongoContact;
+  if (mongoContact && mongoContact._id) {
     if (__DEV__) {
-      console.log('[BottomTabNavigator] Contact created:', newContact);
+      console.log('[BottomTabNavigator] Navigating with MongoDB contact:', mongoContact._id);
     }
     
-    // Close the modal
-    setShowContactModal(false);
-    
-    // Navigate to the contact detail screen
-    // The response from contactService.create() has structure: { contact: { id, ... } }
-    if (newContact?.contact?.id) {
-      navigation.navigate('ContactDetailScreen' as never, { 
-        contactId: newContact.contact.id 
-      } as never);
-    }
-  }, [navigation]);
+    navigation.navigate('ContactDetailScreen' as never, { 
+      contact: mongoContact
+    } as never);
+  } else {
+    // This shouldn't happen now, but keeping as fallback
+    console.error('[BottomTabNavigator] No MongoDB contact returned!');
+  }
+}, [navigation]);
 
   // Handle appointment creation
   const handleAppointmentCreated = useCallback((appointmentData: any) => {

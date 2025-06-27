@@ -216,27 +216,24 @@ export default function ContactsScreen() {
     return sortContacts(result);
   }, [contacts, topFilter, statusFilter, debouncedSearch, projectFilter, phoneFilter, sortBy]);
   
-  // Handle create contact
-  const handleCreateContact = async (contactData: any) => {
-    try {
-      // The contact service returns the full response including the contact object
-      const response = await createContactMutation.mutateAsync(contactData);
-      
-      // Close the modal
-      setIsAddModalVisible(false);
-      
-      // Refresh the contacts list
-      await queryClient.invalidateQueries({ queryKey: ['contacts'] });
-      
-      // Navigate to the contact detail screen with the contactId
-      // The response.contact.id is the GHL contact ID we need
-      navigation.navigate('ContactDetailScreen', { 
-        contactId: response.contact.id 
-      });
-    } catch (error) {
-      Alert.alert('Error', 'Failed to create contact. Please try again.');
-    }
-  };
+// Handle create contact
+const handleCreateContact = async (newContact: any) => {
+  // The contact has ALREADY been created by AddContactForm
+  // newContact contains the response from the backend with the created contact
+  
+  // Close the modal
+  setIsAddModalVisible(false);
+  
+  // Invalidate queries to refresh the contact list
+  await queryClient.invalidateQueries({ queryKey: ['contacts'] });
+  
+  // Navigate to the new contact
+  if (newContact?.contact?.id) {
+    navigation.navigate('ContactDetailScreen', { 
+      contactId: newContact.contact.id 
+    });
+  }
+};
   
   // Handle scroll animations
   const handleScroll = Animated.event(
