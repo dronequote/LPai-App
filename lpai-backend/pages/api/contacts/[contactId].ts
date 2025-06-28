@@ -108,11 +108,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         Version: '2021-07-28',
       };
 
-      if (__DEV__) {
-        console.log('🔄 Syncing to GHL with OAuth:');
-        console.log('URL:', `https://services.leadconnectorhq.com/contacts/${updated.ghlContactId}`);
-        console.log('Payload fields:', Object.keys(ghlPayload));
-      }
+      // Log sync details in development
+      console.log('🔄 Syncing to GHL with OAuth');
+      console.log('Contact ID:', updated.ghlContactId);
 
       // 5. Push changes to GHL (LeadConnector) API
       try {
