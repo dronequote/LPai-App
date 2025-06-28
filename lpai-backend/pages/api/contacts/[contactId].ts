@@ -54,7 +54,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (website !== undefined) updateData.website = website;
       if (source !== undefined) updateData.source = source;
       if (tags !== undefined) updateData.tags = tags;
-      if (assignedUserId !== undefined) updateData.assignedUserId = assignedUserId;
+      
+      // Handle assignedUserId - also update assignedTo field with GHL user ID
+      if (assignedUserId !== undefined) {
+        updateData.assignedUserId = assignedUserId;
+        
+        if (assignedUserId) {
+          // Look up the GHL user ID for this MongoDB user
+          const assignedUser = await db.collection('users').findOne({ 
+            _id: new ObjectId(assignedUserId) 
+          });
+          if (assignedUser?.ghlUserId) {
+            updateData.assignedTo = assignedUser.ghlUserId;
+          }
+        } else {
+          // Unassigning
+          updateData.assignedTo = null;
+        }
+      }
 
       const result = await db.collection('contacts').updateOne(
         { _id: new ObjectId(contactId) },
@@ -68,8 +85,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const updated = await db.collection('contacts').findOne({ _id: new ObjectId(contactId) });
 
       if (!updated?.ghlContactId || !updated?.locationId) {
-        console.log('ℹ️ Skipping GHL sync: missing ghlContactId or locationId');
-        return res.status(200).json({ success: true, contact: updated });
+        console.log('ℹ️ Skipping GHL sync:', {
+          hasGhlContactId: !!updated?.ghlContactId,
+          ghlContactId: updated?.ghlContactId,
+          hasLocationId: !!updated?.locationId,
+          locationId: updated?.locationId,
+          mongoId: updated?._id
+        });
+        return res.status(200).json({ 
+        success: true, 
+        contact: updated,
+        message: 'Contact updated successfully'
+      });
       }
 
       // 2. Check if location has OAuth tokens
@@ -99,7 +126,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (source !== undefined) ghlPayload.source = updated.source;
       if (tags !== undefined && Array.isArray(tags)) ghlPayload.tags = updated.tags;
       
-      // Note: assignedUserId is internal to our system, not synced to GHL
+      // Handle assignedUserId - need to look up the user's GHL ID
+      if (assignedUserId !== undefined && updated.assignedUserId) {
+        const assignedUser = await db.collection('users').findOne({ 
+          _id: new ObjectId(updated.assignedUserId) 
+        });
+        if (assignedUser?.ghlUserId) {
+          ghlPayload.assignedTo = assignedUser.ghlUserId;
+          console.log('📋 Mapping assignee:', {
+            mongoUserId: updated.assignedUserId,
+            ghlUserId: assignedUser.ghlUserId
+          });
+        } else {
+          console.warn('⚠️ Could not find GHL user ID for:', updated.assignedUserId);
+        }
+      } else if (assignedUserId === '') {
+        // Unassigning the contact
+        ghlPayload.assignedTo = null;
+      }
       
       // 4. Set up headers with OAuth token
       const ghlHeaders = {
@@ -108,20 +152,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         Version: '2021-07-28',
       };
 
-      // Log sync details in development
+      // Log sync details
       console.log('🔄 Syncing to GHL with OAuth');
-      console.log('Contact ID:', updated.ghlContactId);
+      console.log('GHL Contact ID:', updated.ghlContactId);
+      console.log('Payload fields:', Object.keys(ghlPayload));
 
       // 5. Push changes to GHL (LeadConnector) API
       try {
-        await axios.put(
+        const ghlResponse = await axios.put(
           `https://services.leadconnectorhq.com/contacts/${updated.ghlContactId}`,
           ghlPayload,
           { headers: ghlHeaders }
         );
         console.log('✅ Contact synced to GHL:', updated.ghlContactId);
+        console.log('GHL Response status:', ghlResponse.status);
       } catch (ghlError: any) {
-        console.error('⚠️ GHL sync failed:', ghlError.response?.data?.message || ghlError.message);
+        console.error('⚠️ GHL sync failed:', {
+          status: ghlError.response?.status,
+          message: ghlError.response?.data?.message || ghlError.message,
+          data: ghlError.response?.data
+        });
         // Don't fail the request - local update succeeded
         // Just log the sync failure
       }
