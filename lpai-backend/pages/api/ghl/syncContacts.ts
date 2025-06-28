@@ -33,11 +33,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       Version: '2021-07-28', // Use v2 API
     };
     
-    if (__DEV__) {
-      console.log('📡 SENDING TO GHL:');
-      console.log('URL:', 'https://services.leadconnectorhq.com/contacts/');
-      console.log('Headers:', { ...ghlHeaders, Authorization: 'Bearer [REDACTED]' });
-    }
+    console.log('📡 Syncing contacts with GHL v2 API');
 
     // Fetch contacts from GHL (using v2 API)
     const ghlRes = await fetch('https://services.leadconnectorhq.com/contacts/', {

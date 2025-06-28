@@ -24,19 +24,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const location = await db.collection('locations').findOne({ locationId });
     const accessToken = location?.ghlOAuth?.accessToken;
     
-    if (__DEV__) {
-      console.log(`[PIPELINES][API] Location found:`, !!location);
-      console.log(`[PIPELINES][API] Has OAuth token:`, !!accessToken);
-    }
+    console.log(`[PIPELINES][API] Location found:`, !!location);
+    console.log(`[PIPELINES][API] Has OAuth token:`, !!accessToken);
     
     if (!accessToken) {
       console.warn(`[PIPELINES][API] No OAuth token for location ${locationId}`);
       return res.status(400).json({ error: 'OAuth token not found for this location' });
     }
     
-    if (__DEV__) {
-      console.log(`[PIPELINES][API] Using OAuth token: ${accessToken.slice(0, 20)}...`);
-    }
+    console.log(`[PIPELINES][API] Using OAuth token`);
 
     // Fetch pipelines from GHL
     let ghlRes;
@@ -50,10 +46,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         params: { locationId },
       });
       
-      if (__DEV__) {
-        console.log(`[PIPELINES][API] GHL response status:`, ghlRes.status);
-        console.log(`[PIPELINES][API] Pipeline count:`, ghlRes.data.pipelines?.length || 0);
-      }
+      console.log(`[PIPELINES][API] GHL response status:`, ghlRes.status);
+      console.log(`[PIPELINES][API] Pipeline count:`, ghlRes.data.pipelines?.length || 0);
     } catch (err: any) {
       console.error('[PIPELINES][API] Error from GHL:', err.response?.data || err.message);
       throw err;

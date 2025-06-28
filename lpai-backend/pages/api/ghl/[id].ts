@@ -30,11 +30,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const accessToken = location?.ghlOAuth?.accessToken;
 
     // 3️⃣ Log all fetched info for debug
-    if (__DEV__) {
-      console.log('[GHL SYNC] ➡️ Location ID:', mongoContact.locationId);
-      console.log('[GHL SYNC] ➡️ GHL Contact ID:', mongoContact.ghlContactId);
-      console.log('[GHL SYNC] ➡️ Has OAuth token:', !!accessToken);
-    }
+    console.log('[GHL SYNC] ➡️ Location ID:', mongoContact.locationId);
+    console.log('[GHL SYNC] ➡️ GHL Contact ID:', mongoContact.ghlContactId);
+    console.log('[GHL SYNC] ➡️ Has OAuth token:', !!accessToken);
 
     if (!accessToken) {
       console.log('[GHL SYNC] ❌ No OAuth token for location:', mongoContact.locationId);
@@ -48,10 +46,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // 4️⃣ Fetch latest data from GHL
     const endpoint = `https://services.leadconnectorhq.com/contacts/${mongoContact.ghlContactId}`;
-    
-    if (__DEV__) {
-      console.log('[GHL SYNC] 🚀 Fetching from GHL:', endpoint);
-    }
+    console.log('[GHL SYNC] 🚀 Fetching from GHL');
 
     let ghlRes;
     try {
@@ -94,11 +89,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       ghlContact.website !== mongoContact.website ||
       ghlContact.source !== mongoContact.source;
 
-    if (__DEV__) {
-      console.log(`[GHL SYNC] ➡️ GHL updated: ${new Date(ghlUpdated).toISOString()}`);
-      console.log(`[GHL SYNC] ➡️ Mongo updated: ${new Date(mongoUpdated).toISOString()}`);
-      console.log(`[GHL SYNC] ➡️ Fields changed:`, fieldsChanged);
-    }
+    console.log(`[GHL SYNC] ➡️ GHL updated: ${new Date(ghlUpdated).toISOString()}`);
+    console.log(`[GHL SYNC] ➡️ Mongo updated: ${new Date(mongoUpdated).toISOString()}`);
+    console.log(`[GHL SYNC] ➡️ Fields changed:`, fieldsChanged);
 
     if (ghlUpdated > mongoUpdated && fieldsChanged) {
       const updated = {
