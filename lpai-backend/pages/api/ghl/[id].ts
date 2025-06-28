@@ -1,3 +1,7 @@
+// pages/api/ghl/[id].ts
+// Updated: 06/27/2025
+// Fixed: Use OAuth tokens from ghlOAuth field for GHL sync
+
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
 import { ObjectId } from 'mongodb';
@@ -21,19 +25,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(404).json({ error: 'Contact not found in MongoDB' });
     }
 
-    // 2️⃣ Get the API key from the locations collection
+    // 2️⃣ Get the OAuth access token from the locations collection
     const location = await db.collection('locations').findOne({ locationId: mongoContact.locationId });
-    const apiKey = location?.ghlOAuth?.accessToken;
+    const accessToken = location?.ghlOAuth?.accessToken;
 
     // 3️⃣ Log all fetched info for debug
-    console.log('[GHL SYNC] ➡️ Mongo Contact:', mongoContact);
-    console.log('[GHL SYNC] ➡️ Location:', location);
-    console.log('[GHL SYNC] ➡️ Using API key:', apiKey ? apiKey.slice(0, 8) + '...' + apiKey.slice(-4) : 'MISSING');
-    console.log('[GHL SYNC] ➡️ GHL Contact ID:', mongoContact.ghlContactId);
+    if (__DEV__) {
+      console.log('[GHL SYNC] ➡️ Location ID:', mongoContact.locationId);
+      console.log('[GHL SYNC] ➡️ GHL Contact ID:', mongoContact.ghlContactId);
+      console.log('[GHL SYNC] ➡️ Has OAuth token:', !!accessToken);
+    }
 
-    if (!apiKey) {
-      console.log('[GHL SYNC] ❌ No API key for location:', mongoContact.locationId);
-      return res.status(400).json({ error: 'Missing GHL API key for this location' });
+    if (!accessToken) {
+      console.log('[GHL SYNC] ❌ No OAuth token for location:', mongoContact.locationId);
+      return res.status(400).json({ error: 'Missing OAuth token for this location' });
     }
 
     if (!mongoContact.ghlContactId) {
@@ -43,19 +48,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // 4️⃣ Fetch latest data from GHL
     const endpoint = `https://services.leadconnectorhq.com/contacts/${mongoContact.ghlContactId}`;
-    console.log('[GHL SYNC] 🚀 Fetching from:', endpoint);
+    
+    if (__DEV__) {
+      console.log('[GHL SYNC] 🚀 Fetching from GHL:', endpoint);
+    }
 
     let ghlRes;
     try {
       ghlRes = await axios.get(endpoint, {
         headers: {
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
           Version: '2021-07-28',
         },
       });
     } catch (err: any) {
-      console.error('[GHL SYNC] ❌ Axios Error:', err.response?.data || err.message);
+      console.error('[GHL SYNC] ❌ GHL API Error:', err.response?.data || err.message);
       return res.status(err.response?.status || 500).json({
         error: 'Failed to fetch contact from GHL',
         detail: err.response?.data || err.message,
@@ -76,18 +84,38 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       ghlContact.firstName !== mongoContact.firstName ||
       ghlContact.lastName !== mongoContact.lastName ||
       ghlContact.email !== mongoContact.email ||
-      ghlContact.phone !== mongoContact.phone;
+      ghlContact.phone !== mongoContact.phone ||
+      ghlContact.companyName !== mongoContact.companyName ||
+      ghlContact.address1 !== mongoContact.address ||
+      ghlContact.city !== mongoContact.city ||
+      ghlContact.state !== mongoContact.state ||
+      ghlContact.postalCode !== mongoContact.postalCode ||
+      ghlContact.country !== mongoContact.country ||
+      ghlContact.website !== mongoContact.website ||
+      ghlContact.source !== mongoContact.source;
 
-    console.log(`[GHL SYNC] ➡️ GHL updatedAt: ${ghlContact.dateUpdated}, Mongo updatedAt: ${mongoContact.updatedAt}`);
-    console.log(`[GHL SYNC] ➡️ Fields changed:`, fieldsChanged);
+    if (__DEV__) {
+      console.log(`[GHL SYNC] ➡️ GHL updated: ${new Date(ghlUpdated).toISOString()}`);
+      console.log(`[GHL SYNC] ➡️ Mongo updated: ${new Date(mongoUpdated).toISOString()}`);
+      console.log(`[GHL SYNC] ➡️ Fields changed:`, fieldsChanged);
+    }
 
     if (ghlUpdated > mongoUpdated && fieldsChanged) {
       const updated = {
-        firstName: ghlContact.firstName,
-        lastName: ghlContact.lastName,
-        email: ghlContact.email,
-        phone: ghlContact.phone,
-        updatedAt: ghlContact.dateUpdated || ghlContact.dateAdded || new Date().toISOString(),
+        firstName: ghlContact.firstName || '',
+        lastName: ghlContact.lastName || '',
+        email: ghlContact.email || '',
+        phone: ghlContact.phone || '',
+        companyName: ghlContact.companyName || '',
+        address: ghlContact.address1 || '',
+        city: ghlContact.city || '',
+        state: ghlContact.state || '',
+        postalCode: ghlContact.postalCode || '',
+        country: ghlContact.country || '',
+        website: ghlContact.website || '',
+        source: ghlContact.source || '',
+        tags: ghlContact.tags || [],
+        updatedAt: new Date(ghlContact.dateUpdated || ghlContact.dateAdded || Date.now()),
       };
 
       await db.collection('contacts').updateOne(
@@ -96,13 +124,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       );
 
       console.log('[GHL SYNC] ✅ MongoDB contact updated from GHL.');
-      return res.status(200).json({ contact: { ...mongoContact, ...updated }, synced: true });
+      return res.status(200).json({ 
+        contact: { ...mongoContact, ...updated }, 
+        synced: true,
+        message: 'Contact synced from GHL' 
+      });
     }
 
     console.log('[GHL SYNC] 🔄 No update needed, already in sync.');
-    return res.status(200).json({ contact: mongoContact, synced: false });
+    return res.status(200).json({ 
+      contact: mongoContact, 
+      synced: false,
+      message: 'Contact already up to date' 
+    });
   } catch (error: any) {
-    console.error('[GHL SYNC] ❌ Unexpected error:', error.response?.data || error.message);
-    return res.status(500).json({ error: 'Failed to sync with GHL', detail: error.response?.data || error.message });
+    console.error('[GHL SYNC] ❌ Unexpected error:', error.message);
+    return res.status(500).json({ 
+      error: 'Failed to sync with GHL', 
+      detail: error.message 
+    });
   }
 }

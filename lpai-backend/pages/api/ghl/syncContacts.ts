@@ -1,4 +1,7 @@
 // pages/api/ghl/syncContacts.ts
+// Updated: 06/27/2025
+// Fixed: Use OAuth tokens from ghlOAuth field instead of deprecated API keys
+
 import type { NextApiRequest, NextApiResponse } from 'next';
 import clientPromise from '../../../src/lib/mongodb';
 
@@ -12,28 +15,32 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const client = await clientPromise;
     const db = client.db('lpai');
 
-    // Get API key from locations collection (NOT users!)
+    // Get OAuth token from locations collection
     const locationDoc = await db.collection('locations').findOne({ locationId });
-    if (!locationDoc || !locationDoc.apiKey) {
-      console.warn(`⚠️ API key missing for locationId: ${locationId}`);
-      return res.status(401).json({ error: 'API key not found for location' });
+    if (!locationDoc || !locationDoc.ghlOAuth?.accessToken) {
+      console.warn(`⚠️ OAuth token missing for locationId: ${locationId}`);
+      return res.status(401).json({ error: 'OAuth token not found for location' });
     }
 
-    const apiKey = locationDoc.apiKey;
+    const accessToken = locationDoc.ghlOAuth.accessToken;
     console.log(`🔎 Attempting GHL sync for locationId: ${locationId}`);
-    console.log(`🔑 Using API key: ${apiKey?.slice(0, 8)}...${apiKey?.slice(-4)}`);
+    console.log(`🔑 Using OAuth token: ${accessToken.slice(0, 20)}...`);
 
-    // --- DEBUGGING HEADERS ---
+    // Set up headers with OAuth token
     const ghlHeaders = {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
+      Version: '2021-07-28', // Use v2 API
     };
-    console.log('📡 SENDING TO GHL:');
-    console.log('URL:', 'https://rest.gohighlevel.com/v1/contacts/');
-    console.log('HEADERS:', { ...ghlHeaders, Authorization: `${apiKey?.slice(0, 8)}...${apiKey?.slice(-4)}` });
+    
+    if (__DEV__) {
+      console.log('📡 SENDING TO GHL:');
+      console.log('URL:', 'https://services.leadconnectorhq.com/contacts/');
+      console.log('Headers:', { ...ghlHeaders, Authorization: 'Bearer [REDACTED]' });
+    }
 
-    // Fetch contacts from GHL
-    const ghlRes = await fetch('https://rest.gohighlevel.com/v1/contacts/', {
+    // Fetch contacts from GHL (using v2 API)
+    const ghlRes = await fetch('https://services.leadconnectorhq.com/contacts/', {
       headers: ghlHeaders,
     });
 
@@ -59,6 +66,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             email: ghl.email || '',
             phone: ghl.phone || '',
             notes: ghl.notes || '',
+            companyName: ghl.companyName || '',
+            address: ghl.address1 || '',
+            city: ghl.city || '',
+            state: ghl.state || '',
+            postalCode: ghl.postalCode || '',
+            country: ghl.country || '',
+            website: ghl.website || '',
+            source: ghl.source || '',
+            tags: ghl.tags || [],
+            assignedUserId: ghl.assignedTo || '',
+            dateAdded: ghl.dateAdded || new Date(),
+            updatedAt: ghl.dateUpdated || ghl.dateAdded || new Date(),
           },
         },
         upsert: true,
