@@ -92,11 +92,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           locationId: updated?.locationId,
           mongoId: updated?._id
         });
-        return res.status(200).json({ 
-        success: true, 
-        contact: updated,
-        message: 'Contact updated successfully'
-      });
+        return res.status(200).json(updated);
       }
 
       // 2. Check if location has OAuth tokens
